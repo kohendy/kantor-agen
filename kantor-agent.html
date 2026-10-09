@@ -1,0 +1,416 @@
+<title>Kantor Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: kiri Mission Log (feed event), kanan panggung isometrik 4 ruangan + panel jobdesc. Satu tampilan gelap neon, sengaja tidak punya tema terang. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0a1a;
+  --panel: #12112b;
+  --panel-2: #181638;
+  --line: #2b2952;
+  --fg: #e8e9ff;
+  --muted: #8f8dc0;
+  --amber: #f5a623;
+  --green: #2ee6a8;
+  --pink: #ff4fa3;
+  --cyan: #29c7ff;
+  --idle: #4a4875;
+  --display: "Chakra Petch", "Trebuchet MS", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--mono); font-size: 13px; line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 28px; letter-spacing: .02em; text-wrap: balance; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 62ch; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, .hit:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.pause { background: var(--panel-2); border: 1px solid var(--line); padding: 8px 14px; border-radius: 4px; font-family: var(--display); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: 12px; }
+.pause:hover { border-color: var(--cyan); }
+.main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.stage-card { order: 0; min-width: 0; }
+.log { order: 1; min-width: 0; }
+@media (min-width: 900px) {
+  .main { grid-template-columns: 320px minmax(0, 1fr); align-items: start; }
+  .log { order: 0; }
+  .stage-card { order: 1; }
+}
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.log h2, .stats { font-family: var(--display); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
+.log-head { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.log-head h2 { margin: 0; color: var(--cyan); }
+.log-head span { color: var(--muted); font-size: 11px; }
+.log-list { list-style: none; margin: 0; padding: 0; max-height: 340px; overflow-y: auto; }
+@media (min-width: 900px) { .log-list { max-height: 560px; } }
+.log-list li { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); animation: slide .35s ease-out; }
+.log-list time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.msg { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; min-width: 0; overflow-wrap: anywhere; }
+.tag { font-family: var(--display); font-weight: 700; font-size: 11px; letter-spacing: .08em; padding: 1px 6px; border: 1px solid var(--c); color: var(--c); border-radius: 3px; }
+li.review .txt { color: var(--amber); }
+li.approved .txt { color: var(--muted); }
+.approve { background: transparent; border: 1px solid var(--amber); color: var(--amber); border-radius: 3px; padding: 2px 8px; font-size: 11px; font-family: var(--display); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.approve:hover { background: var(--amber); color: var(--bg); }
+@keyframes slide { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 12px 14px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.stats b { color: var(--fg); font-variant-numeric: tabular-nums; margin-right: 4px; }
+.pip { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--idle); }
+.pip.w { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.pip.r { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.scroll { overflow-x: auto; background: radial-gradient(120% 90% at 50% 100%, #3a1264 0%, #1a1038 45%, #0d0b22 100%); }
+svg.stage { display: block; width: 100%; min-width: 760px; height: auto; }
+.hit { cursor: pointer; }
+.agent .tagbox { fill: #0b0a1a; stroke: var(--c); stroke-width: 1; }
+.agent text { fill: var(--c); font-family: var(--display); font-weight: 700; font-size: 11px; letter-spacing: .06em; }
+.agent .dot { fill: var(--idle); }
+.agent.st-working .dot { fill: var(--c); }
+.agent.st-review .dot { fill: var(--amber); }
+.agent.st-working .bot { animation: bob 1.1s ease-in-out infinite; }
+.agent.st-review .bot { animation: bob 2.4s ease-in-out infinite; }
+.agent.sel .tagbox { fill: var(--c); }
+.agent.sel text { fill: #0b0a1a; }
+.agent:hover .tagbox { stroke-width: 2; }
+.agent { transition: transform .9s cubic-bezier(.5, 0, .2, 1); }
+.gathered .agent .tg { display: none; }
+.gathered .agent:hover .tg, .gathered .agent.sel .tg { display: inline; }
+@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+.room .floor { transition: stroke-width .2s, fill-opacity .2s; }
+.room:hover .floor, .room.sel .floor { stroke-width: 3; fill-opacity: .2; }
+.room .rname { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: .12em; }
+.detail { padding: 14px; border-top: 1px solid var(--line); min-height: 150px; }
+.detail .hint { color: var(--muted); margin: 0; }
+.detail h3 { margin: 0 0 6px; font-family: var(--display); font-size: 18px; letter-spacing: .04em; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.pill { font-family: var(--display); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--idle); color: var(--muted); }
+.pill.w { border-color: var(--green); color: var(--green); }
+.pill.r { border-color: var(--amber); color: var(--amber); }
+.detail p { margin: 0 0 10px; max-width: 70ch; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 20px; }
+.cols > div { min-width: 0; }
+.lbl { color: var(--muted); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--panel-2); padding: 2px 8px; border-radius: 3px; font-size: 12px; }
+pre.json { margin: 0; padding: 10px; background: #0b0a1a; border: 1px solid var(--line); border-radius: 4px; overflow-x: auto; font-size: 12px; color: #b9b7ee; }
+.members { display: flex; flex-wrap: wrap; gap: 8px; }
+.member { background: var(--panel-2); border: 1px solid var(--c); color: var(--c); border-radius: 3px; padding: 3px 10px; font-family: var(--display); font-weight: 700; letter-spacing: .06em; font-size: 12px; }
+.member:hover { background: var(--c); color: var(--bg); }
+.note { margin-top: 14px; color: var(--muted); font-size: 12px; max-width: 80ch; }
+@media (prefers-reduced-motion: reduce) {
+  .agent.st-working .bot, .agent.st-review .bot, .log-list li { animation: none; }
+  .agent { transition: none; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Kantor Agent</h1>
+      <p>Prototipe kantor kampanye isometrik. Aktivitas di Mission Log adalah data contoh yang dibuat di halaman ini, bukan agent sungguhan.</p>
+    </div>
+    <button class="pause" id="pause" type="button" aria-pressed="false">Jeda feed</button>
+  </header>
+
+  <div class="main">
+    <section class="card log" aria-label="Mission Log">
+      <div class="log-head"><h2>Mission Log</h2><span>terbaru di atas</span></div>
+      <ul class="log-list" id="log" aria-live="polite"></ul>
+    </section>
+
+    <section class="card stage-card" aria-label="Peta kantor">
+      <div class="stats" id="stats"></div>
+      <div class="scroll"><svg class="stage" id="stage" viewBox="0 0 940 560" role="group" aria-label="Kantor isometrik dengan enam ruangan"></svg></div>
+      <div class="detail" id="detail"></div>
+    </section>
+  </div>
+
+  <p class="note">Cara kerja versi sungguhan: tiap agent menulis satu baris event ke database (format JSON di panel jobdesc), lalu halaman ini berlangganan perubahan itu lewat realtime dan menggerakkan karakter serta log. Tombol Setujui meniru gerbang persetujuan manusia.</p>
+</div>
+
+<script>
+(function () {
+  var TW = 32, TH = 16, OX = 380, OY = 70;
+  function P(x, y) { return [(x - y) * TW + OX, (x + y) * TH + OY]; }
+  function pts(a) { return a.map(function (p) { return p[0] + ',' + p[1]; }).join(' '); }
+  function up(p, h) { return [p[0], p[1] - h]; }
+
+  var ROOMS = [
+    { id: 'riset', name: 'RISET', color: '#f5a623', x: 0, y: 0, desc: 'Mencari tahu siapa audiensnya, apa yang dipakai kompetitor, dan apa yang diminta calon pembeli.',
+      agents: ['ATHENA', 'ARGUS', 'METIS'] },
+    { id: 'copy', name: 'COPY', color: '#ff4fa3', x: 12, y: 0, desc: 'Menulis hook, skrip video, dan naskah landing page. Setiap klaim lewat review sebelum dipakai.',
+      agents: ['CLIO', 'ERATO', 'DAPHNE'] },
+    { id: 'lp', name: 'LANDING PAGE', color: '#2ee6a8', x: 0, y: 6, desc: 'Menyusun, memeriksa, dan mempercepat halaman tujuan iklan.',
+      agents: ['HESTIA', 'THEMIS', 'TALOS'] },
+    { id: 'ads', name: 'ADVERTISER', color: '#29c7ff', x: 6, y: 6, desc: 'Mengatur ad set, anggaran, dan laporan performa harian.',
+      agents: ['ZEUS', 'ARTEMIS', 'PLUTUS'] },
+    { id: 'creative', name: 'CREATIVE', color: '#a78bfa', x: 12, y: 6, desc: 'Mengubah hook dan skrip menjadi video UGC dan creative statis siap tayang.',
+      agents: ['THEIA', 'LYRA', 'IRIS'] },
+    { id: 'meeting', name: 'MEETING H+1', color: '#b7f34a', x: 6, y: 0, meeting: true, desc: 'Ruang rapat harian. Semua agent berkumpul untuk membahas laporan hari sebelumnya.',
+      agents: [] }
+  ];
+
+  var AG = {
+    ATHENA: { role: 'Koordinator Riset', lead: 1, status: 'working', tools: ['web search', 'database'],
+      desc: 'Memecah pertanyaan riset menjadi tugas untuk Argus dan Metis, lalu merangkum temuan untuk seluruh tim.',
+      ev: [['done', 'Ringkasan riset audiens ibu menyusui siap'], ['work', 'Memecah brief riset ebook MPASI jadi 3 tugas'], ['work', 'Menggabungkan temuan Argus dan Metis']] },
+    ARGUS: { role: 'Pemantau Kompetitor', status: 'working', tools: ['Meta Ad Library', 'web fetch'],
+      desc: 'Memindai iklan dan akun kompetitor setiap pagi, lalu mencatat angle yang sedang ramai dipakai.',
+      ev: [['done', 'Selesai: pindai Ad Library 12 kompetitor'], ['work', 'Memantau iklan baru kompetitor MPASI'], ['done', 'Ditemukan 4 angle iklan yang sering dipakai']] },
+    METIS: { role: 'Survei dan Data', status: 'working', tools: ['formulir survei', 'spreadsheet'],
+      desc: 'Merancang survei waitlist, membaca jawabannya, dan mengubahnya jadi rekomendasi.',
+      ev: [['work', 'Menganalisis 214 respons survei waitlist'], ['done', 'Laporan survei: 62% minta template mingguan'], ['work', 'Menyusun pertanyaan survei tahap dua']] },
+    CLIO: { role: 'Editor Copy', lead: 1, status: 'working', tools: ['panduan gaya', 'database'],
+      desc: 'Menjaga nada tulisan tetap sama di semua kanal dan menyetujui copy sebelum naik tayang.',
+      ev: [['work', 'Menyunting copy email sambutan'], ['done', 'Panduan gaya copy versi 2 disetujui'], ['work', 'Menyelaraskan nada copy antar kanal']] },
+    ERATO: { role: 'Penulis Landing Page', status: 'review', tools: ['pengolah kata', 'database'],
+      desc: 'Menulis headline, manfaat, dan FAQ halaman penjualan. Klaim yang berisiko ditandai untuk review manusia.',
+      ev: [['review', 'Copy LP Kelas Canva Jualan menunggu review klaim'], ['work', 'Menulis 3 versi headline LP'], ['done', 'Copy FAQ landing page selesai']] },
+    DAPHNE: { role: 'Hook dan Skrip', status: 'working', tools: ['pengolah kata', 'riset audiens'],
+      desc: 'Membuat hook iklan, skrip video UGC, dan caption creative statis dari angle yang dipilih tim riset.',
+      ev: [['done', '10 hook baru angle "anak susah makan" siap dites'], ['work', 'Menulis skrip video UGC 30 detik'], ['work', 'Menyusun caption untuk 6 creative statis']] },
+    HESTIA: { role: 'Penanggung Jawab LP', lead: 1, status: 'working', tools: ['pembuat halaman', 'database'],
+      desc: 'Mengatur struktur halaman, urutan bagian, dan jadwal terbit landing page.',
+      ev: [['work', 'Menyusun struktur LP ebook MPASI'], ['done', 'LP Template Budget UMKM terbit'], ['work', 'Mengatur ulang urutan bagian testimoni']] },
+    THEMIS: { role: 'QA dan Kepatuhan', status: 'working', tools: ['daftar periksa klaim', 'web fetch'],
+      desc: 'Memeriksa klaim, janji hasil, dan syarat iklan sebelum halaman dipublikasikan.',
+      ev: [['review', 'Janji hasil di LP menunggu persetujuan'], ['done', 'Audit klaim LP: 2 revisi, 5 aman'], ['work', 'Memeriksa kepatuhan klaim di halaman harga']] },
+    TALOS: { role: 'Performa Teknis', status: 'idle', tools: ['uji kecepatan', 'kompresi gambar'],
+      desc: 'Mengukur waktu muat dan memastikan formulir berjalan baik di layar ponsel.',
+      ev: [['done', 'Waktu muat LP turun jadi 2,1 detik'], ['work', 'Mengompres gambar hero LP'], ['work', 'Menguji formulir waitlist di layar kecil']] },
+    ZEUS: { role: 'Kepala Iklan', lead: 1, status: 'working', tools: ['Meta Ads API', 'database'],
+      desc: 'Menentukan prioritas ad set dan meminta persetujuan manusia untuk perubahan anggaran besar.',
+      ev: [['done', 'Rekap performa kampanye minggu ini siap'], ['work', 'Menentukan prioritas ad set untuk besok'], ['review', 'Usulan naikkan anggaran 20% menunggu persetujuan']] },
+    ARTEMIS: { role: 'Pengelola Ad Set', status: 'working', tools: ['Meta Ads API'],
+      desc: 'Membuat ad set pengujian, membandingkan hasilnya, dan mematikan yang boros.',
+      ev: [['done', 'Ad set A/B ebook MPASI ROAS 2,8x'], ['work', 'Menyiapkan 3 ad set testing baru'], ['work', 'Mematikan ad set dengan CPA di atas target']] },
+    PLUTUS: { role: 'Anggaran dan Laporan', status: 'idle', tools: ['spreadsheet', 'Meta Ads API'],
+      desc: 'Menghitung sisa anggaran, biaya per pendaftar, dan mengirim laporan harian.',
+      ev: [['work', 'Menghitung sisa anggaran bulan ini'], ['done', 'Laporan anggaran harian terkirim'], ['work', 'Memantau biaya per pendaftar waitlist']] },
+    THEIA: { role: 'Direktur Creative', lead: 1, status: 'working', tools: ['papan brief', 'database'],
+      desc: 'Memilih angle yang diproduksi, menjaga arah visual, dan menyetujui creative sebelum masuk ke tim iklan.',
+      ev: [['done', 'Brief creative minggu ini disetujui'], ['work', 'Memilih 4 angle untuk diproduksi'], ['work', 'Meninjau 6 creative statis dari Iris']] },
+    LYRA: { role: 'Video UGC', status: 'working', tools: ['editor video', 'template teks layar'],
+      desc: 'Mengedit video UGC format 9:16 dari skrip Daphne, termasuk beberapa versi untuk diuji.',
+      ev: [['done', 'Video UGC 9:16 versi B selesai diedit'], ['work', 'Memotong video testimoni jadi 3 versi'], ['review', 'Video UGC versi C menunggu review klaim']] },
+    IRIS: { role: 'Creative Statis', status: 'working', tools: ['template desain', 'kompresi gambar'],
+      desc: 'Membuat creative statis rasio 4:5 dan story, lengkap dengan variasi warna untuk uji A/B.',
+      ev: [['done', '6 creative statis 4:5 selesai'], ['work', 'Membuat variasi warna untuk uji A/B'], ['work', 'Menyesuaikan ukuran creative untuk story']] }
+  };
+
+  var SLOTS = [[1.3, 2.0], [3.4, 1.5], [2.6, 3.9]];
+  var HOME = {}, gathered = false;
+  // posisi duduk di ruang meeting, relatif terhadap sudut ruangan
+  var SEATS = [[1.0, .6], [2.0, .6], [3.0, .6], [4.0, .6], [1.0, 1.4], [2.5, 1.4], [4.0, 1.4],
+    [.4, 2.6], [4.6, 2.6], [1.0, 4.2], [2.0, 4.2], [3.0, 4.2], [4.0, 4.2], [1.5, 4.8], [3.5, 4.8]];
+  var svg = document.getElementById('stage');
+  var logEl = document.getElementById('log');
+  var detail = document.getElementById('detail');
+  var statsEl = document.getElementById('stats');
+  var selected = null; // {type:'room'|'agent', id}
+  var lastAgent = null, uid = 0, paused = false;
+
+  function face(points, c, op) {
+    return '<polygon points="' + pts(points) + '" fill="#14122e"/><polygon points="' + pts(points) + '" fill="' + c + '" fill-opacity="' + op + '" stroke="' + c + '" stroke-width="1" stroke-linejoin="round"/>';
+  }
+  function box(x, y, w, d, h, c) {
+    var A = P(x, y), B = P(x + w, y), C = P(x + w, y + d), D = P(x, y + d);
+    return face([D, C, up(C, h), up(D, h)], c, .22) + face([B, C, up(C, h), up(B, h)], c, .1) + face([up(A, h), up(B, h), up(C, h), up(D, h)], c, .4);
+  }
+  function robot(name, c, x, y) {
+    var p = P(x, y), a = AG[name], w = name.length * 7.2 + (a.lead ? 30 : 22);
+    return '<g class="agent hit st-' + a.status + '" id="ag-' + name + '" data-agent="' + name + '" style="--c:' + c + ';transform:translate(' + p[0] + 'px,' + p[1] + 'px)" tabindex="0" role="button" aria-label="' + name + ', ' + a.role + '">' +
+      '<ellipse cx="0" cy="0" rx="11" ry="4.5" fill="#000" fill-opacity=".45"/>' +
+      '<g class="bot">' +
+      '<rect x="-7" y="-17" width="14" height="13" fill="#dfe3ff" stroke="#0b0a1a"/><rect x="-3" y="-13" width="6" height="4" fill="' + c + '"/>' +
+      '<rect x="-9" y="-31" width="18" height="14" fill="#eef0ff" stroke="#0b0a1a"/><rect x="-7" y="-28" width="14" height="7" fill="#14122b"/>' +
+      '<rect x="-5" y="-26" width="3" height="3" fill="' + c + '"/><rect x="2" y="-26" width="3" height="3" fill="' + c + '"/>' +
+      '<rect x="-1" y="-37" width="2" height="6" fill="#eef0ff"/><circle cx="0" cy="-38" r="2.5" fill="' + c + '"/>' +
+      '</g>' +
+      '<g class="tg" transform="translate(0,-52)"><rect class="tagbox" x="' + (-w / 2) + '" y="-9" width="' + w + '" height="18" rx="2"/>' +
+      '<circle class="dot" cx="' + (-w / 2 + 8) + '" cy="0" r="3"/>' +
+      '<text x="' + (-w / 2 + 16) + '" y="4">' + (a.lead ? '★ ' : '') + name + '</text></g>' +
+      '</g>';
+  }
+  function roomSvg(r) {
+    var c = r.color, s = 5, x0 = r.x, y0 = r.y, H = 34;
+    var A = P(x0, y0), B = P(x0 + s, y0), C = P(x0 + s, y0 + s), D = P(x0, y0 + s);
+    var out = '<g class="room hit" id="rm-' + r.id + '" data-room="' + r.id + '" style="--c:' + c + '">';
+    out += '<polygon points="' + pts([D, A, up(A, H), up(D, H)]) + '" fill="' + c + '" fill-opacity=".1" stroke="' + c + '" stroke-opacity=".5"/>';
+    out += '<polygon points="' + pts([A, B, up(B, H), up(A, H)]) + '" fill="' + c + '" fill-opacity=".16" stroke="' + c + '" stroke-opacity=".5"/>';
+    out += '<polygon class="floor" points="' + pts([A, B, C, D]) + '" fill="' + c + '" fill-opacity=".1" stroke="' + c + '" stroke-width="1.5" style="filter:drop-shadow(0 0 5px ' + c + ')"/>';
+    for (var i = 1; i < s; i++) {
+      var a1 = P(x0 + i, y0), a2 = P(x0 + i, y0 + s), b1 = P(x0, y0 + i), b2 = P(x0 + s, y0 + i);
+      out += '<line x1="' + a1[0] + '" y1="' + a1[1] + '" x2="' + a2[0] + '" y2="' + a2[1] + '" stroke="' + c + '" stroke-opacity=".18"/>';
+      out += '<line x1="' + b1[0] + '" y1="' + b1[1] + '" x2="' + b2[0] + '" y2="' + b2[1] + '" stroke="' + c + '" stroke-opacity=".18"/>';
+    }
+    var lw = r.name.length * 8.4 + 18, top = up(A, H + 16);
+    out += '<g transform="translate(' + top[0] + ',' + top[1] + ')"><rect x="' + (-lw / 2) + '" y="-11" width="' + lw + '" height="22" rx="2" fill="#0b0a1a" stroke="' + c + '"/><text class="rname" text-anchor="middle" y="4" fill="' + c + '">' + r.name + '</text></g>';
+    out += '</g>';
+    if (r.meeting) {
+      var q1 = P(x0 + 0.8, y0), q2 = P(x0 + 4.2, y0);
+      out += '<g style="pointer-events:none">' + box(x0 + 1.2, y0 + 2.0, 2.6, 1.2, 10, c);
+      out += '<polygon points="' + pts([up(q1, 10), up(q2, 10), up(q2, 30), up(q1, 30)]) + '" fill="#0b0a1a" stroke="' + c + '"/>';
+      out += '<g transform="translate(' + (q1[0] + 8) + ',' + (q1[1] - 20) + ') matrix(1 .5 0 1 0 0)" fill="' + c + '" font-family="Chakra Petch, sans-serif" font-weight="700">' +
+        '<text font-size="9" letter-spacing="1">REPORT H+1</text><text y="9" font-size="7" fill-opacity=".7">Tiap hari 09.00</text></g></g>';
+    }
+    r.agents.forEach(function (n, i) {
+      var sx = x0 + SLOTS[i][0], sy = y0 + SLOTS[i][1];
+      HOME[n] = [sx, sy];
+      out += '<g style="pointer-events:none">' + box(sx - 0.8, sy - 1.2, 1.8, 0.7, 12, c) + '</g>';
+    });
+    return out;
+  }
+  var roomsHtml = ROOMS.slice().sort(function (a, b) { return (a.x + a.y) - (b.x + b.y); }).map(roomSvg).join('');
+  var order = Object.keys(AG).sort(function (a, b) { return (HOME[a][0] + HOME[a][1]) - (HOME[b][0] + HOME[b][1]); });
+  svg.innerHTML = roomsHtml + '<g id="agents">' + order.map(function (n) { return robot(n, colorOf(n), HOME[n][0], HOME[n][1]); }).join('') + '</g>';
+  var layer = document.getElementById('agents');
+
+  function colorOf(name) {
+    for (var i = 0; i < ROOMS.length; i++) if (ROOMS[i].agents.indexOf(name) > -1) return ROOMS[i].color;
+    return '#e8e9ff';
+  }
+  function roomOf(name) {
+    for (var i = 0; i < ROOMS.length; i++) if (ROOMS[i].agents.indexOf(name) > -1) return ROOMS[i];
+  }
+  function two(n) { return n < 10 ? '0' + n : '' + n; }
+  function clock(d) { return two(d.getHours()) + ':' + two(d.getMinutes()) + ':' + two(d.getSeconds()); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (m) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]; }); }
+  var STATUS_LABEL = { working: 'Bekerja', review: 'Menunggu review', idle: 'Idle' };
+
+  function setStatus(name, st) {
+    AG[name].status = st;
+    var el = document.getElementById('ag-' + name);
+    el.setAttribute('class', el.getAttribute('class').replace(/st-\w+/, 'st-' + st));
+    renderStats();
+  }
+  function renderStats() {
+    var n = { working: 0, review: 0, idle: 0 };
+    Object.keys(AG).forEach(function (k) { n[AG[k].status]++; });
+    statsEl.innerHTML = '<span><i class="pip w"></i><b>' + n.working + '</b>bekerja</span><span><i class="pip r"></i><b>' + n.review + '</b>menunggu review</span><span><i class="pip"></i><b>' + n.idle + '</b>idle</span>';
+  }
+
+  function addLog(name, type, text, when) {
+    var d = when || new Date(), id = ++uid;
+    var li = document.createElement('li');
+    li.className = type === 'review' ? 'review' : '';
+    li.dataset.id = id; li.dataset.agent = name;
+    li.innerHTML = '<time>' + clock(d) + '</time><span></span><div class="msg"><span class="tag" style="--c:' + colorOf(name) + '">' + name + '</span><span class="txt">' + esc(text) + '</span>' +
+      (type === 'review' ? '<button class="approve" type="button">Setujui</button>' : '') + '</div>';
+    logEl.insertBefore(li, logEl.firstChild);
+    while (logEl.children.length > 40) logEl.removeChild(logEl.lastChild);
+    if (AG[name]) {
+      var status = type === 'review' ? 'review' : (type === 'done' ? 'idle' : 'working');
+      AG[name].last = { waktu: d.toISOString(), agent: name, status: type === 'work' ? 'working' : type, pesan: text };
+      setStatus(name, status);
+      if (selected && selected.type === 'agent' && selected.id === name) showAgent(name);
+    }
+  }
+  function sysLog(text) { addLog('KANTOR', 'sys', text); }
+
+  function setPos(n, g) {
+    var p = P(g[0], g[1]);
+    document.getElementById('ag-' + n).style.transform = 'translate(' + p[0] + 'px,' + p[1] + 'px)';
+  }
+  function toggleGather() {
+    gathered = !gathered;
+    var m = ROOMS.filter(function (x) { return x.meeting; })[0], tgt = {};
+    Object.keys(AG).forEach(function (n, i) {
+      tgt[n] = gathered ? [m.x + SEATS[i][0], m.y + SEATS[i][1]] : HOME[n];
+    });
+    Object.keys(AG).sort(function (a, b) { return (tgt[a][0] + tgt[a][1]) - (tgt[b][0] + tgt[b][1]); })
+      .forEach(function (n) { layer.appendChild(document.getElementById('ag-' + n)); });
+    layer.getBoundingClientRect();
+    Object.keys(AG).forEach(function (n) { setPos(n, tgt[n]); });
+    svg.classList.toggle('gathered', gathered);
+    sysLog(gathered ? 'Rapat H+1 dimulai, semua agent berkumpul' : 'Rapat selesai, agent kembali ke ruangan masing-masing');
+  }
+
+  function step() {
+    var names = Object.keys(AG), name;
+    do { name = names[Math.floor(Math.random() * names.length)]; } while (name === lastAgent);
+    lastAgent = name;
+    var e = AG[name].ev[Math.floor(Math.random() * AG[name].ev.length)];
+    addLog(name, e[0], e[1]);
+  }
+
+  logEl.addEventListener('click', function (ev) {
+    var b = ev.target.closest('.approve');
+    if (!b) return;
+    var li = b.closest('li'), name = li.dataset.agent;
+    li.className = 'approved'; b.remove();
+    addLog(name, 'work', 'Disetujui manusia, pekerjaan dilanjutkan');
+  });
+
+  function sel(type, id) {
+    document.querySelectorAll('.sel').forEach(function (n) { n.classList.remove('sel'); });
+    selected = { type: type, id: id };
+    var rid = type === 'room' ? id : roomOf(id).id;
+    document.getElementById('rm-' + rid).classList.add('sel');
+    if (type === 'agent') document.getElementById('ag-' + id).classList.add('sel');
+  }
+  function pill(st) { return '<span class="pill ' + (st === 'working' ? 'w' : st === 'review' ? 'r' : '') + '">' + STATUS_LABEL[st] + '</span>'; }
+  function showAgent(name) {
+    var a = AG[name], r = roomOf(name), c = r.color;
+    var json = a.last ? JSON.stringify(a.last, null, 2) : '(belum ada event)';
+    detail.innerHTML = '<h3 style="color:' + c + '">' + (a.lead ? '★ ' : '') + name + ' ' + pill(a.status) + '</h3>' +
+      '<p><b>' + esc(a.role) + '</b>, ruang ' + r.name.toLowerCase() + '. ' + esc(a.desc) + '</p>' +
+      '<div class="cols"><div><div class="lbl">Tool</div><div class="chips">' + a.tools.map(function (t) { return '<span class="chip">' + esc(t) + '</span>'; }).join('') + '</div></div>' +
+      '<div><div class="lbl">Event terakhir yang ditulis ke database</div><pre class="json">' + esc(json) + '</pre></div></div>';
+  }
+  function showRoom(id) {
+    var r = ROOMS.filter(function (x) { return x.id === id; })[0];
+    if (r.meeting) {
+      detail.innerHTML = '<h3 style="color:' + r.color + '">' + r.name + '</h3><p>' + esc(r.desc) + '</p>' +
+        '<p>' + (gathered ? 'Semua agent sedang berkumpul. Arahkan kursor ke karakter untuk melihat namanya.' : 'Agent sedang bekerja di ruangan masing-masing.') + '</p>' +
+        '<button class="member" type="button" style="--c:' + r.color + '" data-gather="1">' + (gathered ? 'Bubarkan rapat' : 'Kumpulkan semua agent') + '</button>';
+      return;
+    }
+    detail.innerHTML = '<h3 style="color:' + r.color + '">' + r.name + '</h3><p>' + esc(r.desc) + '</p>' +
+      '<div class="lbl">Anggota ruangan</div><div class="members">' + r.agents.map(function (n) { return '<button class="member" type="button" style="--c:' + r.color + '" data-pick="' + n + '">' + (AG[n].lead ? '★ ' : '') + n + ' · ' + esc(AG[n].role) + '</button>'; }).join('') + '</div>';
+  }
+  function hint() { detail.innerHTML = '<p class="hint">Klik ruangan atau karakter untuk membuka jobdesc. Klik ruang Meeting H+1 untuk mengumpulkan semua agent, klik lagi untuk membubarkan. Titik di label karakter menandai status: menyala berarti bekerja, kuning berarti menunggu review.</p>'; }
+
+  function pickAgent(n) { sel('agent', n); showAgent(n); }
+  svg.addEventListener('click', function (ev) {
+    var a = ev.target.closest('[data-agent]');
+    if (a) return pickAgent(a.dataset.agent);
+    var r = ev.target.closest('[data-room]');
+    if (r) {
+      if (r.dataset.room === 'meeting') toggleGather();
+      sel('room', r.dataset.room); showRoom(r.dataset.room);
+    }
+  });
+  svg.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    var a = ev.target.closest('[data-agent]');
+    if (a) { ev.preventDefault(); pickAgent(a.dataset.agent); }
+  });
+  detail.addEventListener('click', function (ev) {
+    var g = ev.target.closest('[data-gather]');
+    if (g) { toggleGather(); showRoom('meeting'); return; }
+    var b = ev.target.closest('[data-pick]');
+    if (b) pickAgent(b.dataset.pick);
+  });
+
+  var pauseBtn = document.getElementById('pause');
+  pauseBtn.addEventListener('click', function () {
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Lanjutkan feed' : 'Jeda feed';
+    pauseBtn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+  });
+
+  // isi awal: 8 event mundur 4 detik per langkah
+  renderStats();
+  var now = Date.now();
+  for (var i = 8; i > 0; i--) {
+    var names = Object.keys(AG), nm;
+    do { nm = names[Math.floor(Math.random() * names.length)]; } while (nm === lastAgent);
+    lastAgent = nm;
+    var e = AG[nm].ev[Math.floor(Math.random() * AG[nm].ev.length)];
+    addLog(nm, e[0], e[1], new Date(now - i * 4000));
+  }
+  setStatus('ERATO', 'review');
+  hint();
+  setInterval(function () { if (!paused) step(); }, 3200);
+})();
+</script>
