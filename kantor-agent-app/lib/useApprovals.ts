@@ -74,6 +74,8 @@ export function useApprovals(): ApprovalsData {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
+        // Saat tab kembali terlihat, refetch segera sekali
+        refetch();
         if (!visibilityPollRef.current) {
           visibilityPollRef.current = setInterval(() => {
             refetch();
@@ -99,13 +101,18 @@ export function useApprovals(): ApprovalsData {
 
   useEffect(() => {
     let mounted = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
 
     // Pasang token sesi ke realtime sebelum subscribe
     const setupRealtimeAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        supabase.realtime.setAuth(session.access_token);
-        console.debug("realtime auth dipasang");
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          await supabase.realtime.setAuth(session.access_token);
+          console.debug("realtime auth dipasang");
+        }
+      } catch (err) {
+        console.debug("realtime setAuth gagal:", err);
       }
     };
 
@@ -115,13 +122,17 @@ export function useApprovals(): ApprovalsData {
       // Dengarkan perubahan auth (TOKEN_REFRESHED, SIGNED_IN)
       const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
         if ((event === "TOKEN_REFRESHED" || event === "SIGNED_IN") && session?.access_token) {
-          supabase.realtime.setAuth(session.access_token);
+          supabase.realtime.setAuth(session.access_token).catch((err) => {
+            console.debug("realtime setAuth gagal:", err);
+          });
           console.debug("realtime auth dipasang");
         }
       });
       authListenerRef.current = { data: { subscription } };
 
-      const channel = supabase
+      if (!mounted) return;
+
+      channel = supabase
         .channel("kantor-agent-approvals")
         .on(
           "postgres_changes",
@@ -141,15 +152,13 @@ export function useApprovals(): ApprovalsData {
             setRealtimeConnected(false);
           }
         });
-
-      return () => {
-        mounted = false;
-        supabase.removeChannel(channel);
-      };
     });
 
     return () => {
       mounted = false;
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
       if (authListenerRef.current?.data?.subscription?.unsubscribe) {
         authListenerRef.current.data.subscription.unsubscribe();
       }
