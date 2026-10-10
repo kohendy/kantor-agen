@@ -10,6 +10,10 @@ interface StartProjectBody {
   budget_harian?: number | string | null;
 }
 
+// Batas panjang teks brief
+const MAX_JUDUL = 120;
+const MAX_TEKS = 1000;
+
 const N8N_TIMEOUT_MS = 10_000;
 
 function parseApproverEmails(): string[] {
@@ -39,6 +43,7 @@ export async function POST(request: Request) {
       ? Number(rawBudget)
       : null;
 
+  // Validasi wajib isi
   if (!judul) {
     return Response.json({ error: "Judul proyek wajib diisi" }, { status: 400 });
   }
@@ -50,6 +55,40 @@ export async function POST(request: Request) {
   }
   if (!tujuan) {
     return Response.json({ error: "Tujuan kampanye wajib diisi" }, { status: 400 });
+  }
+
+  // Validasi panjang teks
+  if (judul.length > MAX_JUDUL) {
+    return Response.json(
+      { error: `Judul maksimal ${MAX_JUDUL} karakter` },
+      { status: 400 }
+    );
+  }
+  if (produk.length > MAX_TEKS) {
+    return Response.json(
+      { error: `Produk maksimal ${MAX_TEKS} karakter` },
+      { status: 400 }
+    );
+  }
+  if (targetAudiens.length > MAX_TEKS) {
+    return Response.json(
+      { error: `Target audiens maksimal ${MAX_TEKS} karakter` },
+      { status: 400 }
+    );
+  }
+  if (tujuan.length > MAX_TEKS) {
+    return Response.json(
+      { error: `Tujuan kampanye maksimal ${MAX_TEKS} karakter` },
+      { status: 400 }
+    );
+  }
+
+  // Validasi budget: jangan NaN, harus >= 0 jika diisi
+  if (budgetHarian !== null && (isNaN(budgetHarian) || budgetHarian < 0)) {
+    return Response.json(
+      { error: "Budget harian harus berupa angka >= 0" },
+      { status: 400 }
+    );
   }
 
   // 1. Verifikasi pengguna lewat session cookie
@@ -96,10 +135,10 @@ export async function POST(request: Request) {
     );
   }
 
-  // Catat event sistem
+  // Catat event sistem dengan agen valid dan status 'done' (bukan 'working').
   await admin.from("events").insert({
-    agent: "METIS",
-    status: "working",
+    agent: "ATHENA",
+    status: "done",
     pesan: `Proyek "${judul}" dimulai, dispatcher orkestrasi dipanggil`,
   });
 

@@ -117,7 +117,29 @@ export async function POST(
 
   // JIKA APPROVAL PUNYA RUN_ID: Alur orkestrator dispatcher (JANGAN pakai resume_url).
   if (existing.run_id) {
-    // 1. Simpan keputusan di approvals
+    // Baca status run dan pipeline_control sebelum mengubah apa pun.
+    const [runResult, controlResult] = await Promise.all([
+      admin
+        .from("pipeline_runs")
+        .select("id, status")
+        .eq("id", existing.run_id)
+        .maybeSingle(),
+      admin
+        .from("pipeline_control")
+        .select("jalan")
+        .eq("id", 1)
+        .maybeSingle(),
+    ]);
+
+    const runStatus = runResult.data?.status ?? null;
+    const pipelineJalan = controlResult.data?.jalan ?? true;
+
+    // Cek apakah run sudah dihentikan/selesai atau pipeline dimatikan.
+    const runSudahTutup =
+      runStatus === "dihentikan" || runStatus === "selesai";
+    const pipelineDimatikan = pipelineJalan === false;
+
+    // 1. Simpan keputusan di approvals (selalu dilakukan).
     const { data: finalUpdate, error: updateError } = await admin
       .from("approvals")
       .update({ status: body.keputusan, catatan })
@@ -133,7 +155,7 @@ export async function POST(
       );
     }
 
-    // 2. Simpan catatan sebagai umpan balik di step
+    // 2. Simpan catatan sebagai umpan balik di step (selalu dilakukan, jika ada).
     if (existing.step_id && catatan) {
       try {
         const { data: stepData } = await admin
@@ -160,46 +182,28 @@ export async function POST(
       }
     }
 
-    // 3. Perbarui status pipeline_runs
-    // Bila disetujui: run lanjut ke fase berikutnya atau tetap 'jalan'
-    // Bila ditolak: set run ke 'jalan' agar dispatcher memproses revisi berikutnya
-    try {
-      if (body.keputusan === "disetujui") {
-        const { data: runData } = await admin
-          .from("pipeline_runs")
-          .select("id, fase")
-          .eq("id", existing.run_id)
-          .maybeSingle();
-
-        const faseUrutan = ["riset", "copy_creative", "landing_page", "ads", "iklan_berjalan"];
-        const currentIdx = faseUrutan.indexOf((runData?.fase || "riset").toLowerCase());
-        const nextFase =
-          currentIdx >= 0 && currentIdx < faseUrutan.length - 1
-            ? faseUrutan[currentIdx + 1]
-            : "selesai";
-
-        await admin
-          .from("pipeline_runs")
-          .update({
-            fase: nextFase,
-            status: nextFase === "selesai" ? "selesai" : "jalan",
-            diperbarui: new Date().toISOString(),
-          })
-          .eq("id", existing.run_id);
-      } else {
-        await admin
-          .from("pipeline_runs")
-          .update({
-            status: "jalan",
-            diperbarui: new Date().toISOString(),
-          })
-          .eq("id", existing.run_id);
-      }
-    } catch (err) {
-      console.error("Gagal memperbarui status run:", err);
+    // 3 & 4: Jika run sudah tutup atau pipeline dimatikan, BERHENTI di sini —
+    // jangan ubah status run, jangan panggil dispatcher.
+    if (runSudahTutup || pipelineDimatikan) {
+      return Response.json({ ok: true });
     }
 
-    // 4. Panggil webhook dispatcher
+    // 5. Hanya jika run masih 'menunggu_persetujuan': set status 'jalan' secara
+    // kondisional (WHERE status='menunggu_persetujuan') agar tidak menimpa
+    // status lain yang mungkin sudah berubah secara konkuren.
+    if (runStatus === "menunggu_persetujuan") {
+      await admin
+        .from("pipeline_runs")
+        .update({
+          status: "jalan",
+          diperbarui: new Date().toISOString(),
+        })
+        .eq("id", existing.run_id)
+        .eq("status", "menunggu_persetujuan");
+    }
+
+    // 6. Panggil webhook dispatcher. Kegagalan tidak menggagalkan respons
+    // (pengaman scheduler 1 menit n8n adalah jaring pengaman).
     const dispatcherUrl = process.env.N8N_DISPATCHER_URL;
     if (dispatcherUrl && dispatcherUrl.startsWith("https://")) {
       try {
