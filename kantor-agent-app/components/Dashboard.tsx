@@ -28,10 +28,8 @@ export function Dashboard() {
         onRefetch={refetchPipeline}
       />
 
-      <ApprovalPanel approvals={approvals} />
-
       {(error || approvalsError || pipelineError) && (
-        <p className="note" style={{ color: "var(--amber)" }}>
+        <p className="note" style={{ color: "var(--amber)", margin: "0 0 12px" }}>
           Gagal memuat data dari Supabase:{" "}
           {error ?? approvalsError ?? pipelineError}
         </p>
@@ -40,22 +38,16 @@ export function Dashboard() {
       {loading ? (
         <p className="note">Memuat data kantor...</p>
       ) : (
-        <div className="main">
+        <div className="dash-grid">
           <MissionLog events={events} />
           <OfficeStage
             agents={agents}
             events={events}
             realtimeConnected={realtimeConnected}
           />
+          <ApprovalPanel approvals={approvals} />
         </div>
       )}
-
-      <p className="note">
-        Tiap agent menulis satu baris event ke database (format JSON di panel
-        jobdesc), lalu halaman ini berlangganan perubahan itu lewat Supabase
-        Realtime dan menggerakkan karakter serta log. Jika koneksi realtime
-        putus, halaman mengambil data terbaru tiap 5 detik sebagai cadangan.
-      </p>
 
       <MulaiProyekModal
         isOpen={isMulaiModalOpen}

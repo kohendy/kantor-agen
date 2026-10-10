@@ -7,7 +7,7 @@ import type { EventRow } from "@/lib/types";
 // INSERT/UPDATE di Supabase, jadi tidak ada aksi tulis yang bisa dilakukan dari sini).
 export function MissionLog({ events }: { events: EventRow[] }) {
   return (
-    <section className="card log" aria-label="Mission Log">
+    <section className="card log mission-log-panel" aria-label="Mission Log">
       <div className="log-head">
         <h2>Mission Log</h2>
         <span>terbaru di atas</span>

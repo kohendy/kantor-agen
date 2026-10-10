@@ -11,7 +11,7 @@ export function DashboardHeader({ email }: { email: string }) {
         </p>
       </div>
       <div className="dash-header">
-        <span className="dash-user">{email}</span>
+        <span className="dash-user" title={email}>{email}</span>
         <form action={logout}>
           <button className="logout-btn" type="submit">
             Keluar

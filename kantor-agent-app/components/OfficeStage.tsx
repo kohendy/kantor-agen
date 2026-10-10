@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AGENTS,
   AGENT_RENDER_ORDER,
@@ -35,6 +35,34 @@ export function OfficeStage({
 }) {
   const [selected, setSelected] = useState<Selection>(null);
   const [gathered, setGathered] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const infoContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!infoOpen) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        infoContainerRef.current &&
+        !infoContainerRef.current.contains(event.target as Node)
+      ) {
+        setInfoOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setInfoOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [infoOpen]);
 
   const agentByName = useMemo(() => {
     const map: Record<string, AgentRow> = {};
@@ -193,40 +221,85 @@ export function OfficeStage({
           {realtimeConnected ? "\u25cf realtime tersambung" : "\u25cb memakai polling cadangan"}
         </span>
       </div>
-      <div className="scroll">
-        <svg
-          className={`stage${gathered ? " gathered" : ""}`}
-          viewBox="0 0 940 560"
-          role="group"
-          aria-label="Kantor isometrik dengan enam ruangan"
-        >
-          {ROOMS.slice()
-            .sort((a, b) => a.x + a.y - (b.x + b.y))
-            .map((room) => (
-              <RoomShape
-                key={room.id}
-                room={room}
-                selected={selected?.type === "room" && selected.id === room.id ||
-                  (selected?.type === "agent" && roomOfAgent(selected.id)?.id === room.id)}
-                onSelect={selectRoom}
-              />
-            ))}
-          <g id="agents">
-            {AGENT_RENDER_ORDER.map((name) => (
-              <AgentShape
-                key={name}
-                name={name}
-                role={AGENTS[name].role}
-                color={colorOfAgent(name)}
-                status={statusOf(name)}
-                isLead={!!AGENTS[name].lead}
-                pos={positions[name]}
-                selected={selected?.type === "agent" && selected.id === name}
-                onSelect={selectAgent}
-              />
-            ))}
-          </g>
-        </svg>
+      <div className="stage-map-area">
+        <div className="stage-svg-wrap">
+          <svg
+            className={`stage${gathered ? " gathered" : ""}`}
+            viewBox="0 0 940 560"
+            role="group"
+            aria-label="Kantor isometrik dengan enam ruangan"
+          >
+            {ROOMS.slice()
+              .sort((a, b) => a.x + a.y - (b.x + b.y))
+              .map((room) => (
+                <RoomShape
+                  key={room.id}
+                  room={room}
+                  selected={
+                    (selected?.type === "room" && selected.id === room.id) ||
+                    (selected?.type === "agent" &&
+                      roomOfAgent(selected.id)?.id === room.id)
+                  }
+                  onSelect={selectRoom}
+                />
+              ))}
+            <g id="agents">
+              {AGENT_RENDER_ORDER.map((name) => (
+                <AgentShape
+                  key={name}
+                  name={name}
+                  role={AGENTS[name].role}
+                  color={colorOfAgent(name)}
+                  status={statusOf(name)}
+                  isLead={!!AGENTS[name].lead}
+                  pos={positions[name]}
+                  selected={selected?.type === "agent" && selected.id === name}
+                  onSelect={selectAgent}
+                />
+              ))}
+            </g>
+          </svg>
+        </div>
+        <div className="stage-info-wrap" ref={infoContainerRef}>
+          <button
+            type="button"
+            className="stage-info-btn"
+            aria-label="Informasi"
+            aria-expanded={infoOpen}
+            onClick={() => setInfoOpen((prev) => !prev)}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+          </button>
+          {infoOpen && (
+            <div
+              className="stage-info-popover"
+              role="region"
+              aria-label="Informasi Sinkronisasi Realtime"
+            >
+              <p>
+                Tiap agent menulis satu baris event ke database (format JSON di
+                panel jobdesc), lalu halaman ini berlangganan perubahan itu
+                lewat Supabase Realtime dan menggerakkan karakter serta log. Jika
+                koneksi realtime putus, halaman mengambil data terbaru tiap 5
+                detik sebagai cadangan.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
       <div className="detail">{renderDetail()}</div>
     </section>
