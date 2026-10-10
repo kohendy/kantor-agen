@@ -7,6 +7,8 @@ import type { ApprovalRow } from "@/lib/types";
 
 type Keputusan = "disetujui" | "ditolak";
 
+const CATATAN_MAX_LENGTH = 500;
+
 async function kirimKeputusan(id: number, keputusan: Keputusan, catatan: string) {
   const res = await fetch(`/api/approvals/${id}`, {
     method: "POST",
@@ -56,7 +58,11 @@ function ApprovalItem({ approval }: { approval: ApprovalRow }) {
         disabled={pending}
         onChange={(e) => setCatatan(e.target.value)}
         rows={2}
+        maxLength={CATATAN_MAX_LENGTH}
       />
+      <p className="note" style={{ margin: "2px 0", fontSize: "0.75rem", opacity: 0.7 }}>
+        {catatan.length}/{CATATAN_MAX_LENGTH}
+      </p>
       {error && (
         <p className="note" style={{ color: "var(--amber)", margin: "4px 0" }}>
           {error}
