@@ -156,15 +156,26 @@ button:focus-visible,
   }
   .stage-card {
     order: 1;
-    min-height: 360px;
-    height: auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .stage-card .stats {
+    flex: 0 0 auto;
   }
   .stage-card .stage-map-area {
-    min-height: 240px;
+    flex: 0 0 280px;
     height: 280px;
+    min-height: 280px;
+    max-height: 280px;
   }
   .stage-card .detail {
-    max-height: 45vh;
+    flex: 0 0 220px;
+    height: 220px;
+    min-height: 220px;
+    max-height: 220px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .approval-panel {
     order: 2;
@@ -352,10 +363,10 @@ li.approved .txt {
   margin-bottom: 0;
 }
 .stage-card .stats {
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 .stage-map-area {
-  flex: 1 1 0%;
+  flex: 0 0 62%;
   min-height: 0;
   position: relative;
   overflow: hidden;
@@ -518,14 +529,28 @@ svg.stage {
   letter-spacing: 0.12em;
 }
 .stage-card .detail {
-  flex: 0 1 auto;
-  min-height: 96px;
-  max-height: 40%;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 10px 14px;
   border-top: 1px solid var(--line);
   background: var(--panel);
   box-sizing: border-box;
+}
+@media (max-width: 767px) {
+  .stage-card .stage-map-area {
+    flex: 0 0 280px;
+    height: 280px;
+    min-height: 280px;
+    max-height: 280px;
+  }
+  .stage-card .detail {
+    flex: 0 0 220px;
+    height: 220px;
+    min-height: 220px;
+    max-height: 220px;
+  }
 }
 .stage-card .detail .hint {
   font-size: 11px;
