@@ -92,6 +92,20 @@ export function useOfficeData(): OfficeData {
             if (prev.some((e) => e.id === row.id)) return prev;
             return [row, ...prev].slice(0, EVENTS_LIMIT);
           });
+
+          // Status agen ikut berubah saat agent memproses event baru,
+          // jadi segarkan daftar agen setiap ada INSERT event.
+          fetchAgents(supabase)
+            .then((latest) => {
+              if (!mounted) return;
+              setAgents(latest);
+            })
+            .catch((err) => {
+              if (!mounted) return;
+              setError(
+                err instanceof Error ? err.message : "Gagal memuat data dari Supabase"
+              );
+            });
         }
       )
       .on(
