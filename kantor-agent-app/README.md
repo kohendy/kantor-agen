@@ -1,6 +1,6 @@
 # Kantor Agent
 
-Dashboard realtime untuk memantau aktivitas agent AI kampanye. Data diambil langsung dari Supabase (tabel `agents` dan `events`) dan ditampilkan sebagai panggung isometrik 4 ruangan + Mission Log.
+Dashboard realtime untuk memantau aktivitas agent AI kampanye. Data diambil langsung dari Supabase (tabel `agents` dan `events`) dan ditampilkan sebagai panggung isometrik 5 ruangan kerja ditambah ruang Meeting H+1 + Mission Log.
 
 ## Tujuan
 Visualisasikan status kerja agent (ATHENA, ARGUS, METIS, dsb.) dan alur event mereka secara realtime tanpa perlu refresh halaman.
@@ -37,7 +37,7 @@ Buka http://localhost:3000
 | Kolom | Tipe | Keterangan |
 |---|---|---|
 | `nama` | text (PK) | Nama agent, mis. `ATHENA`, `METIS` |
-| `ruangan` | text | Ruangan: `Riset`, `Copy`, `Kreatif`, `Ops` |
+| `ruangan` | text | Ruangan: `Riset`, `Copy`, `Landing Page`, `Advertiser`, `Creative` |
 | `peran` | text | Deskripsi peran singkat |
 | `status` | text | `idle` \| `working` \| `review` |
 
