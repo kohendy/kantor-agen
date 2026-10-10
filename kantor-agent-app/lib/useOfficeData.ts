@@ -6,6 +6,7 @@ import type { AgentRow, EventRow } from "./types";
 
 const EVENTS_LIMIT = 40;
 const FALLBACK_POLL_MS = 5000;
+const VISIBILITY_POLL_MS = 10000;
 
 interface OfficeData {
   agents: AgentRow[];
@@ -46,12 +47,14 @@ export function useOfficeData(): OfficeData {
   const [error, setError] = useState<string | null>(null);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const visibilityPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const authListenerRef = useRef<{ data: { subscription: { unsubscribe: () => void } } } | null>(null);
 
   const refetchAll = useCallback(async () => {
     try {
       const [a, e] = await Promise.all([fetchAgents(supabase), fetchEvents(supabase)]);
-      setAgents(a);
-      setEvents(e);
+      setAgents((prev) => (JSON.stringify(prev) === JSON.stringify(a) ? prev : a));
+      setEvents((prev) => (JSON.stringify(prev) === JSON.stringify(e) ? prev : e));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal memuat data dari Supabase");
@@ -60,76 +63,148 @@ export function useOfficeData(): OfficeData {
     }
   }, [supabase]);
 
-  // Poll cadangan tiap 5 detik, hanya aktif kalau realtime tidak tersambung.
+  // Polling cadangan: 5 detik saat realtime putus (dijalankan di useEffect terpisah).
+  // Polling pengaman: 10 detik saat tab terlihat, TERLEPAS dari status realtime.
   useEffect(() => {
+    // Polling cadangan 5 detik
     if (realtimeConnected) {
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
-      return;
+    } else {
+      if (!pollRef.current) {
+        pollRef.current = setInterval(() => {
+          refetchAll();
+        }, FALLBACK_POLL_MS);
+      }
     }
-    pollRef.current = setInterval(() => {
-      refetchAll();
-    }, FALLBACK_POLL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [realtimeConnected, refetchAll]);
 
+  // Polling pengaman 10 detik - hanya saat tab terlihat
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        // Saat tab kembali terlihat, refetch segera sekali
+        refetchAll();
+        if (!visibilityPollRef.current) {
+          visibilityPollRef.current = setInterval(() => {
+            refetchAll();
+          }, VISIBILITY_POLL_MS);
+        }
+      } else {
+        if (visibilityPollRef.current) {
+          clearInterval(visibilityPollRef.current);
+          visibilityPollRef.current = null;
+        }
+      }
+    };
+
+    // Initial check
+    handleVisibilityChange();
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (visibilityPollRef.current) clearInterval(visibilityPollRef.current);
+    };
+  }, [refetchAll]);
+
   useEffect(() => {
     let mounted = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
 
-    const channel = supabase
-      .channel("kantor-agent-realtime")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "events" },
-        (payload) => {
-          if (!mounted) return;
-          const row = payload.new as EventRow;
-          setEvents((prev) => {
-            if (prev.some((e) => e.id === row.id)) return prev;
-            return [row, ...prev].slice(0, EVENTS_LIMIT);
+    // Pasang token sesi ke realtime sebelum subscribe
+    const setupRealtimeAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          await supabase.realtime.setAuth(session.access_token);
+          console.debug("realtime auth dipasang");
+        }
+      } catch (err) {
+        console.debug("realtime setAuth gagal:", err);
+      }
+    };
+
+    setupRealtimeAuth().then(() => {
+      if (!mounted) return;
+
+      // Dengarkan perubahan auth (TOKEN_REFRESHED, SIGNED_IN)
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        if ((event === "TOKEN_REFRESHED" || event === "SIGNED_IN") && session?.access_token) {
+          supabase.realtime.setAuth(session.access_token).catch((err) => {
+            console.debug("realtime setAuth gagal:", err);
           });
-
-          // Status agen ikut berubah saat agent memproses event baru,
-          // jadi segarkan daftar agen setiap ada INSERT event.
-          fetchAgents(supabase)
-            .then((latest) => {
-              if (!mounted) return;
-              setAgents(latest);
-            })
-            .catch((err) => {
-              if (!mounted) return;
-              setError(
-                err instanceof Error ? err.message : "Gagal memuat data dari Supabase"
-              );
-            });
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "agents" },
-        (payload) => {
-          if (!mounted) return;
-          const row = payload.new as AgentRow;
-          setAgents((prev) => prev.map((a) => (a.nama === row.nama ? row : a)));
-        }
-      )
-      .subscribe((status) => {
-        if (!mounted) return;
-        if (status === "SUBSCRIBED") {
-          refetchAll();
-          setRealtimeConnected(true);
-        } else {
-          setRealtimeConnected(false);
+          console.debug("realtime auth dipasang");
         }
       });
+      authListenerRef.current = { data: { subscription } };
+
+      if (!mounted) return;
+
+      channel = supabase
+        .channel("kantor-agent-realtime")
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "events" },
+          (payload) => {
+            if (!mounted) return;
+            const row = payload.new as EventRow;
+            setEvents((prev) => {
+              if (prev.some((e) => e.id === row.id)) return prev;
+              return [row, ...prev].slice(0, EVENTS_LIMIT);
+            });
+
+            // Status agen ikut berubah saat agent memproses event baru,
+            // jadi segarkan daftar agen setiap ada INSERT event.
+            fetchAgents(supabase)
+              .then((latest) => {
+                if (!mounted) return;
+                setAgents((prev) => (JSON.stringify(prev) === JSON.stringify(latest) ? prev : latest));
+              })
+              .catch((err) => {
+                if (!mounted) return;
+                setError(
+                  err instanceof Error ? err.message : "Gagal memuat data dari Supabase"
+                );
+              });
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "agents" },
+          (payload) => {
+            if (!mounted) return;
+            const row = payload.new as AgentRow;
+            setAgents((prev) =>
+              prev.map((a) => (a.nama === row.nama ? row : a))
+            );
+          }
+        )
+        .subscribe((status) => {
+          if (!mounted) return;
+          console.debug(`realtime status: ${status}`);
+          if (status === "SUBSCRIBED") {
+            refetchAll();
+            setRealtimeConnected(true);
+          } else {
+            setRealtimeConnected(false);
+          }
+        });
+    });
 
     return () => {
       mounted = false;
-      supabase.removeChannel(channel);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+      if (authListenerRef.current?.data?.subscription?.unsubscribe) {
+        authListenerRef.current.data.subscription.unsubscribe();
+      }
     };
   }, [refetchAll, supabase]);
 
