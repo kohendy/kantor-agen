@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Kantor Agent
 
-## Getting Started
+Dashboard realtime untuk memantau aktivitas agent AI kampanye. Data diambil langsung dari Supabase (tabel `agents` dan `events`) dan ditampilkan sebagai panggung isometrik 4 ruangan + Mission Log.
 
-First, run the development server:
+## Tujuan
+Visualisasikan status kerja agent (ATHENA, ARGUS, METIS, dsb.) dan alur event mereka secara realtime tanpa perlu refresh halaman.
+
+## Menjalankan Secara Lokal
 
 ```bash
+# 1. Install dependensi
+npm install
+
+# 2. Salin file env contoh dan isi nilainya
+cp .env.local.example .env.local
+# Edit .env.local, isi:
+# NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+# NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
+
+# 3. Jalankan dev server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Buka http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Variabel Lingkungan
+| Variabel | Deskripsi |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | URL project Supabase (format `https://<ref>.supabase.co`) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon/public key Supabase (aman untuk client-side) |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+> **Catatan:** Hanya anon key yang dipakai. Jangan pernah memasukkan service role key ke web app.
 
-## Learn More
+## Skema Tabel Supabase
 
-To learn more about Next.js, take a look at the following resources:
+### `agents`
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| `nama` | text (PK) | Nama agent, mis. `ATHENA`, `METIS` |
+| `ruangan` | text | Ruangan: `Riset`, `Copy`, `Kreatif`, `Ops` |
+| `peran` | text | Deskripsi peran singkat |
+| `status` | text | `idle` \| `working` \| `review` |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### `events`
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| `id` | bigint (PK, auto) | ID event |
+| `waktu` | timestamptz | Waktu kejadian (server time) |
+| `agent` | text | Nama agent (FK ke `agents.nama`) |
+| `status` | text | `working` \| `done` \| `review` |
+| `pesan` | text | Deskripsi event / temuan |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Realtime: aplikasi berlangganan `INSERT` pada `events` dan `UPDATE` pada `agents` via Supabase Realtime. Jika koneksi putus, polling cadangan tiap 5 detik akan aktif otomatis.
 
-## Deploy on Vercel
+## Deploy ke Vercel
+1. Push repo ke GitHub
+2. Import project di Vercel
+3. Set dua Environment Variable di atas (Production, Preview, Development)
+4. Deploy
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Teknologi
+- Next.js 16 (App Router, Turbopack)
+- React 19
+- Supabase JS Client (Realtime + PostgREST)
+- TypeScript, ESLint

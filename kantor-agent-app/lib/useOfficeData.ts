@@ -73,7 +73,7 @@ export function useOfficeData(): OfficeData {
   }, [realtimeConnected, refetchAll]);
 
   useEffect(() => {
-    refetchAll();
+    let mounted = true;
 
     const channel = supabase
       .channel("kantor-agent-realtime")
@@ -81,6 +81,7 @@ export function useOfficeData(): OfficeData {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "events" },
         (payload) => {
+          if (!mounted) return;
           const row = payload.new as EventRow;
           setEvents((prev) => {
             if (prev.some((e) => e.id === row.id)) return prev;
@@ -92,19 +93,26 @@ export function useOfficeData(): OfficeData {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "agents" },
         (payload) => {
+          if (!mounted) return;
           const row = payload.new as AgentRow;
           setAgents((prev) => prev.map((a) => (a.nama === row.nama ? row : a)));
         }
       )
       .subscribe((status) => {
-        setRealtimeConnected(status === "SUBSCRIBED");
+        if (!mounted) return;
+        if (status === "SUBSCRIBED") {
+          refetchAll();
+          setRealtimeConnected(true);
+        } else {
+          setRealtimeConnected(false);
+        }
       });
 
     return () => {
+      mounted = false;
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refetchAll]);
 
   return { agents, events, loading, error, realtimeConnected };
 }
