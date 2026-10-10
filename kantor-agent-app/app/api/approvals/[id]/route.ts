@@ -83,7 +83,7 @@ export async function POST(
 
   const { data: existing, error: existingError } = await admin
     .from("approvals")
-    .select("id, status")
+    .select("id, status, run_id, step_id")
     .eq("id", approvalId)
     .maybeSingle();
 
@@ -94,7 +94,7 @@ export async function POST(
     return Response.json({ error: "Approval tidak ditemukan" }, { status: 404 });
   }
 
-  // 3. Klaim atomik: hanya satu request yang boleh lanjut memanggil n8n.
+  // 3. Klaim atomik: hanya satu request yang boleh lanjut memproses approval.
   // WHERE status='pending' AND diputuskan IS NULL mencegah dua request
   // memproses approval yang sama secara bersamaan.
   const { data: claimed, error: claimError } = await admin
@@ -115,6 +115,116 @@ export async function POST(
     );
   }
 
+  // JIKA APPROVAL PUNYA RUN_ID: Alur orkestrator dispatcher (JANGAN pakai resume_url).
+  if (existing.run_id) {
+    // 1. Simpan keputusan di approvals
+    const { data: finalUpdate, error: updateError } = await admin
+      .from("approvals")
+      .update({ status: body.keputusan, catatan })
+      .eq("id", approvalId)
+      .eq("status", "pending")
+      .select("id");
+
+    if (updateError || !finalUpdate || finalUpdate.length === 0) {
+      await releaseClaim(admin, approvalId);
+      return Response.json(
+        { error: "Gagal mencatat keputusan approval proyek" },
+        { status: 500 }
+      );
+    }
+
+    // 2. Simpan catatan sebagai umpan balik di step
+    if (existing.step_id && catatan) {
+      try {
+        const { data: stepData } = await admin
+          .from("pipeline_steps")
+          .select("id, input")
+          .eq("id", existing.step_id)
+          .maybeSingle();
+
+        if (stepData) {
+          const currentInput =
+            typeof stepData.input === "object" && stepData.input !== null
+              ? (stepData.input as Record<string, unknown>)
+              : {};
+          await admin
+            .from("pipeline_steps")
+            .update({
+              input: { ...currentInput, umpan_balik: catatan },
+              diperbarui: new Date().toISOString(),
+            })
+            .eq("id", existing.step_id);
+        }
+      } catch (err) {
+        console.error("Gagal menyimpan umpan balik di step:", err);
+      }
+    }
+
+    // 3. Perbarui status pipeline_runs
+    // Bila disetujui: run lanjut ke fase berikutnya atau tetap 'jalan'
+    // Bila ditolak: set run ke 'jalan' agar dispatcher memproses revisi berikutnya
+    try {
+      if (body.keputusan === "disetujui") {
+        const { data: runData } = await admin
+          .from("pipeline_runs")
+          .select("id, fase")
+          .eq("id", existing.run_id)
+          .maybeSingle();
+
+        const faseUrutan = ["riset", "copy_creative", "landing_page", "ads", "iklan_berjalan"];
+        const currentIdx = faseUrutan.indexOf((runData?.fase || "riset").toLowerCase());
+        const nextFase =
+          currentIdx >= 0 && currentIdx < faseUrutan.length - 1
+            ? faseUrutan[currentIdx + 1]
+            : "selesai";
+
+        await admin
+          .from("pipeline_runs")
+          .update({
+            fase: nextFase,
+            status: nextFase === "selesai" ? "selesai" : "jalan",
+            diperbarui: new Date().toISOString(),
+          })
+          .eq("id", existing.run_id);
+      } else {
+        await admin
+          .from("pipeline_runs")
+          .update({
+            status: "jalan",
+            diperbarui: new Date().toISOString(),
+          })
+          .eq("id", existing.run_id);
+      }
+    } catch (err) {
+      console.error("Gagal memperbarui status run:", err);
+    }
+
+    // 4. Panggil webhook dispatcher
+    const dispatcherUrl = process.env.N8N_DISPATCHER_URL;
+    if (dispatcherUrl && dispatcherUrl.startsWith("https://")) {
+      try {
+        await fetch(dispatcherUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "approval_decided",
+            approval_id: approvalId,
+            run_id: existing.run_id,
+            step_id: existing.step_id,
+            keputusan: body.keputusan,
+            catatan,
+          }),
+          signal: AbortSignal.timeout(N8N_TIMEOUT_MS),
+        });
+      } catch (dispatcherErr) {
+        console.error("Gagal memanggil webhook dispatcher:", dispatcherErr);
+      }
+    }
+
+    return Response.json({ ok: true });
+  }
+
+  // ALUR LAMA (tanpa run_id): tetap gunakan resume_url seperti semula
   const { data: secret, error: secretError } = await admin
     .from("approval_secrets")
     .select("resume_url")

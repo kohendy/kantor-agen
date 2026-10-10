@@ -42,12 +42,14 @@ Buka http://localhost:3000, lalu login dengan user yang dibuat di langkah "Login
 |---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | URL project Supabase (format `https://<ref>.supabase.co`) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon/public key Supabase (aman untuk client-side) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key Supabase. **Hanya dipakai di server** (route `/api/approvals/[id]`), tidak pernah diimpor ke komponen client. Jangan pakai prefix `NEXT_PUBLIC_`. |
-| `APPROVER_EMAILS` | Daftar email yang boleh menyetujui/menolak approval, dipisah koma. Hanya dibaca di server. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key Supabase. **Hanya dipakai di server** (route `/api/approvals/[id]`, `/api/projects/*`), tidak pernah diimpor ke komponen client. Jangan pakai prefix `NEXT_PUBLIC_`. |
+| `APPROVER_EMAILS` | Daftar email yang boleh menyetujui/menolak approval dan memulai/menghentikan proyek, dipisah koma. Hanya dibaca di server. |
+| `N8N_DISPATCHER_URL` | Webhook URL dari workflow n8n "Orkestrator Dispatcher" (format `https://<n8n-domain>/webhook/<path>`). Server-only, digunakan untuk memicu dispatcher saat proyek dimulai dan saat approval diputuskan. |
 
-> **Catatan keamanan:** `SUPABASE_SERVICE_ROLE_KEY` dan `APPROVER_EMAILS` tidak boleh pernah muncul di bundle browser. Setelah `npm run build`, kamu bisa cek sendiri dengan:
+> **Catatan keamanan:** `SUPABASE_SERVICE_ROLE_KEY`, `APPROVER_EMAILS`, dan `N8N_DISPATCHER_URL` tidak boleh pernah muncul di bundle browser. Setelah `npm run build`, kamu bisa cek sendiri dengan:
 > ```bash
 > grep -r "SUPABASE_SERVICE_ROLE_KEY" .next/static
+> grep -r "N8N_DISPATCHER_URL" .next/static
 > ```
 > Perintah ini seharusnya tidak menemukan apa pun.
 
@@ -74,7 +76,7 @@ Buka http://localhost:3000, lalu login dengan user yang dibuat di langkah "Login
 | Kolom | Tipe | Keterangan |
 |---|---|---|
 | `id` | bigint (PK, auto) | ID approval |
-| `event_id` | bigint | FK ke `events.id` |
+| `event_id` | bigint, nullable | FK ke `events.id` (opsional untuk orkestrasi) |
 | `agent` | text | Nama agent (FK ke `agents.nama`) |
 | `ringkasan` | text, nullable | Ringkasan singkat yang perlu disetujui |
 | `status` | text | `pending` \| `disetujui` \| `ditolak` \| `kedaluwarsa` |
@@ -82,29 +84,63 @@ Buka http://localhost:3000, lalu login dengan user yang dibuat di langkah "Login
 | `dibuat` | timestamptz | Waktu approval dibuat |
 | `diputuskan` | timestamptz, nullable | Waktu keputusan diambil |
 | `diputuskan_oleh` | text, nullable | Email approver |
+| `run_id` | bigint, nullable | FK ke `pipeline_runs.id` (untuk alur orkestrasi) |
+| `step_id` | bigint, nullable | FK ke `pipeline_steps.id` |
+| `gate` | text, nullable | Nama gate peninjauan (mis. `Riset`) |
 
 ### `approval_secrets`
 | Kolom | Tipe | Keterangan |
 |---|---|---|
 | `approval_id` | bigint (PK, FK ke `approvals.id`) | |
-| `resume_url` | text | URL resume webhook n8n. **Tidak punya RLS policy** — hanya `service_role` yang bisa membacanya, dan tidak pernah dikirim ke browser. |
+| `resume_url` | text | URL resume webhook n8n (hanya untuk approval legacy yang tidak memiliki `run_id`). **Tidak punya RLS policy** — hanya `service_role` yang bisa membacanya, dan tidak pernah dikirim ke browser. |
 
-Realtime: aplikasi berlangganan `INSERT` pada `events`, `UPDATE` pada `agents`, dan semua perubahan pada `approvals` via Supabase Realtime. Jika koneksi putus, polling cadangan tiap 5 detik akan aktif otomatis.
+### `pipeline_runs`
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| `id` | bigint (PK, identity) | ID run proyek |
+| `judul` | text | Judul proyek kampanye |
+| `brief` | jsonb | Dokumen brief (produk, target audiens, tujuan, budget harian) |
+| `fase` | text | Fase saat ini (`riset`, `copy_creative`, `landing_page`, `ads`, `iklan_berjalan`, `selesai`) |
+| `status` | text | `jalan` \| `menunggu_persetujuan` \| `butuh_keputusan` \| `selesai` \| `dihentikan` |
+| `iterasi` | int | Nomor iterasi siklus kerja |
+| `dibuat` | timestamptz | Waktu proyek dibuat |
+| `diperbarui` | timestamptz | Waktu terakhir status diperbarui |
 
-## Alur Persetujuan
+### `pipeline_steps`
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| `id` | bigint (PK, identity) | ID langkah pipeline |
+| `run_id` | bigint (FK) | FK ke `pipeline_runs.id` |
+| `agen` | text, nullable | Agen yang menangani langkah ini (mis. `METIS`) |
+| `fase` | text | Fase dari langkah ini |
+| `input` | jsonb, nullable | Input yang diberikan ke langkah/agen |
+| `output` | jsonb, nullable | Output atau temuan langkah |
+| `status` | text | `menunggu` \| `jalan` \| `selesai` \| `gagal` |
+| `revisi_ke` | int | Penghitung revisi (0 = draf awal, 1 = revisi ke-1, 2 = revisi ke-2) |
+| `dibuat` | timestamptz | Waktu langkah dibuat |
+| `diperbarui` | timestamptz | Waktu langkah diperbarui |
 
-1. n8n menulis baris baru ke `approvals` (status `pending`) dan `resume_url` ke `approval_secrets`.
-2. Panel "Menunggu Persetujuan" di dashboard menampilkannya secara realtime.
-3. Approver (email ada di `APPROVER_EMAILS`) klik **Setujui**/**Tolak**, opsional isi catatan.
-4. Browser POST ke `/api/approvals/[id]` dengan `{ keputusan, catatan }` — **tanpa** `resume_url`.
-5. Server (route handler) verifikasi session (`getUser()`), cek email ada di `APPROVER_EMAILS`, lalu pakai `SUPABASE_SERVICE_ROLE_KEY` untuk membaca `resume_url` dan memastikan approval masih `pending`.
-6. Server POST `{ keputusan, catatan }` ke `resume_url` tersebut. Kalau n8n menolak atau execution-nya sudah kedaluwarsa, status approval diubah jadi `kedaluwarsa` dan error dikembalikan ke browser.
-7. Kalau sukses, kolom `status`, `diputuskan`, `diputuskan_oleh` di `approvals` diperbarui.
+### `pipeline_control`
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| `id` | int (PK, check id=1) | Baris tunggal kontrol sistem |
+| `jalan` | boolean | Sakelar global orkestrasi (default `true`) |
+
+Realtime: aplikasi berlangganan `INSERT` pada `events`, `UPDATE` pada `agents`, serta semua perubahan pada `approvals`, `pipeline_runs`, dan `pipeline_steps` via Supabase Realtime. Jika koneksi putus, polling cadangan akan aktif otomatis.
+
+## Menambahkan `N8N_DISPATCHER_URL` ke Vercel
+
+1. Buka dashboard proyek di Vercel: `https://vercel.com/<tim>/<project>/settings/environment-variables`
+2. Tambahkan variabel baru:
+   - **Key**: `N8N_DISPATCHER_URL`
+   - **Value**: Masukkan webhook URL production workflow "Orkestrator Dispatcher" dari n8n instance kamu (tanpa tanda kutip).
+   - **Environments**: Centang `Production`, `Preview`, dan `Development`.
+3. Klik **Save** lalu lakukan deploy ulang proyek.
 
 ## Deploy ke Vercel
-1. Push repo ke GitHub
+1. Push repo ke GitHub (buat Pull Request)
 2. Import project di Vercel
-3. Set empat Environment Variable di atas (Production, Preview, Development)
+3. Set seluruh Environment Variable di atas (Production, Preview, Development)
 4. Deploy
 
 ## Teknologi
