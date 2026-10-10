@@ -131,18 +131,18 @@ export const AGENTS: Record<string, AgentConfig> = {
   ZEUS: {
     role: "Kepala Iklan",
     lead: true,
-    tools: ["Meta Ads API", "database"],
-    desc: "Menentukan prioritas ad set dan meminta persetujuan manusia untuk perubahan anggaran besar.",
+    tools: ["database"],
+    desc: "Menetapkan rencana uji, target biaya, dan prioritas ad set. Menyaring usulan dari Artemis dan Plutus, menyelesaikan bentrokan, lalu mengajukan yang layak ke manusia. Tidak mengubah akun iklan sendiri.",
   },
   ARTEMIS: {
-    role: "Pengelola Ad Set",
-    tools: ["Meta Ads API"],
-    desc: "Membuat ad set pengujian, membandingkan hasilnya, dan mematikan yang boros.",
+    role: "Pengelola Kampanye dan Uji",
+    tools: ["Meta Ads lewat Pipeboard (rencana)"],
+    desc: "Membuat campaign, ad set, dan varian iklan uji sesuai rencana Zeus (selalu dibuat nonaktif), membandingkan hasil uji, menganalisis performa, dan mengganti materi iklan lalu menganalisisnya ulang. Tidak mengubah budget atau menjeda iklan.",
   },
   PLUTUS: {
     role: "Anggaran dan Laporan",
-    tools: ["spreadsheet", "Meta Ads API"],
-    desc: "Menghitung sisa anggaran, biaya per pendaftar, dan mengirim laporan harian.",
+    tools: ["Meta Ads lewat Pipeboard (rencana)", "database"],
+    desc: "Mengawasi biaya dan sisa anggaran, mengusulkan jeda untuk iklan boros dan kenaikan budget untuk yang terbukti dalam plafon, serta mengirim laporan harian. Tidak membuat atau mengubah materi iklan.",
   },
   THEIA: {
     role: "Direktur Creative",
