@@ -20,7 +20,7 @@ export interface EventRow {
 
 export interface ApprovalRow {
   id: number;
-  event_id: number;
+  event_id: number | null;
   agent: string;
   ringkasan: string | null;
   status: ApprovalStatus;
@@ -28,4 +28,49 @@ export interface ApprovalRow {
   dibuat: string;
   diputuskan: string | null;
   diputuskan_oleh: string | null;
+  run_id?: number | null;
+  step_id?: number | null;
+  gate?: string | null;
 }
+
+export type PipelineRunStatus =
+  | "jalan"
+  | "menunggu_persetujuan"
+  | "butuh_keputusan"
+  | "selesai"
+  | "dihentikan";
+
+export interface ProjectBrief {
+  produk: string;
+  target_audiens: string;
+  tujuan: string;
+  budget_harian?: number | null;
+  [key: string]: unknown;
+}
+
+export interface PipelineRunRow {
+  id: number;
+  judul: string;
+  brief: ProjectBrief;
+  fase: string;
+  status: PipelineRunStatus;
+  iterasi: number;
+  dibuat: string;
+  diperbarui: string;
+}
+
+export type PipelineStepStatus = "menunggu" | "jalan" | "selesai" | "gagal";
+
+export interface PipelineStepRow {
+  id: number;
+  run_id: number;
+  agen: string | null;
+  fase: string | null;
+  input: Record<string, unknown> | null;
+  output: Record<string, unknown> | null;
+  status: PipelineStepStatus;
+  revisi_ke: number;
+  dibuat: string;
+  diperbarui: string;
+}
+
