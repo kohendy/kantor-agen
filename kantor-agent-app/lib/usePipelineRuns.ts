@@ -36,6 +36,7 @@ export function usePipelineRuns(): PipelineRunsData {
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const visibilityPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const authSubscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
 
   const refetch = useCallback(async () => {
     try {
@@ -118,8 +119,13 @@ export function usePipelineRuns(): PipelineRunsData {
           supabase.realtime.setAuth(session.access_token).catch(() => {});
         }
       });
+      authSubscriptionRef.current = subscription;
 
-      if (!mounted) return;
+      if (!mounted) {
+        subscription.unsubscribe();
+        authSubscriptionRef.current = null;
+        return;
+      }
 
       channel = supabase
         .channel("kantor-agent-pipeline-runs")
@@ -140,14 +146,14 @@ export function usePipelineRuns(): PipelineRunsData {
             setRealtimeConnected(false);
           }
         });
-
-      return () => {
-        subscription.unsubscribe();
-      };
     });
 
     return () => {
       mounted = false;
+      if (authSubscriptionRef.current) {
+        authSubscriptionRef.current.unsubscribe();
+        authSubscriptionRef.current = null;
+      }
       if (channel) {
         supabase.removeChannel(channel);
       }
