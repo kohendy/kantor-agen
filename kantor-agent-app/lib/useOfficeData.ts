@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { supabase } from "./supabaseClient";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createClient } from "./supabase/client";
 import type { AgentRow, EventRow } from "./types";
 
 const EVENTS_LIMIT = 40;
@@ -15,7 +15,9 @@ interface OfficeData {
   realtimeConnected: boolean;
 }
 
-async function fetchAgents(): Promise<AgentRow[]> {
+async function fetchAgents(
+  supabase: ReturnType<typeof createClient>
+): Promise<AgentRow[]> {
   const { data, error } = await supabase
     .from("agents")
     .select("nama, ruangan, peran, status")
@@ -24,7 +26,9 @@ async function fetchAgents(): Promise<AgentRow[]> {
   return data ?? [];
 }
 
-async function fetchEvents(): Promise<EventRow[]> {
+async function fetchEvents(
+  supabase: ReturnType<typeof createClient>
+): Promise<EventRow[]> {
   const { data, error } = await supabase
     .from("events")
     .select("id, waktu, agent, status, pesan")
@@ -35,6 +39,7 @@ async function fetchEvents(): Promise<EventRow[]> {
 }
 
 export function useOfficeData(): OfficeData {
+  const supabase = useMemo(() => createClient(), []);
   const [agents, setAgents] = useState<AgentRow[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,7 +49,7 @@ export function useOfficeData(): OfficeData {
 
   const refetchAll = useCallback(async () => {
     try {
-      const [a, e] = await Promise.all([fetchAgents(), fetchEvents()]);
+      const [a, e] = await Promise.all([fetchAgents(supabase), fetchEvents(supabase)]);
       setAgents(a);
       setEvents(e);
       setError(null);
@@ -53,7 +58,7 @@ export function useOfficeData(): OfficeData {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [supabase]);
 
   // Poll cadangan tiap 5 detik, hanya aktif kalau realtime tidak tersambung.
   useEffect(() => {
@@ -112,7 +117,7 @@ export function useOfficeData(): OfficeData {
       mounted = false;
       supabase.removeChannel(channel);
     };
-  }, [refetchAll]);
+  }, [refetchAll, supabase]);
 
   return { agents, events, loading, error, realtimeConnected };
 }
