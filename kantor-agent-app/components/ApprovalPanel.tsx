@@ -90,22 +90,91 @@ function ApprovalItem({ approval }: { approval: ApprovalRow }) {
   );
 }
 
-export function ApprovalPanel({ approvals }: { approvals: ApprovalRow[] }) {
+export function ApprovalPanel({
+  approvals,
+  isFullFrame = false,
+  isCollapsed = false,
+  onToggleCollapse,
+  isMobileSheetOpen = false,
+  onCloseMobileSheet,
+}: {
+  approvals: ApprovalRow[];
+  isFullFrame?: boolean;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
+  isMobileSheetOpen?: boolean;
+  onCloseMobileSheet?: () => void;
+}) {
   return (
-    <section className="card log approval-panel" aria-label="Menunggu persetujuan">
+    <section
+      className={`card log approval-panel ${
+        isFullFrame ? "is-full-frame-panel" : ""
+      } ${isCollapsed ? "collapsed" : ""} ${
+        isMobileSheetOpen ? "is-mobile-open" : ""
+      }`}
+      aria-label="Menunggu persetujuan"
+    >
       <div className="log-head">
-        <h2>Menunggu Persetujuan</h2>
-        <span>{approvals.length} pending</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <h2>Menunggu Persetujuan</h2>
+          {isFullFrame && isCollapsed && (
+            <span className="ff-badge">{approvals.length} pending</span>
+          )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          {!isCollapsed && <span>{approvals.length} pending</span>}
+          {isFullFrame && onToggleCollapse && (
+            <button
+              type="button"
+              className="ff-chevron-btn"
+              aria-label={
+                isCollapsed
+                  ? "Buka panel persetujuan"
+                  : "Lipat panel persetujuan"
+              }
+              onClick={onToggleCollapse}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  transform: isCollapsed ? "rotate(180deg)" : "none",
+                  transition: "transform 0.2s",
+                }}
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          )}
+          {isMobileSheetOpen && onCloseMobileSheet && (
+            <button
+              type="button"
+              className="ff-close-btn"
+              aria-label="Tutup panel"
+              onClick={onCloseMobileSheet}
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
-      {approvals.length === 0 ? (
-        <div className="empty-state">Tidak ada yang menunggu persetujuan.</div>
-      ) : (
-        <ul className="log-list approval-list" aria-live="polite">
-          {approvals.map((a) => (
-            <ApprovalItem key={a.id} approval={a} />
-          ))}
-        </ul>
-      )}
+      {!isCollapsed &&
+        (approvals.length === 0 ? (
+          <div className="empty-state">Tidak ada yang menunggu persetujuan.</div>
+        ) : (
+          <ul className="log-list approval-list" aria-live="polite">
+            {approvals.map((a) => (
+              <ApprovalItem key={a.id} approval={a} />
+            ))}
+          </ul>
+        ))}
     </section>
   );
 }
