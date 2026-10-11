@@ -756,18 +756,30 @@ export function OfficeStage3D({
     });
     agentRecordsRef.current = agentRecords;
 
-    // Pointer events for Click vs Drag distinction (~5px threshold)
+    // Pointer events for Click vs Drag distinction (~5px threshold) & multi-touch pinch tracking
     let pointerDownPos = { x: 0, y: 0 };
     let isPointerDragging = false;
+    let hadMultiTouchOrCancel = false;
+    const activePointers = new Set<number>();
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
 
     function onPointerDown(e: PointerEvent) {
+      if (activePointers.size === 0) {
+        hadMultiTouchOrCancel = false;
+        isPointerDragging = false;
+      }
+      activePointers.add(e.pointerId);
+      if (activePointers.size > 1) {
+        hadMultiTouchOrCancel = true;
+      }
       pointerDownPos = { x: e.clientX, y: e.clientY };
-      isPointerDragging = false;
     }
 
     function onPointerMove(e: PointerEvent) {
+      if (activePointers.size > 1) {
+        hadMultiTouchOrCancel = true;
+      }
       const dist = Math.hypot(
         e.clientX - pointerDownPos.x,
         e.clientY - pointerDownPos.y
@@ -797,12 +809,30 @@ export function OfficeStage3D({
       }
     }
 
+    function onPointerCancel(e: PointerEvent) {
+      activePointers.delete(e.pointerId);
+      hadMultiTouchOrCancel = true;
+      isPointerDragging = true;
+    }
+
     function onPointerUp(e: PointerEvent) {
       const dist = Math.hypot(
         e.clientX - pointerDownPos.x,
         e.clientY - pointerDownPos.y
       );
-      if (dist > 5 || isPointerDragging) return; // was a drag / pan / orbit / pinch, not a click/tap
+      const shouldIgnore =
+        hadMultiTouchOrCancel ||
+        activePointers.size > 1 ||
+        isPointerDragging ||
+        dist > 5;
+
+      activePointers.delete(e.pointerId);
+      if (activePointers.size === 0) {
+        hadMultiTouchOrCancel = false;
+        isPointerDragging = false;
+      }
+
+      if (shouldIgnore) return; // was a drag / pan / orbit / pinch / cancel, not a single-pointer tap
 
       const rect = renderer.domElement.getBoundingClientRect();
       mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -829,6 +859,7 @@ export function OfficeStage3D({
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointercancel", onPointerCancel);
 
     // ResizeObserver: updates canvas size without changing camera position or target
     const resizeObserver = new ResizeObserver((entries) => {
@@ -891,6 +922,7 @@ export function OfficeStage3D({
         getCameraTarget: () => controls.target.clone(),
         getMemoryInfo: () => ({ ...renderer.info.memory }),
         getSelected: () => selectedRef.current,
+        getActivePointerCount: () => activePointers.size,
         getAgentPosition: (nama: string) =>
           agentRecords[nama]?.group.position.clone(),
         getAgentTargetPosition: (nama: string) =>
@@ -1021,6 +1053,7 @@ export function OfficeStage3D({
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointercancel", onPointerCancel);
       gl.canvas.removeEventListener("webglcontextlost", onContextLost);
       gl.canvas.removeEventListener("webglcontextrestored", onContextRestored);
 
