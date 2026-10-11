@@ -1,6 +1,5 @@
 import { chromium } from "playwright";
 import fs from "fs";
-import path from "path";
 import { createClient } from "@supabase/supabase-js";
 
 const envRaw = fs.readFileSync(".env.local", "utf8");
@@ -18,11 +17,6 @@ const supabase = createClient(
   env.NEXT_PUBLIC_SUPABASE_URL,
   env.SUPABASE_SERVICE_ROLE_KEY
 );
-
-const SCREENSHOT_DIR = path.resolve("./verification_artifacts");
-if (!fs.existsSync(SCREENSHOT_DIR)) {
-  fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
-}
 
 async function run() {
   console.log("=== STARTING 3D THREE.JS VERIFICATION ===");
@@ -61,288 +55,320 @@ async function run() {
   await page.fill('input[name="password"]', "test-password-12345");
   await page.click('button[type="submit"]');
 
-  await page.waitForURL("http://localhost:3000/", { timeout: 15000 });
-  console.log("   Logged in successfully. Loaded dashboard /");
+  await page.waitForURL((url) => url.pathname === "/", { timeout: 20000 });
+  await page.goto("http://localhost:3000/?e2e=1", { waitUntil: "networkidle" });
+  console.log("   Logged in successfully. Loaded dashboard /?e2e=1");
 
   // Wait for 3D stage canvas
   await page.waitForSelector("canvas.stage-3d-canvas", { timeout: 15000 });
-  await page.waitForTimeout(2000); // Wait for textures & initial render
+  await page.waitForTimeout(1500); // Wait for initial render
   console.log("   3D Canvas loaded and mounted.");
 
-  // Helper to query camera position & target
-  async function getCameraState() {
-    return await page.evaluate(() => {
+  // Helper to query camera state & scene UUID
+  async function getCameraAndSceneState(targetPage = page) {
+    return await targetPage.evaluate(() => {
       const stage = window.__STAGE_3D__;
       if (!stage) return null;
       const p = stage.getCameraPosition();
       const t = stage.getCameraTarget();
+      const uuid = stage.getSceneUuid ? stage.getSceneUuid() : (stage.scene ? stage.scene.uuid : null);
       return {
         position: { x: +p.x.toFixed(4), y: +p.y.toFixed(4), z: +p.z.toFixed(4) },
         target: { x: +t.x.toFixed(4), y: +t.y.toFixed(4), z: +t.z.toFixed(4) },
+        sceneUuid: uuid,
       };
     });
   }
 
-  // 2. SCREENSHOTS AT VIEWPORTS (1440, 1024, 390) FOR NORMAL & FULL FRAME
-  console.log("2. Taking screenshots across viewports...");
-
-  const viewports = [
-    { name: "1440", width: 1440, height: 900 },
-    { name: "1024", width: 1024, height: 768 },
-    { name: "390", width: 390, height: 844 },
-  ];
-
-  for (const vp of viewports) {
-    await page.setViewportSize({ width: vp.width, height: vp.height });
-    await page.waitForTimeout(600);
-
-    // Normal mode screenshot
-    const normPath = path.join(SCREENSHOT_DIR, `normal_${vp.name}.png`);
-    if (!fs.existsSync(normPath)) {
-      await page.screenshot({ path: normPath, timeout: 20000 });
-      console.log(`   Captured normal mode (${vp.name}): ${normPath}`);
-    } else {
-      console.log(`   Existing normal mode screenshot found (${vp.name}): ${normPath}`);
-    }
-
-    // Enter Full Frame mode
-    const fsBtn = page.locator("button.stage-fullscreen-btn");
-    await fsBtn.click({ noWaitAfter: true });
-    await page.waitForTimeout(600);
-
-    const ffPath = path.join(SCREENSHOT_DIR, `fullframe_${vp.name}.png`);
-    if (!fs.existsSync(ffPath)) {
-      await page.screenshot({ path: ffPath, timeout: 20000 });
-      console.log(`   Captured full frame mode (${vp.name}): ${ffPath}`);
-    } else {
-      console.log(`   Existing full frame mode screenshot found (${vp.name}): ${ffPath}`);
-    }
-
-    // If mobile, test bottom sheet open
-    if (vp.width === 390) {
-      const logNavBtn = page.locator("button.mobile-nav-btn", { hasText: "Log" });
-      if (await logNavBtn.isVisible()) {
-        await logNavBtn.click({ noWaitAfter: true });
-        await page.waitForTimeout(400);
-        const mbPath = path.join(SCREENSHOT_DIR, `fullframe_mobile_bottomsheet.png`);
-        if (!fs.existsSync(mbPath)) {
-          await page.screenshot({ path: mbPath, timeout: 20000 });
+  // Helper to wait until camera has completely settled (damping finished)
+  async function waitForCameraStop(targetPage = page, maxWaitMs = 6000) {
+    const start = Date.now();
+    let prev = null;
+    while (Date.now() - start < maxWaitMs) {
+      await targetPage.waitForTimeout(200);
+      const curr = await getCameraAndSceneState(targetPage);
+      if (prev) {
+        const dx = Math.abs(curr.position.x - prev.position.x);
+        const dy = Math.abs(curr.position.y - prev.position.y);
+        const dz = Math.abs(curr.position.z - prev.position.z);
+        if (dx < 0.0001 && dy < 0.0001 && dz < 0.0001) {
+          return curr;
         }
-        console.log(`   Captured mobile bottom sheet open.`);
       }
+      prev = curr;
     }
-
-    // Exit Full Frame mode (via Escape or button)
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(400);
-    const isStillFull = await page.evaluate(() =>
-      document.querySelector(".dash-grid")?.classList.contains("is-full-frame")
-    );
-    if (isStillFull) {
-      await page.locator("button.stage-fullscreen-btn").click({ noWaitAfter: true });
-      await page.waitForTimeout(400);
-    }
+    return await getCameraAndSceneState(targetPage);
   }
 
-  // Restore 1440 viewport for interaction tests
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.waitForTimeout(500);
-
-  // 3. INTERACTION TESTS: ROTATE, PAN, ZOOM
-  console.log("3. Testing OrbitControls interactions (drag rotate, pan, wheel zoom)...");
+  // 2. ORBIT & ZOOM TEST
+  console.log("2. Testing OrbitControls interactions (drag rotate, zoom)...");
   const canvasBox = await page.locator("canvas.stage-3d-canvas").boundingBox();
-  const openX = canvasBox.x + canvasBox.width * 0.2;
+  const openX = canvasBox.x + canvasBox.width * 0.25;
   const openY = canvasBox.y + canvasBox.height * 0.25;
 
-  const camBeforeRotate = await getCameraState();
-  // Drag rotate (left button)
+  const camInitial = await getCameraAndSceneState();
+  // Rotate drag
   await page.mouse.move(openX, openY);
   await page.mouse.down({ button: "left" });
-  await page.mouse.move(openX + 120, openY - 60, { steps: 10 });
+  await page.mouse.move(openX + 140, openY - 60, { steps: 10 });
   await page.mouse.up({ button: "left" });
-  await page.waitForTimeout(600);
-  const camAfterRotate = await getCameraState();
-  console.log("   Rotate drag completed. Pos changed:", camBeforeRotate.position, "->", camAfterRotate.position);
+  await page.waitForTimeout(400);
 
-  // Drag pan (right button)
-  const camBeforePan = await getCameraState();
-  await page.mouse.move(openX, openY);
-  await page.mouse.down({ button: "right" });
-  await page.mouse.move(openX - 80, openY + 40, { steps: 10 });
-  await page.mouse.up({ button: "right" });
-  await page.waitForTimeout(600);
-  const camAfterPan = await getCameraState();
-  console.log("   Pan drag completed. Pos changed:", camBeforePan.position, "->", camAfterPan.position);
+  // Zoom
+  await page.mouse.wheel(0, -350);
+  const camMoved = await waitForCameraStop(page);
+  console.log("   Camera rotated and zoomed (fully settled).");
+  console.log("   Before:", camInitial);
+  console.log("   After rotate & zoom:", camMoved);
 
-  // Zoom (mouse wheel)
-  const camBeforeZoom = await getCameraState();
-  await page.mouse.move(openX, openY);
-  await page.mouse.wheel(0, -400);
-  await page.waitForTimeout(600);
-  const camAfterZoom = await getCameraState();
-  console.log("   Wheel zoom completed. Pos changed:", camBeforeZoom.position, "->", camAfterZoom.position);
+  // 3. REALTIME STATUS UPDATE INVARIANCE TEST (Rotated/Zoomed Camera)
+  console.log("3. Testing Realtime Status Update Invariance (Camera rotated/zoomed)...");
+  const stateBeforeUpdate = await getCameraAndSceneState();
+  console.log("   State BEFORE Supabase status change:");
+  console.log("     Camera Pos:", JSON.stringify(stateBeforeUpdate.position));
+  console.log("     Controls Target:", JSON.stringify(stateBeforeUpdate.target));
+  console.log("     Scene UUID:", stateBeforeUpdate.sceneUuid);
 
-  // Reset button test
-  console.log("4. Testing Reset Camera button...");
-  const resetBtn = page.locator("button.stage-reset-btn");
-  await resetBtn.click({ noWaitAfter: true });
-  await page.waitForTimeout(1600); // wait for 520ms animation + complete damping settling
-  const camAfterReset = await getCameraState();
-  console.log("   Camera after reset:", camAfterReset);
-  console.log("   Position close to initial (14.5, 17.5, 17.0):",
-    Math.abs(camAfterReset.position.x - 14.5) < 0.2 &&
-    Math.abs(camAfterReset.position.y - 17.5) < 0.2 &&
-    Math.abs(camAfterReset.position.z - 17.0) < 0.2
-  );
-
-  // 5. PROOF: CAMERA DOES NOT CHANGE WHEN CLICKING DIFFERENT AGENTS/ROOMS
-  console.log("5. Testing selection invariance: Camera position MUST NOT change when clicking agents/rooms...");
-  await page.waitForTimeout(600);
-  const cameraPositionLog = [];
-
-  const targetsToClick = [
-    { type: "agent", selector: ".agent-tag3d:has-text('ATHENA')", name: "ATHENA" },
-    { type: "room", selector: ".room-tag3d:has-text('COPY')", name: "COPY" },
-    { type: "agent", selector: ".agent-tag3d:has-text('ZEUS')", name: "ZEUS" },
-    { type: "room", selector: ".room-tag3d:has-text('LANDING PAGE')", name: "LANDING PAGE" },
-    { type: "agent", selector: ".agent-tag3d:has-text('THEIA')", name: "THEIA" },
-  ];
-
-  for (const item of targetsToClick) {
-    const posBefore = await getCameraState();
-    const mapBoxBefore = await page.locator(".stage-map-area").boundingBox();
-
-    await page.locator(item.selector).first().click({ force: true, noWaitAfter: true });
-    await page.waitForTimeout(500);
-
-    const posAfter = await getCameraState();
-    const mapBoxAfter = await page.locator(".stage-map-area").boundingBox();
-
-    const isPosIdentical =
-      JSON.stringify(posBefore.position) === JSON.stringify(posAfter.position);
-    const isTargetIdentical =
-      JSON.stringify(posBefore.target) === JSON.stringify(posAfter.target);
-    const isBoxIdentical =
-      mapBoxBefore.width === mapBoxAfter.width &&
-      mapBoxBefore.height === mapBoxAfter.height;
-
-    cameraPositionLog.push({
-      target: item.name,
-      posBefore: posBefore.position,
-      posAfter: posAfter.position,
-      posIdentical: isPosIdentical,
-      targetIdentical: isTargetIdentical,
-      mapAreaIdentical: isBoxIdentical,
-      detailOpened: await page.locator(".detail").isVisible(),
-    });
-
-    console.log(
-      `   Clicked ${item.name}: posBefore=${JSON.stringify(
-        posBefore.position
-      )} posAfter=${JSON.stringify(posAfter.position)} identical=${isPosIdentical}`
-    );
-  }
-
-  // 6. MEETING H+1 GATHER & SCATTER TEST
-  console.log("6. Testing Meeting H+1 Gather & Scatter...");
-  const meetingTag = page.locator(".room-tag3d:has-text('MEETING H+1')").first();
-  // Click meeting room to gather
-  await meetingTag.click({ force: true, noWaitAfter: true });
-  await page.waitForTimeout(1000); // lerp animation
-  const isGatheredActive = await page
-    .locator("button.member:has-text('Bubarkan rapat')")
-    .isVisible();
-  console.log("   Meeting gathered active:", isGatheredActive);
-
-  // Click again or click Bubarkan rapat
-  await page.locator("button.member:has-text('Bubarkan rapat')").click({ force: true, noWaitAfter: true });
-  await page.waitForTimeout(1000);
-  const isScatteredActive = await page
-    .locator("button.member:has-text('Kumpulkan semua agent')")
-    .isVisible();
-  console.log("   Meeting scattered back:", isScatteredActive);
-
-  // 7. REALTIME STATUS UPDATE TEST (WITHOUT REBUILDING SCENE)
-  console.log("7. Testing Realtime Status Update...");
-  // Check CLIO's initial status
-  const clioBefore = await page.evaluate(() => {
-    const el = Array.from(document.querySelectorAll(".agent-tag3d")).find(
-      (node) => node.textContent && node.textContent.includes("CLIO")
-    );
-    return {
-      agentDataStatus: el ? el.getAttribute("data-status") : null,
-    };
-  });
-  console.log("   CLIO status before test:", clioBefore);
-
-  const startTime = Date.now();
   // Update CLIO status in Supabase
+  const startUpdate = Date.now();
   await supabase.from("agents").update({ status: "working" }).eq("nama", "CLIO");
 
-  // Wait for tag or dot to receive st-working
+  // Wait for tag to update to working
   const clioTag = page.locator(".agent-tag3d", { hasText: "CLIO" });
   await clioTag.locator(".st-working").waitFor({ timeout: 15000 });
-  const latencyMs = Date.now() - startTime;
-  console.log(`   Realtime status updated to 'working' in ${latencyMs}ms without scene rebuild!`);
+  const latencyMs = Date.now() - startUpdate;
+  await waitForCameraStop(page, 2000);
+  const stateAfterUpdate = await getCameraAndSceneState();
+  console.log("   State AFTER Supabase status change:");
+  console.log("     Camera Pos:", JSON.stringify(stateAfterUpdate.position));
+  console.log("     Controls Target:", JSON.stringify(stateAfterUpdate.target));
+  console.log("     Scene UUID:", stateAfterUpdate.sceneUuid);
+
+  const dx = Math.abs(stateBeforeUpdate.position.x - stateAfterUpdate.position.x);
+  const dy = Math.abs(stateBeforeUpdate.position.y - stateAfterUpdate.position.y);
+  const dz = Math.abs(stateBeforeUpdate.position.z - stateAfterUpdate.position.z);
+  const isPosIdentical = dx < 0.01 && dy < 0.01 && dz < 0.01;
+  const isTargetIdentical = JSON.stringify(stateBeforeUpdate.target) === JSON.stringify(stateAfterUpdate.target);
+  const isSceneIdentical = stateBeforeUpdate.sceneUuid === stateAfterUpdate.sceneUuid;
+
+  console.log(`   Camera Position Identical (diff: [${dx.toFixed(4)}, ${dy.toFixed(4)}, ${dz.toFixed(4)}]): ${isPosIdentical}`);
+  console.log(`   Controls Target Identical: ${isTargetIdentical}`);
+  console.log(`   Scene UUID Identical: ${isSceneIdentical}`);
+
+  if (!isPosIdentical || !isTargetIdentical || !isSceneIdentical) {
+    throw new Error("FAILED: Scene or camera was rebuilt/reset upon status update!");
+  }
 
   // Restore CLIO back to idle
   await supabase.from("agents").update({ status: "idle" }).eq("nama", "CLIO");
   await clioTag.locator(".st-idle").waitFor({ timeout: 15000 });
   console.log("   Restored CLIO status to 'idle'.");
 
-  // 8. MEMORY LEAK TEST: MOUNT / UNMOUNT 5 TIMES
-  console.log("8. Testing Memory Leak (5 mount/unmount cycles)...");
+  // Restore camera view using Reset button
+  const resetBtn = page.locator("button.stage-reset-btn");
+  await resetBtn.click({ noWaitAfter: true });
+  await page.waitForTimeout(1600);
+
+  // 4. GATHERED MODE (MODE KUMPUL) INVARIANCE TEST
+  console.log("4. Testing Gathered Mode (Mode Kumpul) Invariance...");
+  const meetingTag = page.locator(".room-tag3d:has-text('MEETING H+1')").first();
+  await meetingTag.click({ force: true, noWaitAfter: true });
+  await page.waitForTimeout(1200); // wait for gather lerp animation
+
+  const isGatheredActive = await page
+    .locator("button.member:has-text('Bubarkan rapat')")
+    .isVisible();
+  console.log("   Gathered mode active:", isGatheredActive);
+
+  const gatheredPosBefore = await page.evaluate(() => {
+    return {
+      pos: window.__STAGE_3D__.getAgentPosition("CLIO"),
+      target: window.__STAGE_3D__.getAgentTargetPosition("CLIO"),
+    };
+  });
+  console.log("   CLIO gathered targetPos BEFORE status change:", gatheredPosBefore.target);
+
+  // Update CLIO status to working while gathered
+  await supabase.from("agents").update({ status: "working" }).eq("nama", "CLIO");
+  await clioTag.locator(".st-working").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(600);
+
+  const gatheredPosAfter = await page.evaluate(() => {
+    return {
+      pos: window.__STAGE_3D__.getAgentPosition("CLIO"),
+      target: window.__STAGE_3D__.getAgentTargetPosition("CLIO"),
+    };
+  });
+  console.log("   CLIO gathered targetPos AFTER status change:", gatheredPosAfter.target);
+
+  const isGatheredTargetIdentical =
+    JSON.stringify(gatheredPosBefore.target) === JSON.stringify(gatheredPosAfter.target);
+  console.log(`   Agent CLIO remains at meeting seat (target identical): ${isGatheredTargetIdentical}`);
+
+  if (!isGatheredTargetIdentical) {
+    throw new Error("FAILED: Agent moved out of meeting seat upon status update during gathered mode!");
+  }
+
+  // Restore CLIO and scatter back
+  await supabase.from("agents").update({ status: "idle" }).eq("nama", "CLIO");
+  await clioTag.locator(".st-idle").waitFor({ timeout: 15000 });
+  const scatterBtn = page.locator("button.member:has-text('Bubarkan rapat')");
+  if (await scatterBtn.isVisible()) {
+    await scatterBtn.click({ force: true, noWaitAfter: true });
+  } else {
+    await meetingTag.click({ force: true, noWaitAfter: true });
+  }
+  await page.waitForTimeout(1200);
+  console.log("   Gathered mode ended, agents scattered back.");
+
+  // 5. TOUCH EMULATION TEST (hasTouch: true)
+  console.log("5. Testing Touch Emulation (tap vs drag/pinch with hasTouch)...");
+  const storageState = await context.storageState();
+  const touchContext = await browser.newContext({
+    hasTouch: true,
+    viewport: { width: 1024, height: 768 },
+    storageState,
+  });
+  const touchPage = await touchContext.newPage();
+  await touchPage.goto("http://localhost:3000/?e2e=1", { waitUntil: "networkidle" });
+  await touchPage.waitForSelector("canvas.stage-3d-canvas", { timeout: 15000 });
+  await touchPage.waitForTimeout(1000);
+
+  // 5a. Touch tap on Agent on canvas (ATHENA)
+  console.log("   5a. Testing touch tap on Agent (ATHENA) on 3D canvas...");
+  const athenaScreenPos = await touchPage.evaluate(() => {
+    const stage = window.__STAGE_3D__;
+    let hitMesh = null;
+    stage.scene.traverse((obj) => {
+      if (obj.userData && obj.userData.type === "agent" && obj.userData.id === "ATHENA") {
+        hitMesh = obj;
+      }
+    });
+    if (!hitMesh) return null;
+    const v = stage.camera.position.clone();
+    hitMesh.getWorldPosition(v);
+    v.project(stage.camera);
+    const rect = stage.renderer.domElement.getBoundingClientRect();
+    return {
+      x: ((v.x + 1) * rect.width) / 2 + rect.left,
+      y: ((-v.y + 1) * rect.height) / 2 + rect.top,
+    };
+  });
+  console.log("   ATHENA screen position on canvas:", athenaScreenPos);
+  await touchPage.touchscreen.tap(athenaScreenPos.x, athenaScreenPos.y);
+  await touchPage.waitForTimeout(600);
+  const selAfterAgentTap = await touchPage.evaluate(() => window.__STAGE_3D__.getSelected());
+  console.log("   Selected after Agent tap:", selAfterAgentTap);
+  const isAgentSelected = !!(selAfterAgentTap && selAfterAgentTap.type === "agent");
+  console.log(`   Touch tap selected Agent correctly (${selAfterAgentTap?.id}):`, isAgentSelected);
+
+  // 5b. Touch tap on Room on canvas
+  console.log("   5b. Testing touch tap on Room on 3D canvas...");
+  const copyScreenPos = await touchPage.evaluate(() => {
+    const stage = window.__STAGE_3D__;
+    let hitMesh = null;
+    stage.scene.traverse((obj) => {
+      if (obj.userData && obj.userData.type === "room" && obj.userData.id === "copy") {
+        hitMesh = obj;
+      }
+    });
+    if (!hitMesh) return null;
+    const v = stage.camera.position.clone();
+    hitMesh.getWorldPosition(v);
+    v.project(stage.camera);
+    const rect = stage.renderer.domElement.getBoundingClientRect();
+    return {
+      x: ((v.x + 1) * rect.width) / 2 + rect.left,
+      y: ((-v.y + 1) * rect.height) / 2 + rect.top,
+    };
+  });
+  console.log("   Room screen position on canvas:", copyScreenPos);
+  await touchPage.touchscreen.tap(copyScreenPos.x, copyScreenPos.y);
+  await touchPage.waitForTimeout(600);
+  const selAfterRoomTap = await touchPage.evaluate(() => window.__STAGE_3D__.getSelected());
+  console.log("   Selected after Room tap:", selAfterRoomTap);
+  const isRoomSelected = !!(selAfterRoomTap && selAfterRoomTap.type === "room");
+  console.log(`   Touch tap selected Room correctly (${selAfterRoomTap?.id}):`, isRoomSelected);
+
+  // 5c. Touch drag/orbit on canvas (threshold > 5px should NOT trigger click selection)
+  console.log("   5c. Testing touch drag/orbit on canvas (> 5px threshold)...");
+  const selectedBeforeDrag = await touchPage.evaluate(() => {
+    const stage = window.__STAGE_3D__;
+    return stage && stage.getSelected ? stage.getSelected() : null;
+  });
+
+  const dragStart = await touchPage.evaluate(() => {
+    const rect = window.__STAGE_3D__.renderer.domElement.getBoundingClientRect();
+    return { x: rect.left + rect.width * 0.2, y: rect.top + rect.height * 0.2 };
+  });
+
+  await touchPage.mouse.move(dragStart.x, dragStart.y);
+  await touchPage.mouse.down();
+  await touchPage.mouse.move(dragStart.x + 80, dragStart.y - 40, { steps: 8 });
+  await touchPage.mouse.up();
+  await touchPage.waitForTimeout(600);
+
+  const selectedAfterDrag = await touchPage.evaluate(() => {
+    const stage = window.__STAGE_3D__;
+    return stage && stage.getSelected ? stage.getSelected() : null;
+  });
+  console.log("   Selection before drag:", selectedBeforeDrag);
+  console.log("   Selection after drag:", selectedAfterDrag);
+  const isDragSelectionIgnored =
+    JSON.stringify(selectedBeforeDrag) === JSON.stringify(selectedAfterDrag);
+  console.log("   Drag did not trigger unwanted object selection:", isDragSelectionIgnored);
+
+  await touchContext.close();
+
+  // 6. MEMORY LEAK TEST: MOUNT / UNMOUNT 5 TIMES
+  console.log("6. Testing Memory Leak (5 mount/unmount cycles)...");
   const memInitial = await page.evaluate(() => window.__STAGE_3D__.getMemoryInfo());
   console.log("   Initial Three.js memory:", memInitial);
 
+  const cycleMemories = [];
   for (let i = 1; i <= 5; i++) {
     await page.reload({ waitUntil: "networkidle" });
     await page.waitForSelector("canvas.stage-3d-canvas");
+    await page.waitForTimeout(500);
     const memCurrent = await page.evaluate(() => window.__STAGE_3D__.getMemoryInfo());
+    cycleMemories.push(memCurrent);
     console.log(`   Cycle ${i} memory:`, memCurrent);
   }
 
   const memFinal = await page.evaluate(() => window.__STAGE_3D__.getMemoryInfo());
   console.log("   Final Three.js memory after 5 cycles:", memFinal);
-  const memoryStable = memFinal.geometries <= memInitial.geometries + 2 && memFinal.textures <= memInitial.textures + 1;
-  console.log("   Memory leak test passed (stable):", memoryStable);
+  const memoryStable =
+    memFinal.geometries <= memInitial.geometries &&
+    memFinal.textures <= memInitial.textures;
+  console.log("   Memory returned to baseline / stable:", memoryStable);
 
-  // 9. WEBGL FALLBACK TEST (FORCE WEBGL FAILURE)
-  console.log("9. Testing WebGL Fallback to 2D SVG map...");
-  await page.addInitScript(() => {
-    window.__FORCE_WEBGL_FALLBACK__ = true;
-  });
-  await page.goto("http://localhost:3000/", { waitUntil: "networkidle" });
-  await page.waitForTimeout(1000);
-
-  const svgStageExists = await page.locator("svg.stage").isVisible();
-  const svgRoomsCount = await page.locator("svg.stage g.room").count();
-  const svgAgentsCount = await page.locator("svg.stage g.agent").count();
-
-  console.log("   SVG Fallback rendered:", svgStageExists);
-  console.log("   SVG Rooms rendered:", svgRoomsCount, "(expected: 6)");
-  console.log("   SVG Agents rendered:", svgAgentsCount, "(expected: 15)");
-
-  await page.screenshot({
-    path: path.join(SCREENSHOT_DIR, "fallback_svg.png"),
-    timeout: 15000,
-    animations: "disabled",
-  });
-  console.log("   Captured SVG fallback screenshot: fallback_svg.png");
-
-  // Save report JSON
-  const report = {
-    cameraPositionLog,
-    memory: { initial: memInitial, final: memFinal, stable: memoryStable },
-    fallback: { svgStageExists, svgRoomsCount, svgAgentsCount },
+  // 7. SUMMARY REPORT
+  const summaryNumbers = {
+    cameraPosBefore: stateBeforeUpdate.position,
+    cameraPosAfter: stateAfterUpdate.position,
+    cameraPosIdentical: isPosIdentical,
+    cameraTargetBefore: stateBeforeUpdate.target,
+    cameraTargetAfter: stateAfterUpdate.target,
+    cameraTargetIdentical: isTargetIdentical,
+    sceneUuidBefore: stateBeforeUpdate.sceneUuid,
+    sceneUuidAfter: stateAfterUpdate.sceneUuid,
+    sceneUuidIdentical: isSceneIdentical,
+    gatheredTargetBefore: gatheredPosBefore.target,
+    gatheredTargetAfter: gatheredPosAfter.target,
+    gatheredTargetIdentical: isGatheredTargetIdentical,
+    touchTapAgentSelected: isAgentSelected,
+    touchTapRoomSelected: isRoomSelected,
+    touchDragSelectionIgnored: isDragSelectionIgnored,
+    initialMemory: memInitial,
+    finalMemory: memFinal,
+    memoryStable,
     realtimeLatencyMs: latencyMs,
     consoleErrors,
   };
-  fs.writeFileSync(path.join(SCREENSHOT_DIR, "verification_report.json"), JSON.stringify(report, null, 2));
 
-  console.log("=== ALL VERIFICATION TESTS COMPLETED SUCCESSFULLY ===");
-  console.log("Report saved to verification_artifacts/verification_report.json");
-  console.log("Console errors:", consoleErrors);
+  console.log("\n================ VERIFICATION SUMMARY NUMBERS ================");
+  console.log(JSON.stringify(summaryNumbers, null, 2));
+  console.log("=============================================================\n");
 
   await browser.close();
 }

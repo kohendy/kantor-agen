@@ -165,8 +165,11 @@ export function ApprovalPanel({
           )}
         </div>
       </div>
-      {!isCollapsed &&
-        (approvals.length === 0 ? (
+      <div
+        className="approval-panel-body"
+        style={isCollapsed ? { display: "none" } : undefined}
+      >
+        {approvals.length === 0 ? (
           <div className="empty-state">Tidak ada yang menunggu persetujuan.</div>
         ) : (
           <ul className="log-list approval-list" aria-live="polite">
@@ -174,7 +177,8 @@ export function ApprovalPanel({
               <ApprovalItem key={a.id} approval={a} />
             ))}
           </ul>
-        ))}
+        )}
+      </div>
     </section>
   );
 }

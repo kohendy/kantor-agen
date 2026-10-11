@@ -55,29 +55,29 @@ export function Dashboard() {
     "log" | "approval" | "detail" | null
   >(null);
 
-  // Toggle Full Frame with best-effort browser Fullscreen API
+  // Toggle Full Frame
   const handleToggleFullFrame = useCallback(() => {
-    setFullFrame((prev) => {
-      const next = !prev;
-      if (next) {
-        document.documentElement.requestFullscreen?.().catch(() => {});
-      } else {
-        if (document.fullscreenElement) {
-          document.exitFullscreen?.().catch(() => {});
-        }
-      }
-      return next;
-    });
+    setFullFrame((prev) => !prev);
   }, []);
+
+  // Synchronize browser Fullscreen API with fullFrame state
+  useEffect(() => {
+    if (fullFrame) {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+      }
+    } else {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    }
+  }, [fullFrame]);
 
   // Sync state on fullscreenchange and Escape key
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape" && fullFrame) {
         setFullFrame(false);
-        if (document.fullscreenElement) {
-          document.exitFullscreen?.().catch(() => {});
-        }
       }
     }
     function handleFullscreenChange() {

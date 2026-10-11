@@ -156,6 +156,12 @@ export function OfficeStage3D({
     selectedRef.current = selected;
   }, [selected]);
 
+  const agentsRef = useRef<AgentRow[]>(agents);
+
+  useEffect(() => {
+    agentsRef.current = agents;
+  }, [agents]);
+
   const agentByName = useMemo(() => {
     const map: Record<string, AgentRow> = {};
     agents.forEach((a) => {
@@ -196,6 +202,11 @@ export function OfficeStage3D({
   const selectAgent = useCallback((name: string) => {
     setSelected({ type: "agent", id: name });
   }, []);
+
+  const handlersRef = useRef({ selectAgent, selectRoom });
+  useEffect(() => {
+    handlersRef.current = { selectAgent, selectRoom };
+  }, [selectAgent, selectRoom]);
 
   // Update agent status & material when agents prop changes (WITHOUT rebuilding scene)
   useEffect(() => {
@@ -537,12 +548,12 @@ export function OfficeStage3D({
       labelDiv.setAttribute("aria-label", `Ruangan ${room.name}`);
       labelDiv.addEventListener("click", (e) => {
         e.stopPropagation();
-        selectRoom(room.id);
+        handlersRef.current.selectRoom(room.id);
       });
       labelDiv.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          selectRoom(room.id);
+          handlersRef.current.selectRoom(room.id);
         }
       });
 
@@ -595,7 +606,9 @@ export function OfficeStage3D({
       const cfg = AGENTS[name];
       const agentColor = colorOfAgent(name);
       const agentHex = new THREE.Color(agentColor).getHex();
-      const currentStatus = statusOf(name);
+      const currentAgents = agentsRef.current;
+      const agentRow = currentAgents.find((a) => a.nama === name);
+      const currentStatus: AgentStatus = (agentRow?.status as AgentStatus) ?? "idle";
       const statusHex = getStatusColor(currentStatus);
 
       // Floor Shadow
@@ -695,12 +708,12 @@ export function OfficeStage3D({
 
       labelDiv.addEventListener("click", (e) => {
         e.stopPropagation();
-        selectAgent(name);
+        handlersRef.current.selectAgent(name);
       });
       labelDiv.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          selectAgent(name);
+          handlersRef.current.selectAgent(name);
         }
       });
 
@@ -708,10 +721,19 @@ export function OfficeStage3D({
       labelObj.position.set(0, 1.48, 0);
       group.add(labelObj);
 
-      // Home position
-      const hp = HOME_POSITIONS[name];
-      const startX = hp[0] + OFFSET_X;
-      const startZ = hp[1] + OFFSET_Z;
+      // Initial position follows gathered state if already gathered upon mount/build
+      const isGatheredNow = gatheredRef.current;
+      const meetingRoom = ROOMS.find((r) => r.meeting)!;
+      let startX: number;
+      let startZ: number;
+      if (isGatheredNow) {
+        startX = meetingRoom.x + SEATS[i][0] + OFFSET_X;
+        startZ = meetingRoom.y + SEATS[i][1] + OFFSET_Z;
+      } else {
+        const hp = HOME_POSITIONS[name];
+        startX = hp[0] + OFFSET_X;
+        startZ = hp[1] + OFFSET_Z;
+      }
       group.position.set(startX, 0, startZ);
 
       scene.add(group);
@@ -736,39 +758,51 @@ export function OfficeStage3D({
 
     // Pointer events for Click vs Drag distinction (~5px threshold)
     let pointerDownPos = { x: 0, y: 0 };
+    let isPointerDragging = false;
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
 
-    function onPointerDown(e: MouseEvent) {
+    function onPointerDown(e: PointerEvent) {
       pointerDownPos = { x: e.clientX, y: e.clientY };
+      isPointerDragging = false;
     }
 
-    function onPointerMove(e: MouseEvent) {
-      const rect = renderer.domElement.getBoundingClientRect();
-      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-      raycaster.setFromCamera(mouse, camera);
-      const hits = raycaster.intersectObjects(raycastHitMeshes, false);
-      if (hits.length > 0) {
-        const topHit = hits[0].object.userData as {
-          type: "room" | "agent";
-          id: string;
-        };
-        renderer.domElement.style.cursor = "pointer";
-        hoveredRef.current = topHit;
-      } else {
-        renderer.domElement.style.cursor = "default";
-        hoveredRef.current = null;
-      }
-    }
-
-    function onPointerUp(e: MouseEvent) {
+    function onPointerMove(e: PointerEvent) {
       const dist = Math.hypot(
         e.clientX - pointerDownPos.x,
         e.clientY - pointerDownPos.y
       );
-      if (dist > 5) return; // was a drag / pan / orbit, not a click
+      if (dist > 5) {
+        isPointerDragging = true;
+      }
+
+      if (e.pointerType === "mouse") {
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(raycastHitMeshes, false);
+        if (hits.length > 0) {
+          const topHit = hits[0].object.userData as {
+            type: "room" | "agent";
+            id: string;
+          };
+          renderer.domElement.style.cursor = "pointer";
+          hoveredRef.current = topHit;
+        } else {
+          renderer.domElement.style.cursor = "default";
+          hoveredRef.current = null;
+        }
+      }
+    }
+
+    function onPointerUp(e: PointerEvent) {
+      const dist = Math.hypot(
+        e.clientX - pointerDownPos.x,
+        e.clientY - pointerDownPos.y
+      );
+      if (dist > 5 || isPointerDragging) return; // was a drag / pan / orbit / pinch, not a click/tap
 
       const rect = renderer.domElement.getBoundingClientRect();
       mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -785,16 +819,16 @@ export function OfficeStage3D({
           id: string;
         };
         if (data.type === "agent") {
-          selectAgent(data.id);
+          handlersRef.current.selectAgent(data.id);
         } else if (data.type === "room") {
-          selectRoom(data.id);
+          handlersRef.current.selectRoom(data.id);
         }
       }
     }
 
-    renderer.domElement.addEventListener("mousedown", onPointerDown);
-    renderer.domElement.addEventListener("mousemove", onPointerMove);
-    renderer.domElement.addEventListener("mouseup", onPointerUp);
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
 
     // ResizeObserver: updates canvas size without changing camera position or target
     const resizeObserver = new ResizeObserver((entries) => {
@@ -844,16 +878,29 @@ export function OfficeStage3D({
     gl.canvas.addEventListener("webglcontextlost", onContextLost);
     gl.canvas.addEventListener("webglcontextrestored", onContextRestored);
 
-    // Expose test helper on window for automated verification
-    (window as unknown as { __STAGE_3D__?: unknown }).__STAGE_3D__ = {
-      getCameraPosition: () => camera.position.clone(),
-      getCameraTarget: () => controls.target.clone(),
-      getMemoryInfo: () => ({ ...renderer.info.memory }),
-      renderer,
-      scene,
-      camera,
-      controls,
-    };
+    // Expose test helper on window for automated verification (non-production or ?e2e=1)
+    const isE2E =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("e2e") === "1";
+    const exposeStage3D = process.env.NODE_ENV !== "production" || isE2E;
+
+    if (exposeStage3D) {
+      (window as unknown as { __STAGE_3D__?: unknown }).__STAGE_3D__ = {
+        getSceneUuid: () => scene.uuid,
+        getCameraPosition: () => camera.position.clone(),
+        getCameraTarget: () => controls.target.clone(),
+        getMemoryInfo: () => ({ ...renderer.info.memory }),
+        getSelected: () => selectedRef.current,
+        getAgentPosition: (nama: string) =>
+          agentRecords[nama]?.group.position.clone(),
+        getAgentTargetPosition: (nama: string) =>
+          agentRecords[nama]?.targetPos.clone(),
+        renderer,
+        scene,
+        camera,
+        controls,
+      };
+    }
 
     // Animation Loop
     const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -971,9 +1018,9 @@ export function OfficeStage3D({
       resizeObserver.disconnect();
       intersectObserver.disconnect();
 
-      renderer.domElement.removeEventListener("mousedown", onPointerDown);
-      renderer.domElement.removeEventListener("mousemove", onPointerMove);
-      renderer.domElement.removeEventListener("mouseup", onPointerUp);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
       gl.canvas.removeEventListener("webglcontextlost", onContextLost);
       gl.canvas.removeEventListener("webglcontextrestored", onContextRestored);
 
@@ -986,11 +1033,38 @@ export function OfficeStage3D({
           mesh.geometry.dispose();
         }
         if (mesh.material) {
-          if (Array.isArray(mesh.material)) {
-            mesh.material.forEach((m) => m.dispose());
-          } else {
-            mesh.material.dispose();
-          }
+          const materials = Array.isArray(mesh.material)
+            ? mesh.material
+            : [mesh.material];
+          materials.forEach((m) => {
+            const matWithTextures = m as THREE.Material & {
+              map?: THREE.Texture | null;
+              emissiveMap?: THREE.Texture | null;
+              alphaMap?: THREE.Texture | null;
+              roughnessMap?: THREE.Texture | null;
+              metalnessMap?: THREE.Texture | null;
+              normalMap?: THREE.Texture | null;
+            };
+            if (matWithTextures.map && typeof matWithTextures.map.dispose === "function") {
+              matWithTextures.map.dispose();
+            }
+            if (matWithTextures.emissiveMap && typeof matWithTextures.emissiveMap.dispose === "function") {
+              matWithTextures.emissiveMap.dispose();
+            }
+            if (matWithTextures.alphaMap && typeof matWithTextures.alphaMap.dispose === "function") {
+              matWithTextures.alphaMap.dispose();
+            }
+            if (matWithTextures.roughnessMap && typeof matWithTextures.roughnessMap.dispose === "function") {
+              matWithTextures.roughnessMap.dispose();
+            }
+            if (matWithTextures.metalnessMap && typeof matWithTextures.metalnessMap.dispose === "function") {
+              matWithTextures.metalnessMap.dispose();
+            }
+            if (matWithTextures.normalMap && typeof matWithTextures.normalMap.dispose === "function") {
+              matWithTextures.normalMap.dispose();
+            }
+            m.dispose();
+          });
         }
       });
 
@@ -1000,9 +1074,11 @@ export function OfficeStage3D({
         cssRenderer.domElement.parentNode.removeChild(cssRenderer.domElement);
       }
 
-      delete (window as unknown as { __STAGE_3D__?: unknown }).__STAGE_3D__;
+      if (typeof window !== "undefined") {
+        delete (window as unknown as { __STAGE_3D__?: unknown }).__STAGE_3D__;
+      }
     };
-  }, [webglSupported, selectAgent, selectRoom, statusOf]);
+  }, [webglSupported]);
 
   // Reset Camera View Handler
   const handleResetCamera = useCallback(() => {
