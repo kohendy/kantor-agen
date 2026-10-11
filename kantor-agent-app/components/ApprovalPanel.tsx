@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { colorOfAgent } from "@/lib/officeConfig";
 import { formatClock } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 import type { ApprovalRow, PipelineStepRow } from "@/lib/types";
+
+const emptySubscribe = () => () => {};
 
 type Keputusan = "disetujui" | "ditolak";
 
@@ -54,25 +56,21 @@ function StepDetailModal({
   onClose: () => void;
   triggerEl?: HTMLElement | null;
 }) {
-  const [mounted, setMounted] = useState(false);
+  const isClient = useSyncExternalStore(emptySubscribe, () => true, () => false);
   const [step, setStep] = useState<PipelineStepRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
   // Manajemen fokus: pindah ke modal saat dibuka, kembali ke triggerEl saat ditutup
   useEffect(() => {
-    if (mounted) {
+    if (isClient) {
       dialogRef.current?.focus();
     }
     return () => {
       triggerEl?.focus();
     };
-  }, [mounted, triggerEl]);
+  }, [isClient, triggerEl]);
 
   // Listener tombol Escape
   useEffect(() => {
@@ -88,8 +86,6 @@ function StepDetailModal({
   // Ambil data step dari Supabase via client authenticated
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError(null);
 
     async function loadStep() {
       try {
@@ -121,7 +117,7 @@ function StepDetailModal({
     };
   }, [stepId]);
 
-  if (!mounted) return null;
+  if (!isClient) return null;
 
   const isRisetGate = gate?.toLowerCase() === "riset";
   const output: BriefRisetOutput = (step?.output as BriefRisetOutput) ?? {};
@@ -517,6 +513,7 @@ export function ApprovalPanel({
 
       {selectedModal && (
         <StepDetailModal
+          key={selectedModal.stepId}
           stepId={selectedModal.stepId}
           gate={selectedModal.gate}
           triggerEl={selectedModal.triggerEl}
