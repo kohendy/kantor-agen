@@ -77,6 +77,12 @@ export function Dashboard() {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape" && fullFrame) {
+        if (
+          e.defaultPrevented ||
+          document.querySelector('[role="dialog"][aria-modal="true"]')
+        ) {
+          return;
+        }
         setFullFrame(false);
       }
     }

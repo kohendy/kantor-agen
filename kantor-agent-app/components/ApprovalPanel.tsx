@@ -72,15 +72,78 @@ function StepDetailModal({
     };
   }, [isClient, triggerEl]);
 
-  // Listener tombol Escape
+  // Kunci scroll body selama modal terbuka
+  useEffect(() => {
+    if (!isClient) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isClient]);
+
+  // Listener keyboard: Escape (fase capture) dan Jebakan Fokus (Tab trap)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
         onClose();
+        return;
+      }
+
+      if (e.key === "Tab") {
+        const dialog = dialogRef.current;
+        if (!dialog) return;
+
+        const focusableSelector =
+          'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+        const focusableEls = Array.from(
+          dialog.querySelectorAll<HTMLElement>(focusableSelector)
+        ).filter(
+          (el) =>
+            el.offsetParent !== null ||
+            window.getComputedStyle(el).display !== "none"
+        );
+
+        if (focusableEls.length === 0) {
+          e.preventDefault();
+          dialog.focus();
+          return;
+        }
+
+        const firstEl = focusableEls[0];
+        const lastEl = focusableEls[focusableEls.length - 1];
+
+        if (e.shiftKey) {
+          // Tab mundur (Shift+Tab)
+          if (
+            document.activeElement === firstEl ||
+            document.activeElement === dialog ||
+            !dialog.contains(document.activeElement)
+          ) {
+            e.preventDefault();
+            lastEl.focus();
+          }
+        } else {
+          // Tab maju (Tab)
+          if (
+            document.activeElement === lastEl ||
+            document.activeElement === dialog ||
+            !dialog.contains(document.activeElement)
+          ) {
+            e.preventDefault();
+            firstEl.focus();
+          }
+        }
       }
     }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+    };
   }, [onClose]);
 
   // Ambil data step dari Supabase via client authenticated
