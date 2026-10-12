@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { spawn } from "child_process";
 import { createClient } from "@supabase/supabase-js";
 
@@ -31,6 +32,24 @@ async function sleep(ms) {
 
 async function run() {
   console.log("=== STARTING COMPREHENSIVE MODAL BRIEF RISET E2E TEST ===");
+
+  // 0. Buat user E2E sementara lewat admin API
+  const tempEmail = `e2e-${Date.now()}@kantor-agent.internal`;
+  const tempPassword = crypto.randomBytes(24).toString("base64url");
+  let tempUserId = null;
+
+  console.log(`0. Membuat akun E2E sementara: ${tempEmail}...`);
+  const { data: tempUserData, error: tempUserErr } = await supabase.auth.admin.createUser({
+    email: tempEmail,
+    password: tempPassword,
+    email_confirm: true,
+  });
+
+  if (tempUserErr || !tempUserData?.user) {
+    throw new Error(`Gagal membuat akun E2E sementara: ${tempUserErr?.message}`);
+  }
+  tempUserId = tempUserData.user.id;
+  console.log(`   ✓ Akun E2E sementara berhasil dibuat (ID: ${tempUserId}).`);
 
   // Pastikan ada step 52 di database
   const { data: step52, error: step52Err } = await supabase
@@ -211,8 +230,8 @@ async function run() {
   try {
     console.log("6. Login ke dashboard...");
     await page.goto("http://localhost:3000/login", { waitUntil: "networkidle" });
-    await page.fill('input[name="email"]', "test_verifier@kantor-agent.internal");
-    await page.fill('input[name="password"]', "test-password-12345");
+    await page.fill('input[name="email"]', tempEmail);
+    await page.fill('input[name="password"]', tempPassword);
     await page.click('button[type="submit"]');
     await page.waitForURL((url) => url.pathname === "/", { timeout: 20000 });
     await page.waitForSelector(".approval-panel", { timeout: 15000 });
@@ -599,8 +618,26 @@ async function run() {
 
   } finally {
     await browser.close();
-    if (serverProcess) {
-      serverProcess.kill();
+    if (serverProcess?.pid) {
+      try {
+        if (process.platform === "win32") {
+          spawn("taskkill", ["/pid", serverProcess.pid.toString(), "/T", "/F"]);
+        } else {
+          serverProcess.kill();
+        }
+      } catch {
+        serverProcess.kill();
+      }
+    }
+
+    if (tempUserId) {
+      console.log(`\nMenghapus akun E2E sementara (${tempEmail})...`);
+      const { error: delUserErr } = await supabase.auth.admin.deleteUser(tempUserId);
+      if (delUserErr) {
+        console.error(`Gagal menghapus akun E2E sementara: ${delUserErr.message}`);
+      } else {
+        console.log("   ✓ Akun E2E sementara berhasil dihapus dari Supabase Auth.");
+      }
     }
 
     // ========================================================
@@ -640,7 +677,11 @@ async function run() {
   console.log("\n=== SEMUA PENGUJIAN MODAL E2E BERHASIL LOLOS LENGKAP! ===");
 }
 
-run().catch((err) => {
-  console.error("FATAL ERROR IN E2E TEST:", err);
-  process.exit(1);
-});
+run()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error("FATAL ERROR IN E2E TEST:", err);
+    process.exit(1);
+  });

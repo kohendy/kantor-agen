@@ -1,5 +1,6 @@
 import { chromium } from "playwright";
 import fs from "fs";
+import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
 const envRaw = fs.readFileSync(".env.local", "utf8");
@@ -26,8 +27,26 @@ if (!fs.existsSync("verification_artifacts")) {
 async function run() {
   console.log("=== STARTING FULL 3D & APPROVAL PANEL VERIFICATION ===");
 
-  // 0. SEED APPROVAL DATA: Ensure at least 8 pending approvals
-  console.log("0. Checking pending approvals in Supabase...");
+  // 0a. Buat user E2E sementara lewat admin API
+  const tempEmail = `e2e-${Date.now()}@kantor-agent.internal`;
+  const tempPassword = crypto.randomBytes(24).toString("base64url");
+  let tempUserId = null;
+
+  console.log(`0a. Membuat akun E2E sementara: ${tempEmail}...`);
+  const { data: tempUserData, error: tempUserErr } = await supabase.auth.admin.createUser({
+    email: tempEmail,
+    password: tempPassword,
+    email_confirm: true,
+  });
+
+  if (tempUserErr || !tempUserData?.user) {
+    throw new Error(`Gagal membuat akun E2E sementara: ${tempUserErr?.message}`);
+  }
+  tempUserId = tempUserData.user.id;
+  console.log(`    ✓ Akun E2E sementara berhasil dibuat (ID: ${tempUserId}).`);
+
+  // 0b. SEED APPROVAL DATA: Ensure at least 8 pending approvals
+  console.log("0b. Checking pending approvals in Supabase...");
   const { data: initialPending, error: fetchErr } = await supabase
     .from("approvals")
     .select("id, ringkasan, status")
@@ -95,8 +114,8 @@ async function run() {
     // 1. LOGIN & DASHBOARD LOAD
     console.log("1. Logging into dashboard...");
     await page.goto("http://localhost:3000/login", { waitUntil: "networkidle" });
-    await page.fill('input[name="email"]', "test_verifier@kantor-agent.internal");
-    await page.fill('input[name="password"]', "test-password-12345");
+    await page.fill('input[name="email"]', tempEmail);
+    await page.fill('input[name="password"]', tempPassword);
     await page.click('button[type="submit"]');
 
     await page.waitForURL((url) => url.pathname === "/", { timeout: 20000 });
@@ -672,6 +691,11 @@ async function run() {
     console.log(JSON.stringify(summary, null, 2));
     console.log("=============================================================\n");
   } finally {
+    if (tempUserId) {
+      console.log(`Cleaning up temporary E2E user (${tempEmail})...`);
+      await supabase.auth.admin.deleteUser(tempUserId).catch((e) => console.error("Gagal hapus user:", e));
+      console.log("Cleanup user complete.");
+    }
     // CLEANUP TEST DATA IN SUPABASE
     if (insertedIds.length > 0) {
       console.log(`Cleaning up ${insertedIds.length} seeded test approvals from Supabase...`);
