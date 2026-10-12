@@ -1796,6 +1796,7 @@ pre.json {
   color: var(--cyan);
   text-decoration: underline;
   word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .brief-link:hover {
@@ -1815,6 +1816,169 @@ pre.json {
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0;
+}
+
+/* Catatan kecil & status bukti */
+.brief-note {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.brief-note.warn {
+  color: var(--amber);
+  font-style: normal;
+  font-weight: 600;
+}
+
+/* Badge penanda teks (Inferensi, Data historis, Indikatif, Konteks berbeda) */
+.brief-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.brief-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--display);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.brief-badge.inferensi {
+  color: #ff60ad;
+  background: rgba(255, 79, 163, 0.15);
+  border: 1px solid rgba(255, 79, 163, 0.4);
+}
+
+.brief-badge.historis {
+  color: #ffb84d;
+  background: rgba(245, 166, 35, 0.15);
+  border: 1px solid rgba(245, 166, 35, 0.4);
+}
+
+.brief-badge.indikatif {
+  color: #5ce1e6;
+  background: rgba(41, 199, 255, 0.15);
+  border: 1px solid rgba(41, 199, 255, 0.4);
+}
+
+.brief-badge.konteks {
+  color: #c084fc;
+  background: rgba(192, 132, 252, 0.15);
+  border: 1px solid rgba(192, 132, 252, 0.4);
+}
+
+/* Bagian Umpan Balik Revisi */
+.fb-item {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+
+.fb-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.fb-item-butir {
+  color: var(--fg);
+  font-weight: 700;
+  font-family: var(--display);
+  font-size: 12px;
+  line-height: 1.4;
+  flex: 1 1 auto;
+}
+
+.fb-status {
+  font-family: var(--display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  flex-shrink: 0;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.fb-status.ditangani {
+  color: var(--green);
+  background: rgba(46, 230, 168, 0.12);
+  border-color: rgba(46, 230, 168, 0.4);
+}
+
+.fb-status.sebagian {
+  color: var(--amber);
+  background: rgba(245, 166, 35, 0.12);
+  border-color: rgba(245, 166, 35, 0.4);
+}
+
+.fb-status.tidak_ditemukan {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.4);
+}
+
+.fb-status.lainnya {
+  color: var(--muted);
+  background: rgba(143, 141, 192, 0.12);
+  border-color: rgba(143, 141, 192, 0.4);
+}
+
+.fb-item-row {
+  font-size: 11px;
+  margin: 2px 0;
+  line-height: 1.4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fb-item-label {
+  color: var(--muted);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.fb-item-val {
+  color: var(--fg);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fb-empty-wrap {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.fb-proof-list {
+  margin: 2px 0 0;
+  padding-left: 18px;
 }
 
 @keyframes modalFadeIn {
@@ -1850,6 +2014,11 @@ pre.json {
   }
   .brief-modal-body {
     padding: 12px 14px;
+  }
+  .fb-item-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
   }
 }
 
