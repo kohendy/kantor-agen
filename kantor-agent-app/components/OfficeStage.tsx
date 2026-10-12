@@ -88,9 +88,13 @@ export function OfficeStage({
   const positions = useMemo(() => {
     const pos: Record<string, [number, number]> = {};
     AGENT_RENDER_ORDER.forEach((name, i) => {
-      pos[name] = gathered
-        ? [meetingRoom.x + SEATS[i][0], meetingRoom.y + SEATS[i][1]]
-        : HOME_POSITIONS[name];
+      // ATLAS mengabaikan gather di V1a dan tetap di mejanya
+      if (gathered && name !== "ATLAS") {
+        const seat = SEATS[i] ?? [2.5, 2.5];
+        pos[name] = [meetingRoom.x + seat[0], meetingRoom.y + seat[1]];
+      } else {
+        pos[name] = HOME_POSITIONS[name];
+      }
     });
     return pos;
   }, [gathered, meetingRoom]);
@@ -225,9 +229,9 @@ export function OfficeStage({
         <div className="stage-svg-wrap">
           <svg
             className={`stage${gathered ? " gathered" : ""}`}
-            viewBox="0 0 940 560"
+            viewBox="0 0 940 580"
             role="group"
-            aria-label="Kantor isometrik dengan enam ruangan"
+            aria-label="Kantor isometrik dengan ruang departemen dan manager"
           >
             {ROOMS.slice()
               .sort((a, b) => a.x + a.y - (b.x + b.y))
