@@ -643,7 +643,7 @@ async function run() {
     // ========================================================
     // PEMBERSIHAN DATA SESUAI ATURAN KERAS:
     // status 'kedaluwarsa'; jangan hapus baris;
-    // pastikan 0 approval pending dan 15 agent idle di akhir.
+    // pastikan 0 approval pending dan 16 agent idle di akhir.
     // ========================================================
     console.log("\n7. Pembersihan data fixture...");
     await supabase
@@ -671,7 +671,7 @@ async function run() {
     if (nonIdleAgents.length > 0) {
       throw new Error(`Ada agent yang tidak idle: ${JSON.stringify(nonIdleAgents)}`);
     }
-    console.log("   ✓ Status akhir: 0 approvals pending, 15 agent idle.");
+    console.log(`   ✓ Status akhir: 0 approvals pending, ${agentsData?.length} agent idle.`);
   }
 
   console.log("\n=== SEMUA PENGUJIAN MODAL E2E BERHASIL LOLOS LENGKAP! ===");
