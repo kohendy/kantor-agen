@@ -20,6 +20,13 @@ interface BriefAngle {
   risiko?: string;
 }
 
+interface UmpanBalikItem {
+  butir?: string;
+  status?: string;
+  catatan?: string;
+  url_bukti?: string[];
+}
+
 interface BriefRisetOutput {
   ringkasan?: string;
   kompetitor?: string[];
@@ -29,7 +36,60 @@ interface BriefRisetOutput {
   celah_data?: string[];
   sumber?: string[];
   keyakinan?: "tinggi" | "sedang" | "rendah" | string;
+  tingkat_bukti?: string;
+  umpan_balik_ditangani?: UmpanBalikItem[];
   [key: string]: unknown;
+}
+
+function renderAnnotated(text: unknown): React.ReactNode {
+  if (typeof text !== "string") {
+    return text ? String(text) : null;
+  }
+  if (!text) return "";
+
+  const badges: { key: string; label: string; className: string }[] = [];
+  const lower = text.toLowerCase();
+
+  const isLeadingInferensi = /^\s*inferensi:\s*/i.test(text);
+  const hasInferensi = isLeadingInferensi || /\binferensi:\s*/i.test(text);
+  const hasHistoris = lower.includes("(data historis") || /\bdata historis\b/i.test(text);
+  const hasIndikatif = lower.includes("(indikatif)");
+  const hasKonteks = lower.includes("(konteks berbeda dari target)");
+
+  if (hasInferensi) {
+    badges.push({ key: "inferensi", label: "Inferensi", className: "brief-badge inferensi" });
+  }
+  if (hasHistoris) {
+    badges.push({ key: "historis", label: "Data historis", className: "brief-badge historis" });
+  }
+  if (hasIndikatif) {
+    badges.push({ key: "indikatif", label: "Indikatif", className: "brief-badge indikatif" });
+  }
+  if (hasKonteks) {
+    badges.push({ key: "konteks", label: "Konteks berbeda", className: "brief-badge konteks" });
+  }
+
+  let displayText = text;
+  if (isLeadingInferensi) {
+    displayText = text.replace(/^\s*inferensi:\s*/i, "");
+  }
+
+  if (badges.length === 0) {
+    return displayText;
+  }
+
+  return (
+    <>
+      <span className="brief-badges">
+        {badges.map((b) => (
+          <span key={b.key} className={b.className}>
+            {b.label}
+          </span>
+        ))}
+      </span>
+      {displayText}
+    </>
+  );
 }
 
 async function kirimKeputusan(id: number, keputusan: Keputusan, catatan: string) {
@@ -183,7 +243,18 @@ function StepDetailModal({
   if (!isClient) return null;
 
   const isRisetGate = gate?.toLowerCase() === "riset";
-  const output: BriefRisetOutput = (step?.output as BriefRisetOutput) ?? {};
+  let rawOutput = step?.output;
+  if (typeof rawOutput === "string") {
+    try {
+      rawOutput = JSON.parse(rawOutput);
+    } catch {
+      // Abaikan jika bukan JSON string valid
+    }
+  }
+  const output: BriefRisetOutput =
+    rawOutput && typeof rawOutput === "object"
+      ? (rawOutput as BriefRisetOutput)
+      : {};
   const keyakinan = (output.keyakinan || "sedang").toLowerCase();
   const angles = Array.isArray(output.angle_rekomendasi)
     ? output.angle_rekomendasi
@@ -193,6 +264,47 @@ function StepDetailModal({
   const klaim = Array.isArray(output.klaim_berisiko) ? output.klaim_berisiko : [];
   const celah = Array.isArray(output.celah_data) ? output.celah_data : [];
   const sumber = Array.isArray(output.sumber) ? output.sumber : [];
+
+  const rawUmpanBalik = Array.isArray(output.umpan_balik_ditangani)
+    ? output.umpan_balik_ditangani
+    : [];
+
+  const umpanBalikList = rawUmpanBalik
+    .filter((item): item is NonNullable<typeof item> => typeof item === "object" && item !== null)
+    .map((item, idx) => {
+      const butir = typeof item.butir === "string" ? item.butir : `Butir ${idx + 1}`;
+      const statusRaw = typeof item.status === "string" ? item.status.trim() : "";
+      const statusLower = statusRaw.toLowerCase();
+
+      let statusCode: "ditangani" | "sebagian" | "tidak_ditemukan" | "lainnya" = "lainnya";
+      let statusLabel = statusRaw || "Status tidak diketahui";
+
+      if (statusLower === "ditangani") {
+        statusCode = "ditangani";
+        statusLabel = "Ditangani";
+      } else if (statusLower === "sebagian") {
+        statusCode = "sebagian";
+        statusLabel = "Sebagian";
+      } else if (statusLower === "tidak_ditemukan" || statusLower === "tidak ditemukan") {
+        statusCode = "tidak_ditemukan";
+        statusLabel = "Tidak ditemukan";
+      }
+
+      const catatan = typeof item.catatan === "string" ? item.catatan : "";
+      const rawUrls = Array.isArray(item.url_bukti) ? item.url_bukti : [];
+      const urlBukti = rawUrls.filter(
+        (u): u is string => typeof u === "string" && u.trim().length > 0
+      );
+
+      return {
+        butir,
+        statusRaw,
+        statusCode,
+        statusLabel,
+        catatan,
+        urlBukti,
+      };
+    });
 
   const modalContent = (
     <div
@@ -260,8 +372,68 @@ function StepDetailModal({
                 <>
                   <div className="brief-section">
                     <h4>Ringkasan Riset</h4>
-                    <p className="brief-text">{output.ringkasan || "(Belum ada ringkasan)"}</p>
+                    <p className="brief-text">{renderAnnotated(output.ringkasan || "(Belum ada ringkasan)")}</p>
                   </div>
+
+                  {umpanBalikList.length > 0 && (
+                    <div className="brief-section">
+                      <h4>Umpan Balik Revisi ({umpanBalikList.length})</h4>
+                      {umpanBalikList.map((item, idx) => (
+                        <div key={idx} className="fb-item">
+                          <div className="fb-item-head">
+                            <span className="fb-item-butir">
+                              {idx + 1}. {renderAnnotated(item.butir)}
+                            </span>
+                            <span className={`fb-status ${item.statusCode}`}>
+                              {item.statusLabel}
+                            </span>
+                          </div>
+                          {item.catatan && (
+                            <div className="fb-item-row">
+                              <span className="fb-item-label">Catatan:</span>
+                              <span className="fb-item-val">{renderAnnotated(item.catatan)}</span>
+                            </div>
+                          )}
+                          <div className="fb-item-row">
+                            <span className="fb-item-label">Bukti:</span>
+                            <div className="fb-item-val">
+                              {item.urlBukti.length === 0 ? (
+                                <span className="fb-empty-wrap">
+                                  <span className="brief-note">Tidak ada bukti tercantum</span>
+                                  {item.statusCode === "ditangani" && (
+                                    <span className="brief-note warn"> &bull; ⚠️ Bukti tidak tercantum</span>
+                                  )}
+                                </span>
+                              ) : (
+                                <ul className="brief-list fb-proof-list">
+                                  {item.urlBukti.map((u, uIdx) => {
+                                    const isHttp =
+                                      u.startsWith("http://") || u.startsWith("https://");
+                                    return (
+                                      <li key={uIdx}>
+                                        {isHttp ? (
+                                          <a
+                                            href={u}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="brief-link"
+                                          >
+                                            {u}
+                                          </a>
+                                        ) : (
+                                          <span>{u}</span>
+                                        )}
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   {angles.length > 0 && (
                     <div className="brief-section">
@@ -269,24 +441,24 @@ function StepDetailModal({
                       {angles.map((a, idx) => (
                         <div key={idx} className="angle-card">
                           <div className="angle-card-title">
-                            {idx + 1}. {a.nama || `Angle ${idx + 1}`}
+                            {idx + 1}. {renderAnnotated(a.nama || `Angle ${idx + 1}`)}
                           </div>
                           {a.alasan && (
                             <div className="angle-card-row">
                               <span className="angle-card-label">Alasan:</span>
-                              <span>{a.alasan}</span>
+                              <span>{renderAnnotated(a.alasan)}</span>
                             </div>
                           )}
                           {a.bukti && (
                             <div className="angle-card-row">
                               <span className="angle-card-label">Bukti:</span>
-                              <span>{a.bukti}</span>
+                              <span>{renderAnnotated(a.bukti)}</span>
                             </div>
                           )}
                           {a.risiko && (
                             <div className="angle-card-row">
                               <span className="angle-card-label">Risiko:</span>
-                              <span>{a.risiko}</span>
+                              <span>{renderAnnotated(a.risiko)}</span>
                             </div>
                           )}
                         </div>
@@ -299,7 +471,7 @@ function StepDetailModal({
                       <h4>Kompetitor Teridentifikasi ({kompetitor.length})</h4>
                       <ul className="brief-list">
                         {kompetitor.map((k, idx) => (
-                          <li key={idx}>{k}</li>
+                          <li key={idx}>{renderAnnotated(k)}</li>
                         ))}
                       </ul>
                     </div>
@@ -310,7 +482,7 @@ function StepDetailModal({
                       <h4>Target Audiens ({audiens.length})</h4>
                       <ul className="brief-list">
                         {audiens.map((aud, idx) => (
-                          <li key={idx}>{aud}</li>
+                          <li key={idx}>{renderAnnotated(aud)}</li>
                         ))}
                       </ul>
                     </div>
@@ -321,7 +493,7 @@ function StepDetailModal({
                       <h4>Klaim Berisiko ({klaim.length})</h4>
                       <ul className="brief-list">
                         {klaim.map((kl, idx) => (
-                          <li key={idx}>{kl}</li>
+                          <li key={idx}>{renderAnnotated(kl)}</li>
                         ))}
                       </ul>
                     </div>
@@ -332,38 +504,43 @@ function StepDetailModal({
                       <h4>Celah Data / Butuh Verifikasi ({celah.length})</h4>
                       <ul className="brief-list">
                         {celah.map((c, idx) => (
-                          <li key={idx}>{c}</li>
+                          <li key={idx}>{renderAnnotated(c)}</li>
                         ))}
                       </ul>
                     </div>
                   )}
 
-                  {sumber.length > 0 && (
+                  {(sumber.length > 0 || (typeof output.tingkat_bukti === "string" && output.tingkat_bukti.trim().length > 0)) && (
                     <div className="brief-section">
-                      <h4>Sumber Terverifikasi ({sumber.length})</h4>
-                      <ul className="brief-list">
-                        {sumber.map((s, idx) => {
-                          const isHttp =
-                            typeof s === "string" &&
-                            (s.startsWith("http://") || s.startsWith("https://"));
-                          return (
-                            <li key={idx}>
-                              {isHttp ? (
-                                <a
-                                  href={s}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="brief-link"
-                                >
-                                  {s}
-                                </a>
-                              ) : (
-                                <span>{s}</span>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
+                      <h4>Sumber hasil pencarian web ({sumber.length})</h4>
+                      {typeof output.tingkat_bukti === "string" && output.tingkat_bukti.trim().length > 0 && (
+                        <p className="brief-note">Tingkat bukti: {output.tingkat_bukti.trim()}</p>
+                      )}
+                      {sumber.length > 0 && (
+                        <ul className="brief-list">
+                          {sumber.map((s, idx) => {
+                            const isHttp =
+                              typeof s === "string" &&
+                              (s.startsWith("http://") || s.startsWith("https://"));
+                            return (
+                              <li key={idx}>
+                                {isHttp ? (
+                                  <a
+                                    href={s}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="brief-link"
+                                  >
+                                    {s}
+                                  </a>
+                                ) : (
+                                  <span>{s}</span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
                     </div>
                   )}
                 </>
