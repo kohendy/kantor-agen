@@ -1250,6 +1250,123 @@ pre.json {
   box-shadow: 0 0 6px var(--amber);
 }
 
+/* ATLAS Speech Bubble (CSS2D) */
+.atlas-speech-bubble {
+  background: rgba(11, 10, 26, 0.94);
+  border: 1.5px solid #f07167;
+  color: #fff;
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.7), 0 0 8px rgba(240, 113, 103, 0.4);
+  opacity: 0;
+  display: none;
+  transition: opacity 0.25s ease-in-out;
+  z-index: 20;
+}
+.atlas-speech-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 5px 5px 0;
+  border-style: solid;
+  border-color: #f07167 transparent transparent transparent;
+  display: block;
+  width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-speech-bubble {
+    display: none !important;
+  }
+}
+
+/* Panel Kontrol Demo & Daylight */
+.stage-demo-panel {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 25;
+  background: rgba(11, 10, 26, 0.92);
+  border: 1px solid rgba(240, 113, 103, 0.4);
+  border-radius: 8px;
+  padding: 8px 10px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 270px;
+  pointer-events: auto;
+}
+.stage-demo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 700;
+  color: #f07167;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stage-demo-badge {
+  font-size: 9px;
+  background: rgba(240, 113, 103, 0.2);
+  color: #f07167;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.stage-demo-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.stage-demo-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #d8dbfa;
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.stage-demo-btn:hover {
+  background: rgba(240, 113, 103, 0.22);
+  border-color: #f07167;
+  color: #fff;
+}
+.stage-demo-btn.is-active {
+  background: #f07167;
+  color: #0b0a1a;
+  border-color: #f07167;
+  font-weight: 700;
+}
+.stage-demo-daylight {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 6px;
+}
+.stage-demo-daylight-lbl {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--display);
+  margin-right: 2px;
+}
+
 /* Full Frame Mode Grid & Floating Panels */
 .dash-grid.is-full-frame {
   position: fixed !important;
