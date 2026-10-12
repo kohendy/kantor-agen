@@ -21,6 +21,29 @@ export interface AgentConfig {
   desc: string;
 }
 
+// Nama agent baru: disimpan sebagai konstanta agar mudah diubah kemudian
+export const MANAGER_AGENT_NAME = "ATLAS";
+export const MANAGER_ROOM_ID = "manager";
+
+// Slot posisi cadangan untuk V1b: HR di (x:0, y:12) dan Operasional di (x:12, y:12)
+// DOKUMENTASI CADANGAN: Jangan dirender sekarang di V1a, pertahankan koordinat grid.
+export const RESERVED_ROOM_SLOTS = [
+  {
+    id: "hr",
+    name: "HR",
+    x: 0,
+    y: 12,
+    desc: "Cadangan slot untuk HR (V1b)",
+  },
+  {
+    id: "operasional",
+    name: "OPERASIONAL",
+    x: 12,
+    y: 12,
+    desc: "Cadangan slot untuk Operasional (V1b)",
+  },
+] as const;
+
 export const ROOMS: RoomConfig[] = [
   {
     id: "riset",
@@ -77,9 +100,24 @@ export const ROOMS: RoomConfig[] = [
     desc: "Ruang rapat harian. Semua agent berkumpul untuk membahas laporan hari sebelumnya.",
     agents: [],
   },
+  {
+    id: MANAGER_ROOM_ID,
+    name: "MANAGER",
+    color: "#f07167", // Koral elegan
+    x: 6,
+    y: 12,
+    desc: "Pusat komando dan orkestrasi kantor: menerima brief CEO, merencanakan workflow, dan mendelegasikan tugas ke kepala departemen.",
+    agents: [MANAGER_AGENT_NAME],
+  },
 ];
 
 export const AGENTS: Record<string, AgentConfig> = {
+  [MANAGER_AGENT_NAME]: {
+    role: "Manajer Kantor",
+    lead: true,
+    tools: ["database"],
+    desc: "Menerima brief CEO dan mendelegasikan ke departemen. Logika perencanaan dan orkestrasi otomatis (rencana) sedang dikembangkan.",
+  },
   ATHENA: {
     role: "Koordinator Riset",
     lead: true,
@@ -169,9 +207,11 @@ export const SLOTS: [number, number][] = [
 ];
 
 // Posisi duduk di ruang meeting, relatif terhadap sudut ruangan.
+// 15 kursi untuk 15 agent departemen (ATLAS sebagai manajer mengabaikan gather di V1a).
 export const SEATS: [number, number][] = [
   [1.0, 0.6], [2.0, 0.6], [3.0, 0.6], [4.0, 0.6], [1.0, 1.4], [2.5, 1.4], [4.0, 1.4],
   [0.4, 2.6], [4.6, 2.6], [1.0, 4.2], [2.0, 4.2], [3.0, 4.2], [4.0, 4.2], [1.5, 4.8], [3.5, 4.8],
+  [2.5, 0.4], // Posisi cadangan seat ke-16 untuk proteksi index bounds
 ];
 
 // Posisi "rumah" tiap agent di ruangannya, dihitung sekali dari konfigurasi statis
@@ -181,7 +221,7 @@ export function computeHomePositions(): Record<string, [number, number]> {
   const sortedRooms = ROOMS.slice().sort((a, b) => a.x + a.y - (b.x + b.y));
   sortedRooms.forEach((room) => {
     room.agents.forEach((name, i) => {
-      const slot = SLOTS[i];
+      const slot = room.id === MANAGER_ROOM_ID ? [2.5, 2.7] : SLOTS[i];
       home[name] = [room.x + slot[0], room.y + slot[1]];
     });
   });
