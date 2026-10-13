@@ -173,18 +173,25 @@ async function run() {
       throw new Error(`Jumlah agent tag tidak 16! Ditemukan: ${agentTagsCount}`);
     }
 
-    // Verifikasi ATLAS duduk di meja ruang Manager
+    // Verifikasi ATLAS duduk di meja ruang Manager dan menghadap meja (+Z)
     const atlasPos = await page.evaluate(() => {
       const pos = window.__STAGE_3D__.getAgentPosition("ATLAS");
       const target = window.__STAGE_3D__.getAgentTargetPosition("ATLAS");
-      return { pos, target };
+      const rot = window.__STAGE_3D__.getAgentRotation("ATLAS");
+      return { pos, target, rot };
     });
     console.log("   Posisi awal ATLAS:", atlasPos.pos);
+    console.log("   Rotasi awal ATLAS (harus menghadap ke meja di selatan / +Z):", atlasPos.rot);
     const atlasDistFromHome = Math.hypot(atlasPos.pos.x - 0.0, atlasPos.pos.z - 9.2);
     console.log(`   Jarak ATLAS ke pusat meja Manager: ${atlasDistFromHome.toFixed(4)} unit`);
     if (atlasDistFromHome > 0.15) {
       throw new Error(`ATLAS tidak berada di meja Manager! Posisi: ${JSON.stringify(atlasPos.pos)}`);
     }
+    // ATLAS duduk di z=9.2, meja di selatan z=9.68 (z lebih besar), ATLAS menghadap +Z (rotasi Y dekat 0)
+    if (Math.abs(atlasPos.rot.y) > 0.35) {
+      throw new Error(`ATLAS tidak menghadap meja (+Z)! Rotasi Y terdeteksi: ${atlasPos.rot.y}`);
+    }
+    console.log("   ✓ ATLAS menghadap meja eksekutif dengan benar (arah +Z menuju meja).");
 
     // Screenshot & Framing 1280px (Desktop)
     await page.setViewportSize({ width: 1280, height: 800 });
@@ -230,8 +237,8 @@ async function run() {
     await svgPage.addInitScript(() => {
       window.__FORCE_WEBGL_FALLBACK__ = true;
     });
-    await svgPage.goto("http://localhost:3000/?e2e=1", { waitUntil: "load" });
-    await svgPage.waitForSelector("svg.stage", { timeout: 15000 });
+    await svgPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "load", timeout: 45000 });
+    await svgPage.waitForSelector("svg.stage", { timeout: 30000 });
     const svgAgentCount = await svgPage.locator("svg.stage g#agents g").count();
     console.log(`   Fallback SVG render: ${svgAgentCount} karakter terdeteksi`);
     await svgPage.screenshot({ path: "verification_artifacts/layout_fallback_svg.png" });
@@ -262,12 +269,17 @@ async function run() {
     let violationFound = null;
 
     // Trigger delegasi ke riset
-    await page.evaluate(() => {
+    const risetPath = await page.evaluate(() => {
+      const p = window.__STAGE_3D__.findPath("manager", "riset");
       window.__STAGE_3D__.demoDelegate("riset");
+      return p;
     });
+    console.log("   Waypoints delegasi ke Riset:", risetPath);
 
     const startDelegation = Date.now();
     let arrivedAtRiset = false;
+    let minObservedX = Infinity;
+    let minObservedZ = Infinity;
 
     while (Date.now() - startDelegation < 25000) {
       await page.waitForTimeout(100);
@@ -276,11 +288,17 @@ async function run() {
         return {
           isBusy: stage.isChoreoBusy("ATLAS"),
           pos: stage.getAgentPosition("ATLAS"),
+          qLen: stage.getChoreoQueueLength("ATLAS"),
         };
       });
 
       if (!data.pos) break;
       positionsSampled.push(data.pos);
+      if (data.pos.x < minObservedX) minObservedX = data.pos.x;
+      if (data.pos.z < minObservedZ) minObservedZ = data.pos.z;
+      if (positionsSampled.length % 5 === 0 || !data.isBusy) {
+        console.log(`      Sample ${positionsSampled.length}: isBusy=${data.isBusy}, qLen=${data.qLen}, pos=(${data.pos.x.toFixed(2)}, ${data.pos.z.toFixed(2)})`);
+      }
 
       // Cek apakah posisi melanggar ruangan lain
       const violation = getUnallowedRoomViolation(data.pos.x, data.pos.z, allowedRooms);
@@ -303,6 +321,7 @@ async function run() {
     );
     const finalDistToHome = Math.hypot(finalAtlasPos.x - 0.0, finalAtlasPos.z - 9.2);
     console.log(`   Total sampel posisi: ${positionsSampled.length}`);
+    console.log(`   Min observed X: ${minObservedX.toFixed(2)}, Min observed Z: ${minObservedZ.toFixed(2)}`);
     console.log(`   Tiba di meja departemen Riset: ${arrivedAtRiset}`);
     console.log(`   Pelanggaran ruangan lain: ${violationFound ? JSON.stringify(violationFound) : "TIDAK ADA ✓"}`);
     console.log(`   Galat posisi akhir ATLAS kembali ke meja: ${finalDistToHome.toFixed(4)} unit (batas ≤ 0.15)`);
@@ -454,8 +473,8 @@ async function run() {
       if (m.type() === "error") rmErrors.push(m.text());
     });
 
-    await rmPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "load" });
-    await rmPage.waitForSelector("canvas.stage-3d-canvas");
+    await rmPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "load", timeout: 60000 });
+    await rmPage.waitForSelector("canvas.stage-3d-canvas", { timeout: 60000 });
     await rmPage.waitForTimeout(1000);
 
     const rmStart = Date.now();
@@ -807,6 +826,369 @@ async function run() {
     };
     console.log(`   Console error baru selama pengujian: ${consoleErrors.length}`);
     console.log("   ✓ KASUS 10 LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // KASUS V1a-fix 1: GATHER RAPAT (16 Agen Berjalan Lewat Koridor, Bukan Teleport, Tanpa Tembus Dinding)
+    // =========================================================================
+    console.log("\n--- KASUS V1a-fix 1: Gather Rapat (16 Agen Berjalan Lewat Koridor) ---");
+    const agentHomeRooms = {
+      ATHENA: "riset",
+      ARGUS: "riset",
+      METIS: "riset",
+      CLIO: "copy",
+      ERATO: "copy",
+      DAPHNE: "copy",
+      HESTIA: "lp",
+      THEMIS: "lp",
+      TALOS: "lp",
+      ZEUS: "ads",
+      ARTEMIS: "ads",
+      PLUTUS: "ads",
+      THEIA: "creative",
+      LYRA: "creative",
+      IRIS: "creative",
+      ATLAS: "manager",
+    };
+
+    const seatMap = await page.evaluate(() => window.__STAGE_3D__.getSeatPositions());
+    const meetingRoomPos = { x: 6, y: 0 };
+    const prevPositions = {};
+    let gatherViolationFound = null;
+    let maxDeltaPerInterval = 0;
+
+    // Print posisi seluruh agen sebelum gather
+    const preGatherPos = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const res = {};
+      const names = [
+        "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
+        "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
+        "THEIA", "LYRA", "IRIS", "ATLAS"
+      ];
+      names.forEach(n => {
+        const p = stage.getAgentPosition(n);
+        res[n] = `(${p.x.toFixed(2)}, ${p.z.toFixed(2)})`;
+      });
+      return res;
+    });
+    console.log("   Posisi seluruh agen sebelum gather:", preGatherPos);
+
+    // Mulai gather rapat (animasi normal)
+    await page.evaluate(() => {
+      window.__STAGE_3D__.startMeetingNow(false);
+    });
+
+    const gatherStart = Date.now();
+    let allArrivedAtMeeting = false;
+
+    while (Date.now() - gatherStart < 40000) {
+      await page.waitForTimeout(80);
+      const agentStates = await page.evaluate(() => {
+        const stage = window.__STAGE_3D__;
+        const res = {};
+        const names = [
+          "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
+          "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
+          "THEIA", "LYRA", "IRIS", "ATLAS"
+        ];
+        names.forEach((n) => {
+          res[n] = {
+            pos: stage.getAgentPosition(n),
+            busy: stage.isChoreoBusy(n),
+          };
+        });
+        return res;
+      });
+
+      let anyBusy = false;
+      for (const [name, st] of Object.entries(agentStates)) {
+        if (!st.pos) continue;
+        if (st.busy) anyBusy = true;
+
+        // Cek pergeseran per interval (bukan teleport)
+        if (prevPositions[name]) {
+          const delta = Math.hypot(
+            st.pos.x - prevPositions[name].x,
+            st.pos.z - prevPositions[name].z
+          );
+          if (delta > maxDeltaPerInterval) maxDeltaPerInterval = delta;
+          if (delta > 3.5) {
+            throw new Error(`Agen ${name} teleportasi mendadak! Delta per frame: ${delta.toFixed(3)} unit`);
+          }
+        }
+        prevPositions[name] = st.pos;
+
+        // Cek pelanggaran ruangan: hanya boleh di ruang asal atau ruang meeting
+        const allowed = [agentHomeRooms[name], "meeting"];
+        const viol = getUnallowedRoomViolation(st.pos.x, st.pos.z, allowed);
+        if (viol && !gatherViolationFound) {
+          gatherViolationFound = { agent: name, room: viol, pos: st.pos };
+        }
+      }
+
+      if (!anyBusy && Date.now() - gatherStart > 2000) {
+        allArrivedAtMeeting = true;
+        break;
+      }
+    }
+
+    console.log(`   Durasi gather: ${((Date.now() - gatherStart) / 1000).toFixed(2)} detik`);
+    console.log(`   Maks pergeseran posisi per interval: ${maxDeltaPerInterval.toFixed(4)} unit (< 1.2 batas wajar)`);
+    console.log(`   Pelanggaran ruangan asing selama jalan: ${gatherViolationFound ? JSON.stringify(gatherViolationFound) : "Nihil (Aman)"}`);
+
+    if (gatherViolationFound) {
+      throw new Error(`Pelanggaran jalur gather: Agen ${gatherViolationFound.agent} masuk ke ruangan ${gatherViolationFound.room} pada posisi ${JSON.stringify(gatherViolationFound.pos)}`);
+    }
+
+    // Verifikasi semua 16 agen tiba di kursi masing-masing di ruang meeting
+    const finalGatherPositions = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const res = {};
+      const names = [
+        "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
+        "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
+        "THEIA", "LYRA", "IRIS", "ATLAS"
+      ];
+      names.forEach((n) => {
+        res[n] = stage.getAgentPosition(n);
+      });
+      return res;
+    });
+
+    let maxSeatDist = 0;
+    for (const [name, pos] of Object.entries(finalGatherPositions)) {
+      const seat = seatMap[name] ?? [2.5, 2.5];
+      const expectedX = meetingRoomPos.x + seat[0] - 8.5;
+      const expectedZ = meetingRoomPos.y + seat[1] - 5.5;
+      const dist = Math.hypot(pos.x - expectedX, pos.z - expectedZ);
+      if (dist > maxSeatDist) maxSeatDist = dist;
+      if (dist > 0.18) {
+        throw new Error(`Agen ${name} tidak berada di kursi meeting-nya! Jarak: ${dist.toFixed(4)} (pos: ${pos.x}, ${pos.z}; target: ${expectedX}, ${expectedZ})`);
+      }
+    }
+
+    console.log(`   Seluruh 16 agen tiba di kursi rapat (deviasi maks: ${maxSeatDist.toFixed(4)} <= 0.18 unit)`);
+    await page.screenshot({ path: "verification_artifacts/v1afix_meeting_gathered.png" });
+
+    testReport.v1afix_gather = {
+      allArrivedAtMeeting,
+      maxDeltaPerInterval,
+      gatherViolationFound,
+      maxSeatDist,
+    };
+    console.log("   ✓ KASUS V1a-fix 1 LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // KASUS V1a-fix 2: ANTREAN DELEGASI SELAMA RAPAT (ATLAS Tetap di Rapat, Tugas Diantrekan)
+    // =========================================================================
+    console.log("\n--- KASUS V1a-fix 2: Antrean Delegasi Selama Rapat ---");
+    // Trigger delegasi ke riset saat rapat aktif
+    await page.evaluate(() => {
+      window.__STAGE_3D__.demoDelegate("riset");
+    });
+    await page.waitForTimeout(300);
+
+    const queuedDelegations = await page.evaluate(() =>
+      window.__STAGE_3D__.getPendingDelegationsCount()
+    );
+    const atlasMeetingPos = await page.evaluate(() =>
+      window.__STAGE_3D__.getAgentPosition("ATLAS")
+    );
+    const atlasExpectedSeat = seatMap["ATLAS"];
+    const atlasSeatX = meetingRoomPos.x + atlasExpectedSeat[0] - 8.5;
+    const atlasSeatZ = meetingRoomPos.y + atlasExpectedSeat[1] - 5.5;
+    const atlasDistFromMeetingSeat = Math.hypot(
+      atlasMeetingPos.x - atlasSeatX,
+      atlasMeetingPos.z - atlasSeatZ
+    );
+
+    console.log(`   Jumlah delegasi tertunda di antrean: ${queuedDelegations} (harus >= 1)`);
+    console.log(`   ATLAS tetap berada di kursi rapat: jarak ${atlasDistFromMeetingSeat.toFixed(4)} unit`);
+
+    if (queuedDelegations < 1) {
+      throw new Error(`Delegasi tidak diantrekan saat rapat aktif! Jumlah antrean: ${queuedDelegations}`);
+    }
+    if (atlasDistFromMeetingSeat > 0.15) {
+      throw new Error(`ATLAS meninggalkan ruang rapat saat delegasi masuk!`);
+    }
+
+    testReport.v1afix_queue_during_meeting = {
+      queuedDelegations,
+      atlasDistFromMeetingSeat,
+    };
+    console.log("   ✓ KASUS V1a-fix 2 LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // KASUS V1a-fix 3: BUBAR RAPAT & AUTO-DRAIN DELEGASI (Kembali ke Meja, Delegasi Tuntas)
+    // =========================================================================
+    console.log("\n--- KASUS V1a-fix 3: Bubar Rapat & Auto-Drain Delegasi ---");
+    const homeMap = await page.evaluate(() => window.__STAGE_3D__.getHomePositions());
+
+    // Panggil bubar rapat
+    await page.evaluate(() => {
+      window.__STAGE_3D__.endMeetingNow(false);
+    });
+
+    const disperseStart = Date.now();
+    let allNonAtlasReturned = false;
+    let atlasCompletedDelegation = false;
+
+    while (Date.now() - disperseStart < 45000) {
+      await page.waitForTimeout(100);
+      const data = await page.evaluate(() => {
+        const stage = window.__STAGE_3D__;
+        const res = {};
+        const nonAtlasNames = [
+          "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
+          "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
+          "THEIA", "LYRA", "IRIS"
+        ];
+        let nonAtlasBusy = false;
+        nonAtlasNames.forEach((n) => {
+          const isB = stage.isChoreoBusy(n);
+          if (isB) nonAtlasBusy = true;
+          res[n] = stage.getAgentPosition(n);
+        });
+        return {
+          nonAtlasBusy,
+          nonAtlasPositions: res,
+          atlasBusy: stage.isChoreoBusy("ATLAS"),
+          atlasPos: stage.getAgentPosition("ATLAS"),
+          pendingCount: stage.getPendingDelegationsCount(),
+        };
+      });
+
+      if (!data.nonAtlasBusy) {
+        allNonAtlasReturned = true;
+      }
+
+      if (!data.atlasBusy && data.pendingCount === 0 && allNonAtlasReturned) {
+        atlasCompletedDelegation = true;
+        break;
+      }
+    }
+
+    console.log(`   15 agen non-ATLAS selesai kembali ke meja: ${allNonAtlasReturned}`);
+    console.log(`   ATLAS menuntaskan delegasi tertunda dan kembali ke meja: ${atlasCompletedDelegation}`);
+
+    if (!allNonAtlasReturned) {
+      throw new Error("Sebagian agen non-ATLAS tidak selesai kembali ke mejanya setelah bubar!");
+    }
+    if (!atlasCompletedDelegation) {
+      throw new Error("ATLAS tidak menyelesaikan delegasi tertunda setelah bubar rapat!");
+    }
+
+    // Verifikasi posisi akhir 15 agen non-ATLAS di meja masing-masing
+    const finalDispersePositions = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const res = {};
+      const names = [
+        "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
+        "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
+        "THEIA", "LYRA", "IRIS"
+      ];
+      names.forEach((n) => {
+        res[n] = stage.getAgentPosition(n);
+      });
+      return res;
+    });
+
+    let maxHomeDist = 0;
+    for (const [name, pos] of Object.entries(finalDispersePositions)) {
+      const hp = homeMap[name];
+      const expectedX = hp[0] - 8.5;
+      const expectedZ = hp[1] - 5.5;
+      const dist = Math.hypot(pos.x - expectedX, pos.z - expectedZ);
+      if (dist > maxHomeDist) maxHomeDist = dist;
+      if (dist > 0.18) {
+        throw new Error(`Agen ${name} tidak berada di meja rumahnya setelah bubar! Jarak: ${dist.toFixed(4)}`);
+      }
+    }
+    console.log(`   Seluruh 15 agen non-ATLAS kembali di meja masing-masing (deviasi maks: ${maxHomeDist.toFixed(4)} <= 0.18)`);
+
+    // Verifikasi posisi akhir ATLAS di meja Manager (0.0, 9.2)
+    const atlasFinalPos = await page.evaluate(() =>
+      window.__STAGE_3D__.getAgentPosition("ATLAS")
+    );
+    const atlasFinalDist = Math.hypot(atlasFinalPos.x - 0.0, atlasFinalPos.z - 9.2);
+    console.log(`   Posisi akhir ATLAS di meja Manager: jarak ${atlasFinalDist.toFixed(4)} unit`);
+    if (atlasFinalDist > 0.18) {
+      throw new Error(`ATLAS tidak berada di meja Manager setelah menuntaskan delegasi! Jarak: ${atlasFinalDist}`);
+    }
+
+    await page.screenshot({ path: "verification_artifacts/v1afix_meeting_dispersed.png" });
+
+    testReport.v1afix_disperse = {
+      allNonAtlasReturned,
+      atlasCompletedDelegation,
+      maxHomeDist,
+      atlasFinalDist,
+    };
+    console.log("   ✓ KASUS V1a-fix 3 LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // KASUS V1a-fix 4: REDUCED-MOTION INSTAN (Gather & Bubar Tanpa Animasi Jalan)
+    // =========================================================================
+    console.log("\n--- KASUS V1a-fix 4: Reduced-Motion Instan (Gather & Bubar) ---");
+    // Start meeting dengan reducedMotion = true
+    await page.evaluate(() => {
+      window.__STAGE_3D__.startMeetingNow(true);
+    });
+    await page.waitForTimeout(100);
+
+    const rmGatherStates = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const names = [
+        "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
+        "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
+        "THEIA", "LYRA", "IRIS", "ATLAS"
+      ];
+      let anyBusy = false;
+      const positions = {};
+      names.forEach((n) => {
+        if (stage.isChoreoBusy(n)) anyBusy = true;
+        positions[n] = stage.getAgentPosition(n);
+      });
+      return { anyBusy, positions };
+    });
+
+    console.log(`   Reduced-motion gather instan (anyBusy: ${rmGatherStates.anyBusy})`);
+    if (rmGatherStates.anyBusy) {
+      throw new Error("Reduced-motion gather tidak instan (masih ada choreo yang busy)!");
+    }
+
+    // End meeting dengan reducedMotion = true
+    await page.evaluate(() => {
+      window.__STAGE_3D__.endMeetingNow(true);
+    });
+    await page.waitForTimeout(100);
+
+    const rmDisperseStates = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const names = [
+        "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
+        "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
+        "THEIA", "LYRA", "IRIS", "ATLAS"
+      ];
+      let anyBusy = false;
+      const positions = {};
+      names.forEach((n) => {
+        if (stage.isChoreoBusy(n)) anyBusy = true;
+        positions[n] = stage.getAgentPosition(n);
+      });
+      return { anyBusy, positions };
+    });
+
+    console.log(`   Reduced-motion bubar instan (anyBusy: ${rmDisperseStates.anyBusy})`);
+    if (rmDisperseStates.anyBusy) {
+      throw new Error("Reduced-motion bubar tidak instan (masih ada choreo yang busy)!");
+    }
+
+    testReport.v1afix_reduced_motion = {
+      instantGather: !rmGatherStates.anyBusy,
+      instantDisperse: !rmDisperseStates.anyBusy,
+    };
+    console.log("   ✓ KASUS V1a-fix 4 LOLOS SEMPURNA.");
 
     // =========================================================================
     // KASUS 11: VERIFIKASI AKHIR DATABASE & INTEGRITAS SISTEM

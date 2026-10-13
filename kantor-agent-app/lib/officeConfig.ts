@@ -206,13 +206,35 @@ export const SLOTS: [number, number][] = [
   [2.6, 3.9],
 ];
 
-// Posisi duduk di ruang meeting, relatif terhadap sudut ruangan.
-// 15 kursi untuk 15 agent departemen (ATLAS sebagai manajer mengabaikan gather di V1a).
-export const SEATS: [number, number][] = [
-  [1.0, 0.6], [2.0, 0.6], [3.0, 0.6], [4.0, 0.6], [1.0, 1.4], [2.5, 1.4], [4.0, 1.4],
-  [0.4, 2.6], [4.6, 2.6], [1.0, 4.2], [2.0, 4.2], [3.0, 4.2], [4.0, 4.2], [1.5, 4.8], [3.5, 4.8],
-  [2.5, 0.4], // Posisi cadangan seat ke-16 untuk proteksi index bounds
-];
+// Posisi duduk di ruang meeting, relatif terhadap sudut ruangan (0..5, 0..5).
+// Pemetaan eksplisit berdasarkan nama agen (SEAT_BY_AGENT) memastikan
+// penambahan ruang atau agen baru (seperti HR/Ops di V1b) tidak menggeser kursi rapat.
+export const SEAT_BY_AGENT: Record<string, [number, number]> = {
+  // Pimpinan rapat (Manager ATLAS) di kepala meja, menghadap ke ruang
+  [MANAGER_AGENT_NAME]: [2.5, 1.4],
+  // Baris utara meja
+  ATHENA: [1.3, 1.4],
+  CLIO: [3.7, 1.4],
+  ARGUS: [1.0, 0.7],
+  METIS: [2.0, 0.7],
+  ERATO: [3.0, 0.7],
+  DAPHNE: [4.0, 0.7],
+  // Sisi barat (kiri meja)
+  HESTIA: [0.6, 2.3],
+  THEMIS: [0.6, 3.1],
+  // Sisi timur (kanan meja)
+  ZEUS: [4.4, 2.3],
+  THEIA: [4.4, 3.1],
+  // Sisi selatan meja
+  TALOS: [1.2, 3.9],
+  ARTEMIS: [2.0, 3.9],
+  PLUTUS: [3.0, 3.9],
+  LYRA: [3.8, 3.9],
+  IRIS: [2.5, 4.5],
+};
+
+// Kompatibilitas array SEATS lama
+export const SEATS: [number, number][] = Object.values(SEAT_BY_AGENT);
 
 // Posisi "rumah" tiap agent di ruangannya, dihitung sekali dari konfigurasi statis
 // (sama seperti HOME yang dibangun saat render SVG pada prototipe).

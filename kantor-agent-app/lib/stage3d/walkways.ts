@@ -3,7 +3,7 @@
 // Jalur tidak boleh melintasi bagian dalam ruangan lain selain ruangan asal & tujuan.
 
 import * as THREE from "three";
-import { ROOMS } from "@/lib/officeConfig";
+import { ROOMS, MANAGER_AGENT_NAME, roomOfAgent } from "@/lib/officeConfig";
 
 export const OFFSET_X = -8.5;
 export const OFFSET_Z = -5.5;
@@ -55,7 +55,7 @@ export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
   "V1_N": {
     id: "V1_N",
     ...configToWorld(5.5, 2.5), // (-3.0, -3.0)
-    neighbors: ["I_V1_H1", "door_riset"],
+    neighbors: ["I_V1_H1", "door_riset", "door_meeting_west"],
   },
   "V1_M": {
     id: "V1_M",
@@ -72,7 +72,7 @@ export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
   "V2_N": {
     id: "V2_N",
     ...configToWorld(11.5, 2.5), // (+3.0, -3.0)
-    neighbors: ["I_V2_H1", "door_copy"],
+    neighbors: ["I_V2_H1", "door_copy", "door_meeting_east"],
   },
   "V2_M": {
     id: "V2_M",
@@ -94,7 +94,7 @@ export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
   "H1_M": {
     id: "H1_M",
     ...configToWorld(8.5, 5.5), // (0.0, 0.0)
-    neighbors: ["I_V1_H1", "I_V2_H1"],
+    neighbors: ["I_V1_H1", "I_V2_H1", "door_meeting_south"],
   },
   "H1_E": {
     id: "H1_E",
@@ -256,6 +256,57 @@ export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
     isDesk: true,
     neighbors: ["aisle_creative"],
   },
+
+  // --- RUANG MEETING (x:6, y:0) ---
+  "door_meeting_south": {
+    id: "door_meeting_south",
+    ...configToWorld(8.5, 5.0), // (0.0, -0.5) - Pintu selatan menghadap H1
+    roomId: "meeting",
+    isDoor: true,
+    neighbors: ["H1_M", "aisle_meeting_south"],
+  },
+  "door_meeting_west": {
+    id: "door_meeting_west",
+    ...configToWorld(6.0, 2.5), // (-2.5, -3.0) - Pintu barat menghadap V1
+    roomId: "meeting",
+    isDoor: true,
+    neighbors: ["V1_N", "aisle_meeting_west"],
+  },
+  "door_meeting_east": {
+    id: "door_meeting_east",
+    ...configToWorld(11.0, 2.5), // (+2.5, -3.0) - Pintu timur menghadap V2
+    roomId: "meeting",
+    isDoor: true,
+    neighbors: ["V2_N", "aisle_meeting_east"],
+  },
+  "aisle_meeting_south": {
+    id: "aisle_meeting_south",
+    ...configToWorld(8.5, 4.2), // (0.0, -1.3)
+    roomId: "meeting",
+    isAisle: true,
+    neighbors: ["door_meeting_south", "aisle_meeting_west", "aisle_meeting_east"],
+  },
+  "aisle_meeting_west": {
+    id: "aisle_meeting_west",
+    ...configToWorld(6.8, 2.5), // (-1.7, -3.0)
+    roomId: "meeting",
+    isAisle: true,
+    neighbors: ["door_meeting_west", "aisle_meeting_south", "aisle_meeting_north"],
+  },
+  "aisle_meeting_east": {
+    id: "aisle_meeting_east",
+    ...configToWorld(10.2, 2.5), // (+1.7, -3.0)
+    roomId: "meeting",
+    isAisle: true,
+    neighbors: ["door_meeting_east", "aisle_meeting_south", "aisle_meeting_north"],
+  },
+  "aisle_meeting_north": {
+    id: "aisle_meeting_north",
+    ...configToWorld(8.5, 0.9), // (0.0, -4.6)
+    roomId: "meeting",
+    isAisle: true,
+    neighbors: ["aisle_meeting_west", "aisle_meeting_east"],
+  },
 };
 
 // Pemetaan ID ruangan ke titik desk / door utama
@@ -266,7 +317,39 @@ export const ROOM_NODE_MAP: Record<string, { doorId: string; deskId: string }> =
   lp: { doorId: "door_lp", deskId: "desk_lp" },
   ads: { doorId: "door_ads", deskId: "desk_ads" },
   creative: { doorId: "door_creative", deskId: "desk_creative" },
+  meeting: { doorId: "door_meeting_south", deskId: "aisle_meeting_south" },
 };
+
+export const ROOM_AISLE_MAP: Record<string, { aisleId: string; doorId: string }> = {
+  manager: { aisleId: "aisle_manager", doorId: "door_manager" },
+  riset: { aisleId: "aisle_riset", doorId: "door_riset" },
+  copy: { aisleId: "aisle_copy", doorId: "door_copy" },
+  lp: { aisleId: "aisle_lp", doorId: "door_lp" },
+  ads: { aisleId: "aisle_ads", doorId: "door_ads" },
+  creative: { aisleId: "aisle_creative", doorId: "door_creative" },
+};
+
+export const MEETING_AISLE_IDS = [
+  "aisle_meeting_south",
+  "aisle_meeting_north",
+  "aisle_meeting_west",
+  "aisle_meeting_east",
+];
+
+export function getNearestMeetingAisle(worldX: number, worldZ: number): string {
+  let bestId = "aisle_meeting_south";
+  let minDist = Infinity;
+  for (const id of MEETING_AISLE_IDS) {
+    const node = WALKWAY_GRAPH[id];
+    if (!node) continue;
+    const d = Math.hypot(node.x - worldX, node.z - worldZ);
+    if (d < minDist) {
+      minDist = d;
+      bestId = id;
+    }
+  }
+  return bestId;
+}
 
 // Hitung jarak Euclidean antar dua node
 function nodeDistance(a: WaypointNode, b: WaypointNode): number {
@@ -431,4 +514,118 @@ export function getRoomAtPosition(worldX: number, worldZ: number): string | null
     }
   }
   return null;
+}
+
+// Bersihkan waypoint ganda berdekatan
+function cleanWaypoints(pts: THREE.Vector3[]): THREE.Vector3[] {
+  const res: THREE.Vector3[] = [];
+  for (const pt of pts) {
+    if (res.length === 0) {
+      res.push(pt);
+      continue;
+    }
+    const prev = res[res.length - 1];
+    if (Math.hypot(pt.x - prev.x, pt.z - prev.z) > 0.04) {
+      res.push(pt);
+    }
+  }
+  return res;
+}
+
+// Rute jalan agen dari meja ke kursi rapat di ruang Meeting
+export function getMeetingPathForAgent(
+  agentName: string,
+  startPos: { x: number; z: number },
+  targetSeatPos: { x: number; z: number },
+  agentIndex: number = 0
+): THREE.Vector3[] {
+  const isManager = agentName === MANAGER_AGENT_NAME;
+  const roomId = isManager ? "manager" : roomOfAgent(agentName)?.id ?? "manager";
+  const nav = ROOM_AISLE_MAP[roomId] ?? ROOM_AISLE_MAP.manager;
+  const targetAisleId = getNearestMeetingAisle(targetSeatPos.x, targetSeatPos.z);
+
+  // Dijkstra dari pintu ruangan asal ke lorong meeting tujuan
+  const nodes = findPathNodes(nav.doorId, targetAisleId);
+
+  const waypoints: THREE.Vector3[] = [];
+  // 1. Mulai dari posisi saat ini
+  waypoints.push(new THREE.Vector3(startPos.x, 0, startPos.z));
+
+  // 2. Jika belum di lorong ruangan asal, jalan ke lorong ruangan asal
+  const aisleNode = WALKWAY_GRAPH[nav.aisleId];
+  if (aisleNode && Math.hypot(startPos.x - aisleNode.x, startPos.z - aisleNode.z) > 0.1) {
+    waypoints.push(new THREE.Vector3(aisleNode.x, 0, aisleNode.z));
+  }
+
+  // 3. Masuk ke pintu ruangan asal
+  const doorNode = WALKWAY_GRAPH[nav.doorId];
+  if (doorNode) {
+    waypoints.push(new THREE.Vector3(doorNode.x, 0, doorNode.z));
+  }
+
+  // 4. Lewati koridor dengan lane offset halus (±0.12) agar antar agen tidak bertumpuk
+  const laneOffset = ((agentIndex % 3) - 1) * 0.12;
+  for (const n of nodes) {
+    let px = n.x;
+    let pz = n.z;
+    if (!n.roomId) {
+      if (n.id.startsWith("V") || n.id.startsWith("I_V")) {
+        px += laneOffset;
+      } else if (n.id.startsWith("H")) {
+        pz += laneOffset;
+      }
+    }
+    waypoints.push(new THREE.Vector3(px, 0, pz));
+  }
+
+  // 5. Tiba di kursi rapat
+  waypoints.push(new THREE.Vector3(targetSeatPos.x, 0, targetSeatPos.z));
+
+  return cleanWaypoints(waypoints);
+}
+
+// Rute bubar rapat: dari kursi meeting kembali ke meja masing-masing lewat koridor
+export function getReturnPathForAgent(
+  agentName: string,
+  currentPos: { x: number; z: number },
+  homePos: { x: number; z: number },
+  agentIndex: number = 0
+): THREE.Vector3[] {
+  const isManager = agentName === MANAGER_AGENT_NAME;
+  const roomId = isManager ? "manager" : roomOfAgent(agentName)?.id ?? "manager";
+  const nav = ROOM_AISLE_MAP[roomId] ?? ROOM_AISLE_MAP.manager;
+  const startAisleId = getNearestMeetingAisle(currentPos.x, currentPos.z);
+
+  // Dijkstra dari lorong meeting ke lorong ruangan asal
+  const nodes = findPathNodes(startAisleId, nav.aisleId);
+
+  const waypoints: THREE.Vector3[] = [];
+  // 1. Mulai dari posisi saat ini di kursi rapat
+  waypoints.push(new THREE.Vector3(currentPos.x, 0, currentPos.z));
+
+  // 2. Jalan ke lorong meeting
+  const startAisleNode = WALKWAY_GRAPH[startAisleId];
+  if (startAisleNode && Math.hypot(currentPos.x - startAisleNode.x, currentPos.z - startAisleNode.z) > 0.1) {
+    waypoints.push(new THREE.Vector3(startAisleNode.x, 0, startAisleNode.z));
+  }
+
+  // 3. Lewati koridor dengan lane offset halus
+  const laneOffset = ((agentIndex % 3) - 1) * 0.12;
+  for (const n of nodes) {
+    let px = n.x;
+    let pz = n.z;
+    if (!n.roomId) {
+      if (n.id.startsWith("V") || n.id.startsWith("I_V")) {
+        px += laneOffset;
+      } else if (n.id.startsWith("H")) {
+        pz += laneOffset;
+      }
+    }
+    waypoints.push(new THREE.Vector3(px, 0, pz));
+  }
+
+  // 4. Dari lorong ruangan asal kembali ke meja rumah
+  waypoints.push(new THREE.Vector3(homePos.x, 0, homePos.z));
+
+  return cleanWaypoints(waypoints);
 }

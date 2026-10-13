@@ -14,7 +14,7 @@ import {
   MANAGER_AGENT_NAME,
   MANAGER_ROOM_ID,
   ROOMS,
-  SEATS,
+  SEAT_BY_AGENT,
   STATUS_LABEL,
   colorOfAgent,
   roomOfAgent,
@@ -25,6 +25,8 @@ import {
   OFFSET_X,
   OFFSET_Z,
   createWalkwayVisuals,
+  getMeetingPathForAgent,
+  findPath,
 } from "@/lib/stage3d/walkways";
 import { ChoreographyEngine } from "@/lib/stage3d/choreography";
 import {
@@ -267,30 +269,37 @@ export function OfficeStage3D({
     });
   }, [agents]);
 
-  // Update target positions when gathered changes
-  // ATLAS mengabaikan gather di V1a dan tetap berada di mejanya
+  const isFirstMountRef = useRef(true);
+  const meetingReducedMotionOverrideRef = useRef<boolean | null>(null);
+
+  // Update pergerakan agen saat gathered (rapat) berubah lewat ChoreographyEngine
   useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false;
+      return;
+    }
+    const choreo = choreoEngineRef.current;
+    if (!choreo) return;
     const meetingRoom = ROOMS.find((r) => r.meeting)!;
-    AGENT_RENDER_ORDER.forEach((name, i) => {
-      const rec = agentRecordsRef.current[name];
-      if (!rec) return;
 
-      if (name === MANAGER_AGENT_NAME) {
-        const hp = HOME_POSITIONS[name];
-        rec.targetPos.set(hp[0] + OFFSET_X, rec.baseY, hp[1] + OFFSET_Z);
-        return;
-      }
+    const prefersReducedMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-      if (gathered) {
-        const seat = SEATS[i] ?? [2.5, 2.5];
-        const sx = meetingRoom.x + seat[0] + OFFSET_X;
-        const sz = meetingRoom.y + seat[1] + OFFSET_Z;
-        rec.targetPos.set(sx, rec.baseY, sz);
-      } else {
-        const hp = HOME_POSITIONS[name];
-        rec.targetPos.set(hp[0] + OFFSET_X, rec.baseY, hp[1] + OFFSET_Z);
-      }
-    });
+    const motionOverride = meetingReducedMotionOverrideRef.current;
+    meetingReducedMotionOverrideRef.current = null;
+    const isReduced =
+      motionOverride !== null ? motionOverride : prefersReducedMotion;
+
+    if (gathered) {
+      choreo.startMeeting(
+        SEAT_BY_AGENT,
+        { x: meetingRoom.x, y: meetingRoom.y },
+        isReduced
+      );
+    } else {
+      choreo.endMeeting(isReduced);
+    }
   }, [gathered]);
 
   // Update visual selection highlights
@@ -535,15 +544,16 @@ export function OfficeStage3D({
         screenMesh.position.set(room.x + 2.5 + OFFSET_X, 0.88, room.y + 0.15 + OFFSET_Z);
         roomGroup.add(screenMesh);
       } else if (room.id === MANAGER_ROOM_ID) {
-        // RUANG MANAGER: Meja eksekutif, monitor, kursi, nampan "inbox brief"
-        const mgrDeskGeo = new THREE.BoxGeometry(2.3, 0.44, 0.95);
+        // RUANG MANAGER: Meja eksekutif bentuk L di selatan ATLAS, laptop/monitor, kursi di utara, nampan inbox
+        // Meja Utama Eksekutif (di selatan ATLAS, cz + 0.68)
+        const mgrDeskGeo = new THREE.BoxGeometry(2.1, 0.44, 0.72);
         const mgrDeskMat = new THREE.MeshStandardMaterial({
           color: 0x18142a,
           roughness: 0.35,
           metalness: 0.4,
         });
         const mgrDeskMesh = new THREE.Mesh(mgrDeskGeo, mgrDeskMat);
-        mgrDeskMesh.position.set(cx, 0.22, cz - 0.45);
+        mgrDeskMesh.position.set(cx, 0.22, cz + 0.68);
         roomGroup.add(mgrDeskMesh);
 
         const mgrDeskEdgeGeo = new THREE.EdgesGeometry(mgrDeskGeo);
@@ -556,7 +566,18 @@ export function OfficeStage3D({
         mgrDeskEdges.position.copy(mgrDeskMesh.position);
         roomGroup.add(mgrDeskEdges);
 
-        // Monitor Manager
+        // Sayap Meja Bentuk L (sisi barat meja)
+        const mgrReturnGeo = new THREE.BoxGeometry(0.65, 0.44, 0.65);
+        const mgrReturnMesh = new THREE.Mesh(mgrReturnGeo, mgrDeskMat);
+        mgrReturnMesh.position.set(cx - 0.75, 0.22, cz + 0.35);
+        roomGroup.add(mgrReturnMesh);
+
+        const mgrReturnEdgeGeo = new THREE.EdgesGeometry(mgrReturnGeo);
+        const mgrReturnEdges = new THREE.LineSegments(mgrReturnEdgeGeo, mgrDeskEdgeMat);
+        mgrReturnEdges.position.copy(mgrReturnMesh.position);
+        roomGroup.add(mgrReturnEdges);
+
+        // Monitor / Laptop Manager di atas meja, di depan ATLAS
         const monGeo = new THREE.BoxGeometry(0.85, 0.42, 0.05);
         const monMat = new THREE.MeshStandardMaterial({
           color: roomColorHex,
@@ -564,25 +585,26 @@ export function OfficeStage3D({
           emissiveIntensity: 0.5,
         });
         const monMesh = new THREE.Mesh(monGeo, monMat);
-        monMesh.position.set(cx, 0.65, cz - 0.65);
+        monMesh.position.set(cx, 0.65, cz + 0.88);
         roomGroup.add(monMesh);
 
-        // Kursi Manager
+        // Kursi Eksekutif Manager (di utara / di belakang ATLAS)
         const chairSeatGeo = new THREE.BoxGeometry(0.55, 0.08, 0.50);
-        const chairBackGeo = new THREE.BoxGeometry(0.55, 0.52, 0.08);
+        const chairBackGeo = new THREE.BoxGeometry(0.55, 0.56, 0.08);
         const chairMat = new THREE.MeshStandardMaterial({
           color: 0x100e22,
           roughness: 0.5,
           metalness: 0.2,
         });
         const chairSeat = new THREE.Mesh(chairSeatGeo, chairMat);
-        chairSeat.position.set(cx, 0.24, cz + 0.22);
+        chairSeat.position.set(cx, 0.24, cz + 0.16);
         roomGroup.add(chairSeat);
+
         const chairBack = new THREE.Mesh(chairBackGeo, chairMat);
-        chairBack.position.set(cx, 0.54, cz + 0.46);
+        chairBack.position.set(cx, 0.54, cz - 0.10);
         roomGroup.add(chairBack);
 
-        // Nampan "Inbox Brief" di atas meja
+        // Nampan "Inbox Brief" di atas meja (sisi timur meja)
         const trayGeo = new THREE.BoxGeometry(0.36, 0.06, 0.26);
         const trayMat = new THREE.MeshStandardMaterial({
           color: 0x221a28,
@@ -593,7 +615,7 @@ export function OfficeStage3D({
         inboxTrayMatRef.current = trayMat;
 
         const trayMesh = new THREE.Mesh(trayGeo, trayMat);
-        trayMesh.position.set(cx + 0.65, 0.47, cz - 0.45);
+        trayMesh.position.set(cx + 0.70, 0.47, cz + 0.68);
         roomGroup.add(trayMesh);
 
         // Lembaran dokumen di dalam nampan
@@ -603,7 +625,7 @@ export function OfficeStage3D({
           roughness: 0.6,
         });
         const papersMesh = new THREE.Mesh(papersGeo, papersMat);
-        papersMesh.position.set(cx + 0.65, 0.51, cz - 0.45);
+        papersMesh.position.set(cx + 0.70, 0.51, cz + 0.68);
         roomGroup.add(papersMesh);
       } else {
         // Regular room desks for agents
@@ -882,8 +904,8 @@ export function OfficeStage3D({
       let startX: number;
       let startZ: number;
 
-      if (isGatheredNow && name !== MANAGER_AGENT_NAME) {
-        const seat = SEATS[i] ?? [2.5, 2.5];
+      if (isGatheredNow) {
+        const seat = SEAT_BY_AGENT[name] ?? [2.5, 2.5];
         startX = meetingRoom.x + seat[0] + OFFSET_X;
         startZ = meetingRoom.y + seat[1] + OFFSET_Z;
       } else {
@@ -916,18 +938,18 @@ export function OfficeStage3D({
       };
       agentRecords[name] = record;
 
-      // Daftarkan ATLAS ke Choreography Engine
-      if (name === MANAGER_AGENT_NAME) {
-        choreo.registerActor({
-          id: name,
-          group,
-          bodyMesh,
-          headMesh,
-          bubbleDiv,
-          homePos: new THREE.Vector3(startX, 0, startZ),
-          targetPos: record.targetPos,
-        });
-      }
+      // Daftarkan SEMUA agen ke Choreography Engine
+      const homeX = HOME_POSITIONS[name][0] + OFFSET_X;
+      const homeZ = HOME_POSITIONS[name][1] + OFFSET_Z;
+      choreo.registerActor({
+        id: name,
+        group,
+        bodyMesh,
+        headMesh,
+        bubbleDiv,
+        homePos: new THREE.Vector3(homeX, 0, homeZ),
+        targetPos: record.targetPos,
+      });
     });
     agentRecordsRef.current = agentRecords;
 
@@ -1128,6 +1150,8 @@ export function OfficeStage3D({
           agentRecords[nama]?.group.position.clone(),
         getAgentTargetPosition: (nama: string) =>
           agentRecords[nama]?.targetPos.clone(),
+        getAgentRotation: (nama: string) =>
+          agentRecords[nama]?.group.rotation.clone(),
         getDaylight: () => ({
           ...daylight.getDaylightState(),
           live: daylight.getLiveValues(),
@@ -1137,10 +1161,39 @@ export function OfficeStage3D({
           setHourOverrideState(h);
         },
         demoDelegate: (roomId: string) => choreo.delegate(roomId),
-        clearChoreo: () => choreo.clear(MANAGER_AGENT_NAME),
+        clearChoreo: (actorId: string = MANAGER_AGENT_NAME) => choreo.clear(actorId),
         isChoreoBusy: (actorId: string = MANAGER_AGENT_NAME) => choreo.isBusy(actorId),
         getChoreoQueueLength: (actorId: string = MANAGER_AGENT_NAME) =>
           choreo.getQueueLength(actorId),
+        isMeetingActive: () => choreo.isMeetingActive,
+        getPendingDelegationsCount: () => choreo.getPendingDelegationsCount(),
+        triggerGather: () => setGathered((g) => !g),
+        isGathered: () => gatheredRef.current,
+        getSeatPositions: () => SEAT_BY_AGENT,
+        getHomePositions: () => HOME_POSITIONS,
+        findPath: (from: string, to: string) => findPath(from, to),
+        getAgentMeetingWaypoints: (nama: string) => {
+          const mr = ROOMS.find((r) => r.meeting)!;
+          const seat = SEAT_BY_AGENT[nama] ?? [2.5, 2.5];
+          const target = { x: mr.x + seat[0] + OFFSET_X, z: mr.y + seat[1] + OFFSET_Z };
+          const p = agentRecords[nama]?.group.position;
+          return getMeetingPathForAgent(nama, { x: p.x, z: p.z }, target);
+        },
+        startMeetingNow: (reducedMotion: boolean = false) => {
+          meetingReducedMotionOverrideRef.current = reducedMotion;
+          const mr = ROOMS.find((r) => r.meeting)!;
+          setGathered(true);
+          choreo.startMeeting(
+            SEAT_BY_AGENT,
+            { x: mr.x, y: mr.y },
+            reducedMotion
+          );
+        },
+        endMeetingNow: (reducedMotion: boolean = false) => {
+          meetingReducedMotionOverrideRef.current = reducedMotion;
+          setGathered(false);
+          choreo.endMeeting(reducedMotion);
+        },
         setStatusOverride: (nama: string, st: AgentStatus | null) => {
           statusOverridesRef.current[nama] = st;
           const rec = agentRecords[nama];
@@ -1216,24 +1269,20 @@ export function OfficeStage3D({
       const camPos = camera.position;
 
       Object.entries(agentRecords).forEach(([name, rec]) => {
-        const isActorUnderChoreo =
-          name === MANAGER_AGENT_NAME && choreo.isBusy(MANAGER_AGENT_NAME);
+        const isActorUnderChoreo = choreo.isBusy(name);
 
         const override = statusOverridesRef.current[name];
         const activeStatus = override ?? rec.status;
 
-        // Gerakan posisi: jika aktor sedang dikendalikan choreo, lerp posisi regular dilewati
+        // Gerakan posisi: jika aktor sedang dikendalikan choreo, posisi dikendalikan choreo
         if (!isActorUnderChoreo) {
           if (reducedMotion) {
             rec.group.position.x = rec.targetPos.x;
             rec.group.position.z = rec.targetPos.z;
-          } else {
-            rec.group.position.x += (rec.targetPos.x - rec.group.position.x) * 0.08;
-            rec.group.position.z += (rec.targetPos.z - rec.group.position.z) * 0.08;
           }
         }
 
-        // Animasi halus bekerja / idle / review / berjalan
+        // Animasi halus bekerja / idle / review / berjalan / meeting
         if (reducedMotion) {
           rec.group.position.y = rec.baseY;
           rec.bodyMesh.scale.set(1, 1, 1);
@@ -1248,6 +1297,28 @@ export function OfficeStage3D({
           rec.leftArm.rotation.set(0, 0, 0);
           rec.rightArm.rotation.set(0, 0, 0);
           rec.statusLightMat.emissiveIntensity = 0.9;
+        } else if (isGathered) {
+          // POSE KHUSUS DI RUANG MEETING:
+          // Berdiri menghadap ke tengah meja rapat, tangan rileks, menyimak dengan napas halus
+          rec.group.position.y = rec.baseY;
+          rec.leftArm.rotation.set(0, 0, 0);
+          rec.rightArm.rotation.set(0, 0, 0);
+          rec.bodyMesh.rotation.set(0, 0, 0);
+
+          // Orientasi menghadap ke tengah meja rapat (0.0, -2.9)
+          const meetingCenter = { x: 0.0, z: -2.9 };
+          const dx = meetingCenter.x - rec.group.position.x;
+          const dz = meetingCenter.z - rec.group.position.z;
+          rec.group.rotation.y = Math.atan2(dx, dz);
+
+          // Napas halus dan sesekali mengangguk tanda menyimak
+          rec.bodyMesh.scale.set(1, 1.0 + Math.sin(time * 2.2 + rec.phase) * 0.015, 1);
+          const listenPhase = Math.sin(time * 0.7 + rec.phase);
+          rec.headGroup.rotation.x =
+            listenPhase > 0.4 ? Math.sin(time * 2.5 + rec.phase) * 0.08 : 0;
+          rec.headGroup.rotation.y = Math.sin(time * 0.4 + rec.phase) * 0.12;
+          rec.headGroup.rotation.z = 0;
+          rec.statusLightMat.emissiveIntensity = 0.6;
         } else {
           // Di meja: status visual halus
           if (activeStatus === "working") {
@@ -1305,8 +1376,7 @@ export function OfficeStage3D({
           currentSel?.type === "agent" && currentSel.id === name;
 
         // Dalam mode kumpul ruang meeting, sembunyikan label agent lain yang tidak dipilih
-        // (kecuali ATLAS yang berada di luar ruang meeting)
-        if (isGathered && name !== MANAGER_AGENT_NAME && !isHovered && !isSelected) {
+        if (isGathered && !isHovered && !isSelected) {
           rec.labelDiv.style.display = "none";
         } else {
           rec.labelDiv.style.display = "inline-flex";

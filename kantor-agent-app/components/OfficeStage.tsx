@@ -6,7 +6,7 @@ import {
   AGENT_RENDER_ORDER,
   HOME_POSITIONS,
   ROOMS,
-  SEATS,
+  SEAT_BY_AGENT,
   STATUS_LABEL,
   colorOfAgent,
   roomOfAgent,
@@ -87,10 +87,9 @@ export function OfficeStage({
 
   const positions = useMemo(() => {
     const pos: Record<string, [number, number]> = {};
-    AGENT_RENDER_ORDER.forEach((name, i) => {
-      // ATLAS mengabaikan gather di V1a dan tetap di mejanya
-      if (gathered && name !== "ATLAS") {
-        const seat = SEATS[i] ?? [2.5, 2.5];
+    AGENT_RENDER_ORDER.forEach((name) => {
+      if (gathered) {
+        const seat = SEAT_BY_AGENT[name] ?? [2.5, 2.5];
         pos[name] = [meetingRoom.x + seat[0], meetingRoom.y + seat[1]];
       } else {
         pos[name] = HOME_POSITIONS[name];
