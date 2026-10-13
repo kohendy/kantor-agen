@@ -206,17 +206,36 @@ export const SLOTS: [number, number][] = [
   [2.6, 3.9],
 ];
 
-// Posisi duduk di ruang meeting, relatif terhadap sudut ruangan.
-// 15 kursi untuk 15 agent departemen (ATLAS sebagai manajer mengabaikan gather di V1a).
-export const SEATS: [number, number][] = [
-  [1.0, 0.6], [2.0, 0.6], [3.0, 0.6], [4.0, 0.6], [1.0, 1.4], [2.5, 1.4], [4.0, 1.4],
-  [0.4, 2.6], [4.6, 2.6], [1.0, 4.2], [2.0, 4.2], [3.0, 4.2], [4.0, 4.2], [1.5, 4.8], [3.5, 4.8],
-  [2.5, 0.4], // Posisi cadangan seat ke-16 untuk proteksi index bounds
-];
+// Posisi duduk di ruang meeting, relatif terhadap sudut ruangan (0..5, 0..5).
+// Pemetaan eksplisit berdasarkan nama agen (SEAT_BY_AGENT) memastikan
+// penambahan ruang atau agen baru (seperti HR/Ops di V1b) tidak menggeser kursi rapat.
+export const SEAT_BY_AGENT: Record<string, [number, number]> = {
+  // Pimpinan rapat (Manager ATLAS) di kepala meja, menghadap ke ruang
+  [MANAGER_AGENT_NAME]: [2.5, 1.4],
+  // Baris utara meja
+  ATHENA: [1.3, 1.4],
+  CLIO: [3.7, 1.4],
+  ARGUS: [1.0, 0.7],
+  METIS: [2.0, 0.7],
+  ERATO: [3.0, 0.7],
+  DAPHNE: [4.0, 0.7],
+  // Sisi barat (kiri meja)
+  HESTIA: [0.6, 2.3],
+  THEMIS: [0.6, 3.1],
+  // Sisi timur (kanan meja)
+  ZEUS: [4.4, 2.3],
+  THEIA: [4.4, 3.1],
+  // Sisi selatan meja
+  TALOS: [1.2, 3.9],
+  ARTEMIS: [2.0, 3.9],
+  PLUTUS: [3.0, 3.9],
+  LYRA: [3.8, 3.9],
+  IRIS: [2.5, 4.5],
+};
 
 // Posisi "rumah" tiap agent di ruangannya, dihitung sekali dari konfigurasi statis
 // (sama seperti HOME yang dibangun saat render SVG pada prototipe).
-export function computeHomePositions(): Record<string, [number, number]> {
+function computeHomePositions(): Record<string, [number, number]> {
   const home: Record<string, [number, number]> = {};
   const sortedRooms = ROOMS.slice().sort((a, b) => a.x + a.y - (b.x + b.y));
   sortedRooms.forEach((room) => {
@@ -234,6 +253,15 @@ export const AGENT_RENDER_ORDER = Object.keys(AGENTS).sort(
   (a, b) =>
     HOME_POSITIONS[a][0] + HOME_POSITIONS[a][1] - (HOME_POSITIONS[b][0] + HOME_POSITIONS[b][1])
 );
+
+// Validasi ketat: setiap nama di AGENT_RENDER_ORDER wajib memiliki entri kursi di SEAT_BY_AGENT
+for (const name of AGENT_RENDER_ORDER) {
+  if (!SEAT_BY_AGENT[name]) {
+    throw new Error(
+      `[officeConfig] Konfigurasi kursi rapat hilang: agen "${name}" tidak memiliki entri di SEAT_BY_AGENT!`
+    );
+  }
+}
 
 export function colorOfAgent(name: string): string {
   for (const room of ROOMS) {

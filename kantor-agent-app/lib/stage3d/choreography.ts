@@ -3,7 +3,14 @@
 // dengan delta waktu ter-clamp, percepatan adaptif, dan penanganan reduced-motion.
 
 import * as THREE from "three";
-import { findPath } from "./walkways";
+import {
+  OFFSET_X,
+  OFFSET_Z,
+  findPath,
+  getMeetingPathForAgent,
+  getReturnPathForAgent,
+} from "./walkways";
+import { MANAGER_AGENT_NAME } from "@/lib/officeConfig";
 
 export type Task =
   | { type: "walkTo"; waypoints: THREE.Vector3[]; targetName?: string }
@@ -37,6 +44,8 @@ export class ChoreographyEngine {
   private actors: Map<string, ActorRecord> = new Map();
   public onInboxGlow?: (active: boolean) => void;
   public onHeadNod?: (agentName: string) => void;
+  public isMeetingActive: boolean = false;
+  private pendingDelegations: Array<{ roomId: string; onDone?: () => void }> = [];
 
   public registerActor(record: {
     id: string;
@@ -114,13 +123,36 @@ export class ChoreographyEngine {
       actor.headMesh.rotation.set(0, 0, 0);
     }
     this.hideSpeechBubble(actor);
-    if (this.onInboxGlow) this.onInboxGlow(false);
+    if (this.onInboxGlow && actorId === MANAGER_AGENT_NAME) this.onInboxGlow(false);
 
     // Jalankan semua callback yang tertunda
     while (actor.onCompleteCallbacks.length > 0) {
       const cb = actor.onCompleteCallbacks.shift();
       cb?.();
     }
+  }
+
+  // Mengosongkan antrean tugas tanpa mereset posisi aktor seketika
+  public clearQueue(actorId: string): void {
+    const actor = this.actors.get(actorId);
+    if (!actor) return;
+
+    actor.queue = [];
+    actor.currentTask = null;
+    actor.currentTaskTimer = 0;
+    actor.isBusy = false;
+    actor.isDrainingBacklog = false;
+    this.hideSpeechBubble(actor);
+    if (this.onInboxGlow && actorId === MANAGER_AGENT_NAME) this.onInboxGlow(false);
+
+    while (actor.onCompleteCallbacks.length > 0) {
+      const cb = actor.onCompleteCallbacks.shift();
+      cb?.();
+    }
+  }
+
+  public getPendingDelegationsCount(): number {
+    return this.pendingDelegations.length;
   }
 
   // Hitung jumlah trip / perjalanan delegasi yang ada di antrean
@@ -138,8 +170,15 @@ export class ChoreographyEngine {
 
   // Antrean delegasi Manager ATLAS
   public delegate(roomId: string, onDone?: () => void): void {
-    const actor = this.actors.get("ATLAS");
+    const actor = this.actors.get(MANAGER_AGENT_NAME);
     if (!actor) return;
+
+    // Jika rapat sedang berlangsung, tahan delegasi di antrean pending sampai rapat bubar
+    if (this.isMeetingActive) {
+      this.pendingDelegations.push({ roomId, onDone });
+      this.showSpeechBubble(actor, "Rapat berlangsung, tugas diantrekan…", false);
+      return;
+    }
 
     const tasks: Task[] = [];
     const distToHome = actor.group.position.distanceTo(actor.homePos);
@@ -211,7 +250,131 @@ export class ChoreographyEngine {
       },
     });
 
-    this.enqueue("ATLAS", tasks, onDone);
+    this.enqueue(MANAGER_AGENT_NAME, tasks, onDone);
+  }
+
+  // Mengalirkan delegasi yang tertunda selama rapat setelah bubar
+  public drainPendingDelegations(): void {
+    if (this.isMeetingActive || this.pendingDelegations.length === 0) return;
+    const next = this.pendingDelegations.shift();
+    if (next) {
+      this.delegate(next.roomId, () => {
+        next.onDone?.();
+        this.drainPendingDelegations();
+      });
+    }
+  }
+
+  // Gather: seluruh 16 agen berjalan serentak (ber-stagger) menuju kursi ruang Meeting
+  public startMeeting(
+    seatByAgent: Record<string, [number, number]>,
+    meetingRoomPos: { x: number; y: number },
+    reducedMotion: boolean = false
+  ): void {
+    this.isMeetingActive = true;
+    const meetingCenter = { x: 0.0, z: -2.9 };
+
+    let idx = 0;
+    for (const [name, actor] of this.actors.entries()) {
+      const seatRel = seatByAgent[name];
+      if (!seatRel) {
+        throw new Error(
+          `[choreography] Kursi rapat tidak ditemukan untuk agen "${name}" di seatByAgent`
+        );
+      }
+      const targetSeatWorld = {
+        x: meetingRoomPos.x + seatRel[0] + OFFSET_X,
+        z: meetingRoomPos.y + seatRel[1] + OFFSET_Z,
+      };
+
+      const dx = meetingCenter.x - targetSeatWorld.x;
+      const dz = meetingCenter.z - targetSeatWorld.z;
+      const faceAngle = Math.atan2(dx, dz);
+
+      if (reducedMotion) {
+        this.clearQueue(name);
+        actor.group.position.set(targetSeatWorld.x, 0, targetSeatWorld.z);
+        actor.targetPos.set(targetSeatWorld.x, 0, targetSeatWorld.z);
+        actor.group.rotation.y = faceAngle;
+        actor.isBusy = false;
+      } else {
+        this.clearQueue(name);
+
+        const waypoints = getMeetingPathForAgent(
+          name,
+          { x: actor.group.position.x, z: actor.group.position.z },
+          targetSeatWorld,
+          idx
+        );
+
+        // Stagger jeda berurutan antar agent 0.15 s - 0.4 s
+        const staggerMs = 150 + ((idx * 160) % 550);
+
+        const tasks: Task[] = [
+          { type: "wait", ms: staggerMs },
+          { type: "walkTo", waypoints, targetName: "Ruang Meeting" },
+          { type: "face", angle: faceAngle },
+        ];
+
+        this.enqueue(name, tasks);
+      }
+      idx++;
+    }
+  }
+
+  // Bubar: seluruh agen berjalan kembali ke mejanya masing-masing lewat koridor
+  public endMeeting(reducedMotion: boolean = false): void {
+    this.isMeetingActive = false;
+
+    let idx = 0;
+    for (const [name, actor] of this.actors.entries()) {
+      const homeTarget = {
+        x: actor.homePos.x,
+        z: actor.homePos.z,
+      };
+      const homeFaceAngle = 0;
+
+      if (reducedMotion) {
+        this.clearQueue(name);
+        actor.group.position.copy(actor.homePos);
+        actor.targetPos.copy(actor.homePos);
+        actor.group.rotation.y = homeFaceAngle;
+        actor.isBusy = false;
+      } else {
+        this.clearQueue(name);
+
+        const waypoints = getReturnPathForAgent(
+          name,
+          { x: actor.group.position.x, z: actor.group.position.z },
+          homeTarget,
+          idx
+        );
+
+        const staggerMs = 150 + ((idx * 150) % 500);
+
+        const tasks: Task[] = [
+          { type: "wait", ms: staggerMs },
+          { type: "walkTo", waypoints, targetName: "Kembali ke meja" },
+          { type: "face", angle: homeFaceAngle },
+        ];
+
+        if (name === MANAGER_AGENT_NAME) {
+          tasks.push({
+            type: "call",
+            fn: () => {
+              this.drainPendingDelegations();
+            },
+          });
+        }
+
+        this.enqueue(name, tasks);
+      }
+      idx++;
+    }
+
+    if (reducedMotion) {
+      this.drainPendingDelegations();
+    }
   }
 
   private showSpeechBubble(actor: ActorRecord, text: string, reducedMotion: boolean): void {
