@@ -11,6 +11,8 @@ import {
   AGENTS,
   AGENT_RENDER_ORDER,
   HOME_POSITIONS,
+  MANAGER_AGENT_NAME,
+  MANAGER_ROOM_ID,
   ROOMS,
   SEATS,
   STATUS_LABEL,
@@ -19,12 +21,26 @@ import {
 } from "@/lib/officeConfig";
 import type { AgentRow, EventRow, AgentStatus } from "@/lib/types";
 import { OfficeStage as OfficeStageSVG } from "./OfficeStage";
+import {
+  OFFSET_X,
+  OFFSET_Z,
+  createWalkwayVisuals,
+} from "@/lib/stage3d/walkways";
+import { ChoreographyEngine } from "@/lib/stage3d/choreography";
+import {
+  DaylightController,
+  getHourFromUrl,
+} from "@/lib/stage3d/daylight";
 
 export type Selection = { type: "room" | "agent"; id: string } | null;
 
 interface Agent3DRecord {
   group: THREE.Group;
   bodyMesh: THREE.Mesh;
+  headGroup: THREE.Group;
+  headMesh: THREE.Mesh;
+  leftArm: THREE.Mesh;
+  rightArm: THREE.Mesh;
   statusLightMesh: THREE.Mesh;
   statusLightMat: THREE.MeshStandardMaterial;
   hitMesh: THREE.Mesh;
@@ -49,11 +65,10 @@ interface Room3DRecord {
   labelDiv: HTMLDivElement;
 }
 
-const OFFSET_X = -8.5;
-const OFFSET_Z = -5.5;
-
-const INIT_CAM_POS = new THREE.Vector3(14.5, 17.5, 17.0);
-const INIT_CAM_TARGET = new THREE.Vector3(0, 0, 0);
+// Framing kamera 3 baris ruangan (Row 0, 1, 2)
+// Row 0 z=-3, Row 1 z=3, Row 2 z=9 -> Pusat z = 3.0, Pusat x = 0.0
+const INIT_CAM_POS = new THREE.Vector3(15.5, 21.0, 22.0);
+const INIT_CAM_TARGET = new THREE.Vector3(0, 0, 3.0);
 
 function pill(status: string) {
   const cls = status === "working" ? "w" : status === "review" ? "r" : "";
@@ -121,6 +136,20 @@ export function OfficeStage3D({
   const [gathered, setGathered] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
 
+  // Mode Demo & Daylight Controls
+  const [isDemo] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const search = window.location.search;
+    return (
+      new URLSearchParams(search).get("demo") === "1" ||
+      new URLSearchParams(search).get("e2e") === "1"
+    );
+  });
+  const showDemoUI = process.env.NODE_ENV !== "production" || isDemo;
+  const [hourOverrideState, setHourOverrideState] = useState<number | null>(() =>
+    getHourFromUrl()
+  );
+
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const infoContainerRef = useRef<HTMLDivElement>(null);
@@ -136,6 +165,13 @@ export function OfficeStage3D({
 
   const agentRecordsRef = useRef<Record<string, Agent3DRecord>>({});
   const roomRecordsRef = useRef<Record<string, Room3DRecord>>({});
+  const floorMaterialsRef = useRef<THREE.MeshStandardMaterial[]>([]);
+  const inboxTrayMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const statusOverridesRef = useRef<Record<string, AgentStatus | null>>({});
+
+  const choreoEngineRef = useRef<ChoreographyEngine>(new ChoreographyEngine());
+  const daylightControllerRef = useRef<DaylightController>(new DaylightController());
+
   const gatheredRef = useRef<boolean>(false);
   const selectedRef = useRef<Selection>(null);
   const hoveredRef = useRef<{ type: "room" | "agent"; id: string } | null>(null);
@@ -232,14 +268,23 @@ export function OfficeStage3D({
   }, [agents]);
 
   // Update target positions when gathered changes
+  // ATLAS mengabaikan gather di V1a dan tetap berada di mejanya
   useEffect(() => {
     const meetingRoom = ROOMS.find((r) => r.meeting)!;
     AGENT_RENDER_ORDER.forEach((name, i) => {
       const rec = agentRecordsRef.current[name];
       if (!rec) return;
+
+      if (name === MANAGER_AGENT_NAME) {
+        const hp = HOME_POSITIONS[name];
+        rec.targetPos.set(hp[0] + OFFSET_X, rec.baseY, hp[1] + OFFSET_Z);
+        return;
+      }
+
       if (gathered) {
-        const sx = meetingRoom.x + SEATS[i][0] + OFFSET_X;
-        const sz = meetingRoom.y + SEATS[i][1] + OFFSET_Z;
+        const seat = SEATS[i] ?? [2.5, 2.5];
+        const sx = meetingRoom.x + seat[0] + OFFSET_X;
+        const sz = meetingRoom.y + seat[1] + OFFSET_Z;
         rec.targetPos.set(sx, rec.baseY, sz);
       } else {
         const hp = HOME_POSITIONS[name];
@@ -292,6 +337,7 @@ export function OfficeStage3D({
   }, [infoOpen]);
 
   // Main Three.js Scene Setup & Animation Loop
+  // STRICT ATURAN KERAS: Deps hanya [webglSupported]! Jangan pemicu rebuild scene.
   useEffect(() => {
     if (!webglSupported) return;
 
@@ -324,7 +370,7 @@ export function OfficeStage3D({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 200);
+    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 220);
     camera.position.copy(INIT_CAM_POS);
     camera.lookAt(INIT_CAM_TARGET);
     cameraRef.current = camera;
@@ -348,19 +394,22 @@ export function OfficeStage3D({
     controls.dampingFactor = 0.05;
     controls.target.copy(INIT_CAM_TARGET);
     controls.minDistance = 8;
-    controls.maxDistance = 55;
-    controls.maxPolarAngle = Math.PI / 2 - 0.08; // strictly < 90 deg so cannot dip under floor
+    controls.maxDistance = 65;
+    controls.maxPolarAngle = Math.PI / 2 - 0.08;
     controls.minPolarAngle = 0.12;
     controls.listenToKeyEvents(window);
 
-    // Pan clamping so map is never lost
+    // Pan clamping agar 3 baris ruangan tidak pernah hilang
     controls.addEventListener("change", () => {
       controls.target.x = Math.max(-12, Math.min(12, controls.target.x));
-      controls.target.y = Math.max(-2, Math.min(5, controls.target.y));
-      controls.target.z = Math.max(-10, Math.min(10, controls.target.z));
+      controls.target.y = Math.max(-2, Math.min(6, controls.target.y));
+      controls.target.z = Math.max(-8, Math.min(14, controls.target.z));
     });
 
-    // Lighting
+    // Lighting (diinisialisasi dengan DaylightController)
+    const daylight = daylightControllerRef.current;
+    const choreo = choreoEngineRef.current;
+
     const ambientLight = new THREE.AmbientLight(0x2d2b56, 1.4);
     scene.add(ambientLight);
 
@@ -376,11 +425,16 @@ export function OfficeStage3D({
     meetingPoint.position.set(OFFSET_X + 8.5, 2.5, OFFSET_Z + 2.5);
     scene.add(meetingPoint);
 
+    // Visual koridor halus di sela pelat
+    const walkwayVisuals = createWalkwayVisuals();
+    scene.add(walkwayVisuals.group);
+
     // Track raycast hit targets
     const raycastHitMeshes: THREE.Mesh[] = [];
 
     // Build Rooms
     const roomRecords: Record<string, Room3DRecord> = {};
+    const floorMaterials: THREE.MeshStandardMaterial[] = [];
     const floorBoxGeo = new THREE.BoxGeometry(5.0, 0.08, 5.0);
     const floorEdgesGeo = new THREE.EdgesGeometry(floorBoxGeo);
 
@@ -399,6 +453,8 @@ export function OfficeStage3D({
         roughness: 0.25,
         metalness: 0.1,
       });
+      floorMaterials.push(floorMat);
+
       const floorMesh = new THREE.Mesh(floorBoxGeo, floorMat);
       floorMesh.position.set(cx, -0.04, cz);
       roomGroup.add(floorMesh);
@@ -417,10 +473,8 @@ export function OfficeStage3D({
       const gridPoints: THREE.Vector3[] = [];
       for (let i = 1; i < 5; i++) {
         const offset = i - 2.5;
-        // lines along X
         gridPoints.push(new THREE.Vector3(cx - 2.5, 0.005, cz + offset));
         gridPoints.push(new THREE.Vector3(cx + 2.5, 0.005, cz + offset));
-        // lines along Z
         gridPoints.push(new THREE.Vector3(cx + offset, 0.005, cz - 2.5));
         gridPoints.push(new THREE.Vector3(cx + offset, 0.005, cz + 2.5));
       }
@@ -446,7 +500,6 @@ export function OfficeStage3D({
         tableMesh.position.set(room.x + 2.5 + OFFSET_X, 0.21, room.y + 2.6 + OFFSET_Z);
         roomGroup.add(tableMesh);
 
-        // Glowing trim on table top
         const tableEdgeGeo = new THREE.EdgesGeometry(tableGeo);
         const tableEdgeMat = new THREE.LineBasicMaterial({
           color: roomColorHex,
@@ -471,7 +524,6 @@ export function OfficeStage3D({
           sctx.strokeRect(4, 4, 504, 136);
           sctx.fillStyle = room.color;
           sctx.font = "bold 34px 'Chakra Petch', sans-serif";
-          sctx.letterSpacing = "2px";
           sctx.fillText("REPORT H+1", 24, 56);
           sctx.fillStyle = "rgba(183, 243, 74, 0.75)";
           sctx.font = "24px 'Chakra Petch', sans-serif";
@@ -482,6 +534,77 @@ export function OfficeStage3D({
         const screenMesh = new THREE.Mesh(screenGeo, screenMat);
         screenMesh.position.set(room.x + 2.5 + OFFSET_X, 0.88, room.y + 0.15 + OFFSET_Z);
         roomGroup.add(screenMesh);
+      } else if (room.id === MANAGER_ROOM_ID) {
+        // RUANG MANAGER: Meja eksekutif, monitor, kursi, nampan "inbox brief"
+        const mgrDeskGeo = new THREE.BoxGeometry(2.3, 0.44, 0.95);
+        const mgrDeskMat = new THREE.MeshStandardMaterial({
+          color: 0x18142a,
+          roughness: 0.35,
+          metalness: 0.4,
+        });
+        const mgrDeskMesh = new THREE.Mesh(mgrDeskGeo, mgrDeskMat);
+        mgrDeskMesh.position.set(cx, 0.22, cz - 0.45);
+        roomGroup.add(mgrDeskMesh);
+
+        const mgrDeskEdgeGeo = new THREE.EdgesGeometry(mgrDeskGeo);
+        const mgrDeskEdgeMat = new THREE.LineBasicMaterial({
+          color: roomColorHex,
+          transparent: true,
+          opacity: 0.75,
+        });
+        const mgrDeskEdges = new THREE.LineSegments(mgrDeskEdgeGeo, mgrDeskEdgeMat);
+        mgrDeskEdges.position.copy(mgrDeskMesh.position);
+        roomGroup.add(mgrDeskEdges);
+
+        // Monitor Manager
+        const monGeo = new THREE.BoxGeometry(0.85, 0.42, 0.05);
+        const monMat = new THREE.MeshStandardMaterial({
+          color: roomColorHex,
+          emissive: roomColorHex,
+          emissiveIntensity: 0.5,
+        });
+        const monMesh = new THREE.Mesh(monGeo, monMat);
+        monMesh.position.set(cx, 0.65, cz - 0.65);
+        roomGroup.add(monMesh);
+
+        // Kursi Manager
+        const chairSeatGeo = new THREE.BoxGeometry(0.55, 0.08, 0.50);
+        const chairBackGeo = new THREE.BoxGeometry(0.55, 0.52, 0.08);
+        const chairMat = new THREE.MeshStandardMaterial({
+          color: 0x100e22,
+          roughness: 0.5,
+          metalness: 0.2,
+        });
+        const chairSeat = new THREE.Mesh(chairSeatGeo, chairMat);
+        chairSeat.position.set(cx, 0.24, cz + 0.22);
+        roomGroup.add(chairSeat);
+        const chairBack = new THREE.Mesh(chairBackGeo, chairMat);
+        chairBack.position.set(cx, 0.54, cz + 0.46);
+        roomGroup.add(chairBack);
+
+        // Nampan "Inbox Brief" di atas meja
+        const trayGeo = new THREE.BoxGeometry(0.36, 0.06, 0.26);
+        const trayMat = new THREE.MeshStandardMaterial({
+          color: 0x221a28,
+          emissive: 0xf07167,
+          emissiveIntensity: 0.25,
+          roughness: 0.35,
+        });
+        inboxTrayMatRef.current = trayMat;
+
+        const trayMesh = new THREE.Mesh(trayGeo, trayMat);
+        trayMesh.position.set(cx + 0.65, 0.47, cz - 0.45);
+        roomGroup.add(trayMesh);
+
+        // Lembaran dokumen di dalam nampan
+        const papersGeo = new THREE.BoxGeometry(0.28, 0.02, 0.20);
+        const papersMat = new THREE.MeshStandardMaterial({
+          color: 0xf5f5ff,
+          roughness: 0.6,
+        });
+        const papersMesh = new THREE.Mesh(papersGeo, papersMat);
+        papersMesh.position.set(cx + 0.65, 0.51, cz - 0.45);
+        roomGroup.add(papersMesh);
       } else {
         // Regular room desks for agents
         const deskGeo = new THREE.BoxGeometry(1.8, 0.44, 0.7);
@@ -575,8 +698,9 @@ export function OfficeStage3D({
       };
     });
     roomRecordsRef.current = roomRecords;
+    floorMaterialsRef.current = floorMaterials;
 
-    // Build Agents (Robots)
+    // Build Agents (Robots) dengan geometri bersama (shared geometries)
     const agentRecords: Record<string, Agent3DRecord> = {};
     const shadowGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.01, 16);
     const shadowMat = new THREE.MeshBasicMaterial({
@@ -599,6 +723,7 @@ export function OfficeStage3D({
       roughness: 0.2,
       metalness: 0.8,
     });
+    const armGeo = new THREE.BoxGeometry(0.08, 0.20, 0.08);
     const robotHitGeo = new THREE.BoxGeometry(0.85, 1.25, 0.85);
 
     AGENT_RENDER_ORDER.forEach((name, i) => {
@@ -633,35 +758,52 @@ export function OfficeStage3D({
       chestMesh.position.set(0, 0.34, 0.2);
       group.add(chestMesh);
 
-      // Head
+      // Two arms for working animation (lengan mengetuk meja)
+      const armMat = new THREE.MeshStandardMaterial({
+        color: 0xdfe3ff,
+        roughness: 0.35,
+        metalness: 0.2,
+      });
+      const leftArm = new THREE.Mesh(armGeo, armMat);
+      leftArm.position.set(-0.29, 0.32, 0.08);
+      group.add(leftArm);
+
+      const rightArm = new THREE.Mesh(armGeo, armMat);
+      rightArm.position.set(0.29, 0.32, 0.08);
+      group.add(rightArm);
+
+      // Head Group (agar visor, mata, antena, bintang ikut berputar/menoleh bersama kepala)
+      const headGroup = new THREE.Group();
+      headGroup.position.set(0, 0.77, 0);
+
       const headMat = new THREE.MeshStandardMaterial({
         color: 0xeef0ff,
         roughness: 0.35,
         metalness: 0.2,
       });
       const headMesh = new THREE.Mesh(headGeo, headMat);
-      headMesh.position.set(0, 0.77, 0);
-      group.add(headMesh);
+      headMesh.position.set(0, 0, 0);
+      headGroup.add(headMesh);
 
       // Visor
       const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-      visorMesh.position.set(0, 0.77, 0.22);
-      group.add(visorMesh);
+      visorMesh.position.set(0, 0, 0.22);
+      headGroup.add(visorMesh);
 
       // Eyes
       const eyeMat = new THREE.MeshBasicMaterial({ color: agentHex });
       const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-      leftEye.position.set(-0.11, 0.77, 0.24);
-      group.add(leftEye);
+      leftEye.position.set(-0.11, 0, 0.24);
+      headGroup.add(leftEye);
       const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-      rightEye.position.set(0.11, 0.77, 0.24);
-      group.add(rightEye);
+      rightEye.position.set(0.11, 0, 0.24);
+      headGroup.add(rightEye);
 
       // Antenna
       const antMat = new THREE.MeshBasicMaterial({ color: 0xeef0ff });
       const antennaMesh = new THREE.Mesh(antennaGeo, antMat);
-      antennaMesh.position.set(0, 1.07, 0);
-      group.add(antennaMesh);
+      antennaMesh.position.set(0, 0.30, 0);
+      headGroup.add(antennaMesh);
 
       // Status Light indicator tip
       const statusLightMat = new THREE.MeshStandardMaterial({
@@ -671,14 +813,27 @@ export function OfficeStage3D({
         roughness: 0.2,
       });
       const statusLightMesh = new THREE.Mesh(tipGeo, statusLightMat);
-      statusLightMesh.position.set(0, 1.2, 0);
-      group.add(statusLightMesh);
+      statusLightMesh.position.set(0, 0.43, 0);
+      headGroup.add(statusLightMesh);
 
       // Lead agent star
       if (cfg.lead) {
         const starMesh = new THREE.Mesh(starGeo, starMat);
-        starMesh.position.set(0, 1.34, 0);
-        group.add(starMesh);
+        starMesh.position.set(0, 0.57, 0);
+        headGroup.add(starMesh);
+      }
+
+      group.add(headGroup);
+
+      // Balon teks CSS2D khusus untuk ATLAS
+      let bubbleDiv: HTMLDivElement | undefined;
+      if (name === MANAGER_AGENT_NAME) {
+        bubbleDiv = document.createElement("div");
+        bubbleDiv.className = "atlas-speech-bubble";
+        bubbleDiv.setAttribute("aria-hidden", "true");
+        const bubbleObj = new CSS2DObject(bubbleDiv);
+        bubbleObj.position.set(0, 2.05, 0);
+        group.add(bubbleObj);
       }
 
       // Invisible Hitbox
@@ -721,14 +876,16 @@ export function OfficeStage3D({
       labelObj.position.set(0, 1.48, 0);
       group.add(labelObj);
 
-      // Initial position follows gathered state if already gathered upon mount/build
+      // Initial position
       const isGatheredNow = gatheredRef.current;
       const meetingRoom = ROOMS.find((r) => r.meeting)!;
       let startX: number;
       let startZ: number;
-      if (isGatheredNow) {
-        startX = meetingRoom.x + SEATS[i][0] + OFFSET_X;
-        startZ = meetingRoom.y + SEATS[i][1] + OFFSET_Z;
+
+      if (isGatheredNow && name !== MANAGER_AGENT_NAME) {
+        const seat = SEATS[i] ?? [2.5, 2.5];
+        startX = meetingRoom.x + seat[0] + OFFSET_X;
+        startZ = meetingRoom.y + seat[1] + OFFSET_Z;
       } else {
         const hp = HOME_POSITIONS[name];
         startX = hp[0] + OFFSET_X;
@@ -738,9 +895,13 @@ export function OfficeStage3D({
 
       scene.add(group);
 
-      agentRecords[name] = {
+      const record: Agent3DRecord = {
         group,
         bodyMesh,
+        headGroup,
+        headMesh,
+        leftArm,
+        rightArm,
         statusLightMesh,
         statusLightMat,
         hitMesh,
@@ -753,8 +914,43 @@ export function OfficeStage3D({
         phase: i * 0.45,
         status: currentStatus,
       };
+      agentRecords[name] = record;
+
+      // Daftarkan ATLAS ke Choreography Engine
+      if (name === MANAGER_AGENT_NAME) {
+        choreo.registerActor({
+          id: name,
+          group,
+          bodyMesh,
+          headMesh,
+          bubbleDiv,
+          homePos: new THREE.Vector3(startX, 0, startZ),
+          targetPos: record.targetPos,
+        });
+      }
     });
     agentRecordsRef.current = agentRecords;
+
+    // Callback event untuk Choreography: menyalakan nampan inbox dan anggukan kepala
+    choreo.onInboxGlow = (active: boolean) => {
+      if (inboxTrayMatRef.current) {
+        inboxTrayMatRef.current.emissiveIntensity = active ? 1.4 : 0.25;
+      }
+    };
+    choreo.onHeadNod = (roomId: string) => {
+      // Kepala departemen ruangan tujuan mengangguk singkat
+      const leadEntry = Object.entries(AGENTS).find(
+        ([agentName, cfg]) => cfg.lead && roomOfAgent(agentName)?.id === roomId
+      );
+      const leadAgent = leadEntry?.[0];
+      if (leadAgent && agentRecords[leadAgent]) {
+        const rec = agentRecords[leadAgent];
+        rec.headGroup.rotation.x = 0.22;
+        setTimeout(() => {
+          if (rec.headGroup) rec.headGroup.rotation.x = 0;
+        }, 800);
+      }
+    };
 
     // Pointer events for Click vs Drag distinction (~5px threshold) & multi-touch pinch tracking
     let pointerDownPos = { x: 0, y: 0 };
@@ -832,7 +1028,7 @@ export function OfficeStage3D({
         isPointerDragging = false;
       }
 
-      if (shouldIgnore) return; // was a drag / pan / orbit / pinch / cancel, not a single-pointer tap
+      if (shouldIgnore) return;
 
       const rect = renderer.domElement.getBoundingClientRect();
       mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -841,7 +1037,6 @@ export function OfficeStage3D({
       raycaster.setFromCamera(mouse, camera);
       const hits = raycaster.intersectObjects(raycastHitMeshes, false);
       if (hits.length > 0) {
-        // Prioritize agents over room floor if both hit
         const agentHit = hits.find((h) => h.object.userData.type === "agent");
         const hit = agentHit || hits[0];
         const data = hit.object.userData as {
@@ -861,7 +1056,7 @@ export function OfficeStage3D({
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointercancel", onPointerCancel);
 
-    // ResizeObserver: updates canvas size without changing camera position or target
+    // ResizeObserver
     const resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const cr = entry.contentRect;
@@ -875,9 +1070,12 @@ export function OfficeStage3D({
     });
     resizeObserver.observe(container);
 
-    // Visibility & Intersection Observers (pauses rendering when tab hidden or element not visible)
+    // Visibility & Intersection Observers
     function onVisibilityChange() {
       isTabVisibleRef.current = !document.hidden;
+      if (isTabVisibleRef.current) {
+        daylight.checkPeriodicUpdate();
+      }
     }
     document.addEventListener("visibilitychange", onVisibilityChange);
 
@@ -900,7 +1098,6 @@ export function OfficeStage3D({
       }
     }
     function onContextRestored() {
-      // Re-trigger animation loop after WebGL context is restored
       if (animFrameRef.current !== null) {
         cancelAnimationFrame(animFrameRef.current);
       }
@@ -909,11 +1106,15 @@ export function OfficeStage3D({
     gl.canvas.addEventListener("webglcontextlost", onContextLost);
     gl.canvas.addEventListener("webglcontextrestored", onContextRestored);
 
-    // Expose test helper on window for automated verification (non-production or ?e2e=1)
-    const isE2E =
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("e2e") === "1";
-    const exposeStage3D = process.env.NODE_ENV !== "production" || isE2E;
+    // Expose test helper on window for automated verification (non-production, ?e2e=1, atau ?demo=1)
+    const urlParams =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search)
+        : null;
+    const isE2E = urlParams?.get("e2e") === "1";
+    const isDemoMode = urlParams?.get("demo") === "1";
+    const exposeStage3D =
+      process.env.NODE_ENV !== "production" || isE2E || isDemoMode;
 
     if (exposeStage3D) {
       (window as unknown as { __STAGE_3D__?: unknown }).__STAGE_3D__ = {
@@ -927,6 +1128,31 @@ export function OfficeStage3D({
           agentRecords[nama]?.group.position.clone(),
         getAgentTargetPosition: (nama: string) =>
           agentRecords[nama]?.targetPos.clone(),
+        getDaylight: () => ({
+          ...daylight.getDaylightState(),
+          live: daylight.getLiveValues(),
+        }),
+        setHourOverride: (h: number | null) => {
+          daylight.setHourOverride(h);
+          setHourOverrideState(h);
+        },
+        demoDelegate: (roomId: string) => choreo.delegate(roomId),
+        clearChoreo: () => choreo.clear(MANAGER_AGENT_NAME),
+        isChoreoBusy: (actorId: string = MANAGER_AGENT_NAME) => choreo.isBusy(actorId),
+        getChoreoQueueLength: (actorId: string = MANAGER_AGENT_NAME) =>
+          choreo.getQueueLength(actorId),
+        setStatusOverride: (nama: string, st: AgentStatus | null) => {
+          statusOverridesRef.current[nama] = st;
+          const rec = agentRecords[nama];
+          if (rec) {
+            const eff = st ?? rec.status;
+            const hex = getStatusColor(eff);
+            rec.statusLightMat.color.setHex(hex);
+            rec.statusLightMat.emissive.setHex(hex);
+          }
+        },
+        getStatusOverride: (nama: string) =>
+          statusOverridesRef.current[nama] ?? null,
         renderer,
         scene,
         camera,
@@ -945,7 +1171,7 @@ export function OfficeStage3D({
         return;
       }
 
-      clock.getDelta();
+      const rawDt = clock.getDelta();
       const time = clock.getElapsedTime();
       const reducedMotion = motionQuery.matches;
 
@@ -954,7 +1180,6 @@ export function OfficeStage3D({
         const anim = resetAnimRef.current;
         const now = performance.now();
         const progress = Math.min(1, (now - anim.startTime) / anim.duration);
-        // easeInOutCubic
         const ease =
           progress < 0.5
             ? 4 * progress * progress * progress
@@ -972,37 +1197,105 @@ export function OfficeStage3D({
 
       controls.update();
 
+      // Siklus pencahayaan jam nyata (daylight)
+      daylight.checkPeriodicUpdate();
+      daylight.update(rawDt, {
+        ambientLight,
+        dirLight1,
+        dirLight2,
+        scene,
+        roomFloorMats: floorMaterialsRef.current,
+      });
+
+      // Mesin koreografi
+      choreo.update(rawDt, reducedMotion);
+
       // Animate Agents
       const isGathered = gatheredRef.current;
       const currentSel = selectedRef.current;
       const camPos = camera.position;
 
       Object.entries(agentRecords).forEach(([name, rec]) => {
-        // Movement: Lerp or instant snap
-        if (reducedMotion) {
-          rec.group.position.x = rec.targetPos.x;
-          rec.group.position.z = rec.targetPos.z;
-        } else {
-          rec.group.position.x += (rec.targetPos.x - rec.group.position.x) * 0.08;
-          rec.group.position.z += (rec.targetPos.z - rec.group.position.z) * 0.08;
-        }
+        const isActorUnderChoreo =
+          name === MANAGER_AGENT_NAME && choreo.isBusy(MANAGER_AGENT_NAME);
 
-        // Bobbing based on status
-        let bobY = 0;
-        if (!reducedMotion) {
-          if (rec.status === "working") {
-            bobY = Math.sin(time * 5.2 + rec.phase) * 0.055;
-            rec.statusLightMat.emissiveIntensity =
-              1.1 + Math.sin(time * 6.5 + rec.phase) * 0.7;
-          } else if (rec.status === "review") {
-            bobY = Math.sin(time * 2.8 + rec.phase) * 0.025;
-            rec.statusLightMat.emissiveIntensity =
-              1.0 + Math.sin(time * 3.5 + rec.phase) * 0.4;
+        const override = statusOverridesRef.current[name];
+        const activeStatus = override ?? rec.status;
+
+        // Gerakan posisi: jika aktor sedang dikendalikan choreo, lerp posisi regular dilewati
+        if (!isActorUnderChoreo) {
+          if (reducedMotion) {
+            rec.group.position.x = rec.targetPos.x;
+            rec.group.position.z = rec.targetPos.z;
           } else {
-            rec.statusLightMat.emissiveIntensity = 0.3;
+            rec.group.position.x += (rec.targetPos.x - rec.group.position.x) * 0.08;
+            rec.group.position.z += (rec.targetPos.z - rec.group.position.z) * 0.08;
           }
         }
-        rec.group.position.y = rec.baseY + bobY;
+
+        // Animasi halus bekerja / idle / review / berjalan
+        if (reducedMotion) {
+          rec.group.position.y = rec.baseY;
+          rec.bodyMesh.scale.set(1, 1, 1);
+          rec.bodyMesh.rotation.set(0, 0, 0);
+          rec.headGroup.rotation.set(0, 0, 0);
+          rec.leftArm.rotation.set(0, 0, 0);
+          rec.rightArm.rotation.set(0, 0, 0);
+          rec.statusLightMat.emissiveIntensity =
+            activeStatus === "idle" ? 0.3 : 1.2;
+        } else if (isActorUnderChoreo) {
+          // Sedang berjalan dalam koreografi (bobbing & rotasi sudah ditangani choreo)
+          rec.leftArm.rotation.set(0, 0, 0);
+          rec.rightArm.rotation.set(0, 0, 0);
+          rec.statusLightMat.emissiveIntensity = 0.9;
+        } else {
+          // Di meja: status visual halus
+          if (activeStatus === "working") {
+            // working: kepala miring & mengetuk, badan goyang mikro, lengan mengetuk meja
+            const bobY = Math.sin(time * 5.2 + rec.phase) * 0.055;
+            rec.group.position.y = rec.baseY + bobY;
+            rec.statusLightMat.emissiveIntensity =
+              1.1 + Math.sin(time * 6.5 + rec.phase) * 0.7;
+
+            rec.leftArm.rotation.x = Math.sin(time * 12 + rec.phase) * 0.28;
+            rec.rightArm.rotation.x = Math.cos(time * 12 + rec.phase) * 0.28;
+
+            rec.headGroup.rotation.z = Math.sin(time * 3.2 + rec.phase) * 0.06;
+            rec.headGroup.rotation.x = Math.abs(Math.sin(time * 6.5 + rec.phase)) * 0.08;
+            rec.headGroup.rotation.y = 0;
+
+            rec.bodyMesh.rotation.y = Math.sin(time * 4.0 + rec.phase) * 0.03;
+            rec.bodyMesh.scale.set(1, 1, 1);
+          } else if (activeStatus === "review") {
+            // review: kepala mengangguk lambat seolah menunggu
+            const bobY = Math.sin(time * 2.8 + rec.phase) * 0.025;
+            rec.group.position.y = rec.baseY + bobY;
+            rec.statusLightMat.emissiveIntensity =
+              1.0 + Math.sin(time * 3.5 + rec.phase) * 0.4;
+
+            rec.leftArm.rotation.set(0, 0, 0);
+            rec.rightArm.rotation.set(0, 0, 0);
+            rec.headGroup.rotation.x = Math.abs(Math.sin(time * 3.0 + rec.phase)) * 0.18;
+            rec.headGroup.rotation.y = 0;
+            rec.headGroup.rotation.z = 0;
+            rec.bodyMesh.rotation.set(0, 0, 0);
+            rec.bodyMesh.scale.set(1, 1, 1);
+          } else {
+            // idle: napas pelan (skala Y ±1-1.5%) dan sesekali menoleh
+            rec.group.position.y = rec.baseY;
+            rec.statusLightMat.emissiveIntensity = 0.3;
+            rec.leftArm.rotation.set(0, 0, 0);
+            rec.rightArm.rotation.set(0, 0, 0);
+            rec.bodyMesh.rotation.set(0, 0, 0);
+
+            rec.bodyMesh.scale.y = 1.0 + Math.sin(time * 2.6 + rec.phase) * 0.022;
+            const turnPhase = Math.sin(time * 0.4 + rec.phase);
+            rec.headGroup.rotation.y =
+              turnPhase > 0.6 ? Math.sin(time * 1.8 + rec.phase) * 0.22 : 0;
+            rec.headGroup.rotation.x = 0;
+            rec.headGroup.rotation.z = 0;
+          }
+        }
 
         // Label distance fading & gather occlusion
         const dist = camPos.distanceTo(rec.group.position);
@@ -1011,13 +1304,13 @@ export function OfficeStage3D({
         const isSelected =
           currentSel?.type === "agent" && currentSel.id === name;
 
-        if (isGathered && !isHovered && !isSelected) {
-          // In meeting room gathered mode, hide non-selected labels to prevent clutter
+        // Dalam mode kumpul ruang meeting, sembunyikan label agent lain yang tidak dipilih
+        // (kecuali ATLAS yang berada di luar ruang meeting)
+        if (isGathered && name !== MANAGER_AGENT_NAME && !isHovered && !isSelected) {
           rec.labelDiv.style.display = "none";
         } else {
           rec.labelDiv.style.display = "inline-flex";
-          // Dim labels far from camera
-          const maxDist = 48;
+          const maxDist = 52;
           const minDist = 16;
           const alpha = Math.min(
             1.0,
@@ -1030,7 +1323,7 @@ export function OfficeStage3D({
       // Room labels distance fading
       Object.entries(roomRecords).forEach(([, rRec]) => {
         const dist = camPos.distanceTo(rRec.group.position);
-        const alpha = Math.min(1.0, Math.max(0.4, 1.0 - (dist - 14) / 38));
+        const alpha = Math.min(1.0, Math.max(0.4, 1.0 - (dist - 14) / 42));
         rRec.labelDiv.style.opacity = alpha.toFixed(2);
       });
 
@@ -1040,7 +1333,7 @@ export function OfficeStage3D({
 
     animate();
 
-    // Cleanup & Leak Prevention on unmount
+    // Cleanup on unmount
     return () => {
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
@@ -1059,7 +1352,7 @@ export function OfficeStage3D({
 
       controls.dispose();
 
-      // Traverse & Dispose all geometries, materials, textures
+      // Dispose all geometries, materials, textures
       scene.traverse((obj) => {
         const mesh = obj as THREE.Mesh;
         if (mesh.geometry) {
@@ -1073,28 +1366,12 @@ export function OfficeStage3D({
             const matWithTextures = m as THREE.Material & {
               map?: THREE.Texture | null;
               emissiveMap?: THREE.Texture | null;
-              alphaMap?: THREE.Texture | null;
-              roughnessMap?: THREE.Texture | null;
-              metalnessMap?: THREE.Texture | null;
-              normalMap?: THREE.Texture | null;
             };
             if (matWithTextures.map && typeof matWithTextures.map.dispose === "function") {
               matWithTextures.map.dispose();
             }
             if (matWithTextures.emissiveMap && typeof matWithTextures.emissiveMap.dispose === "function") {
               matWithTextures.emissiveMap.dispose();
-            }
-            if (matWithTextures.alphaMap && typeof matWithTextures.alphaMap.dispose === "function") {
-              matWithTextures.alphaMap.dispose();
-            }
-            if (matWithTextures.roughnessMap && typeof matWithTextures.roughnessMap.dispose === "function") {
-              matWithTextures.roughnessMap.dispose();
-            }
-            if (matWithTextures.metalnessMap && typeof matWithTextures.metalnessMap.dispose === "function") {
-              matWithTextures.metalnessMap.dispose();
-            }
-            if (matWithTextures.normalMap && typeof matWithTextures.normalMap.dispose === "function") {
-              matWithTextures.normalMap.dispose();
             }
             m.dispose();
           });
@@ -1123,6 +1400,11 @@ export function OfficeStage3D({
       startPos: cameraRef.current.position.clone(),
       startTarget: controlsRef.current.target.clone(),
     };
+  }, []);
+
+  const handleSetHour = useCallback((h: number | null) => {
+    daylightControllerRef.current.setHourOverride(h);
+    setHourOverrideState(h);
   }, []);
 
   // Automatic Fallback to SVG map if WebGL is unavailable or failed
@@ -1156,7 +1438,7 @@ export function OfficeStage3D({
             <p>{room.desc}</p>
             <p>
               {gathered
-                ? "Semua agent sedang berkumpul. Arahkan kursor ke karakter untuk melihat namanya."
+                ? "Semua agent departemen sedang berkumpul. Arahkan kursor ke karakter untuk melihat namanya."
                 : "Agent sedang bekerja di ruangan masing-masing."}
             </p>
             <button
@@ -1270,6 +1552,96 @@ export function OfficeStage3D({
           role="region"
           aria-label="Peta kantor 3D interaktif. Gunakan klik kiri untuk memutar, klik kanan untuk menggeser, roda mouse untuk memperbesar."
         />
+
+        {/* Panel Kontrol Mode Demo & Jam (Hanya non-production atau ?demo=1) */}
+        {showDemoUI && (
+          <aside
+            className="stage-demo-panel"
+            aria-label="Mode Demo dan Kontrol Cahaya"
+          >
+            <div className="stage-demo-head">
+              <span>Mode Demo</span>
+              <span className="stage-demo-badge">V1a</span>
+            </div>
+            <div className="stage-demo-btns">
+              <button
+                type="button"
+                className="stage-demo-btn"
+                aria-label="Demo Brief ke Riset"
+                onClick={() => choreoEngineRef.current.delegate("riset")}
+              >
+                Brief → Riset
+              </button>
+              <button
+                type="button"
+                className="stage-demo-btn"
+                aria-label="Demo Brief ke Copy lalu Landing Page"
+                onClick={() => {
+                  choreoEngineRef.current.delegate("copy");
+                  choreoEngineRef.current.delegate("lp");
+                }}
+              >
+                Brief → Copy lalu LP
+              </button>
+              <button
+                type="button"
+                className="stage-demo-btn"
+                aria-label="Demo Banjir 7 brief delegasi"
+                onClick={() => {
+                  [
+                    "riset",
+                    "copy",
+                    "lp",
+                    "ads",
+                    "creative",
+                    "riset",
+                    "copy",
+                  ].forEach((r) => choreoEngineRef.current.delegate(r));
+                }}
+              >
+                Banjir brief (7)
+              </button>
+              <button
+                type="button"
+                className="stage-demo-btn"
+                style={{
+                  color: "var(--amber)",
+                  borderColor: "rgba(245, 166, 35, 0.4)",
+                }}
+                aria-label="Hentikan semua koreografi"
+                onClick={() => choreoEngineRef.current.clear(MANAGER_AGENT_NAME)}
+              >
+                Hentikan
+              </button>
+            </div>
+            <div className="stage-demo-daylight">
+              <span className="stage-demo-daylight-lbl">Jam:</span>
+              {[7, 13, 17, 21].map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  className={`stage-demo-btn ${
+                    hourOverrideState === h ? "is-active" : ""
+                  }`}
+                  aria-label={`Ubah simulasi jam ke ${h}:00`}
+                  onClick={() => handleSetHour(h)}
+                >
+                  {h < 10 ? `0${h}` : h}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`stage-demo-btn ${
+                  hourOverrideState === null ? "is-active" : ""
+                }`}
+                aria-label="Reset simulasi jam ke jam perangkat"
+                onClick={() => handleSetHour(null)}
+              >
+                Auto
+              </button>
+            </div>
+          </aside>
+        )}
 
         {/* Fullscreen Toggle Button (Top Right) */}
         {onToggleFullFrame && (
