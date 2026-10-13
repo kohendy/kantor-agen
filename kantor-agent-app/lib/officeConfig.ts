@@ -233,12 +233,9 @@ export const SEAT_BY_AGENT: Record<string, [number, number]> = {
   IRIS: [2.5, 4.5],
 };
 
-// Kompatibilitas array SEATS lama
-export const SEATS: [number, number][] = Object.values(SEAT_BY_AGENT);
-
 // Posisi "rumah" tiap agent di ruangannya, dihitung sekali dari konfigurasi statis
 // (sama seperti HOME yang dibangun saat render SVG pada prototipe).
-export function computeHomePositions(): Record<string, [number, number]> {
+function computeHomePositions(): Record<string, [number, number]> {
   const home: Record<string, [number, number]> = {};
   const sortedRooms = ROOMS.slice().sort((a, b) => a.x + a.y - (b.x + b.y));
   sortedRooms.forEach((room) => {
@@ -256,6 +253,15 @@ export const AGENT_RENDER_ORDER = Object.keys(AGENTS).sort(
   (a, b) =>
     HOME_POSITIONS[a][0] + HOME_POSITIONS[a][1] - (HOME_POSITIONS[b][0] + HOME_POSITIONS[b][1])
 );
+
+// Validasi ketat: setiap nama di AGENT_RENDER_ORDER wajib memiliki entri kursi di SEAT_BY_AGENT
+for (const name of AGENT_RENDER_ORDER) {
+  if (!SEAT_BY_AGENT[name]) {
+    throw new Error(
+      `[officeConfig] Konfigurasi kursi rapat hilang: agen "${name}" tidak memiliki entri di SEAT_BY_AGENT!`
+    );
+  }
+}
 
 export function colorOfAgent(name: string): string {
   for (const room of ROOMS) {

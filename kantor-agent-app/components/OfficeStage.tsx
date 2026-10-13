@@ -89,7 +89,10 @@ export function OfficeStage({
     const pos: Record<string, [number, number]> = {};
     AGENT_RENDER_ORDER.forEach((name) => {
       if (gathered) {
-        const seat = SEAT_BY_AGENT[name] ?? [2.5, 2.5];
+        const seat = SEAT_BY_AGENT[name];
+        if (!seat) {
+          throw new Error(`[OfficeStage] Kursi rapat tidak ditemukan untuk agen "${name}" di SEAT_BY_AGENT`);
+        }
         pos[name] = [meetingRoom.x + seat[0], meetingRoom.y + seat[1]];
       } else {
         pos[name] = HOME_POSITIONS[name];

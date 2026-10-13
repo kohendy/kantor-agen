@@ -292,13 +292,17 @@ export function OfficeStage3D({
       motionOverride !== null ? motionOverride : prefersReducedMotion;
 
     if (gathered) {
-      choreo.startMeeting(
-        SEAT_BY_AGENT,
-        { x: meetingRoom.x, y: meetingRoom.y },
-        isReduced
-      );
+      if (!choreo.isMeetingActive) {
+        choreo.startMeeting(
+          SEAT_BY_AGENT,
+          { x: meetingRoom.x, y: meetingRoom.y },
+          isReduced
+        );
+      }
     } else {
-      choreo.endMeeting(isReduced);
+      if (choreo.isMeetingActive) {
+        choreo.endMeeting(isReduced);
+      }
     }
   }, [gathered]);
 
@@ -905,7 +909,12 @@ export function OfficeStage3D({
       let startZ: number;
 
       if (isGatheredNow) {
-        const seat = SEAT_BY_AGENT[name] ?? [2.5, 2.5];
+        const seat = SEAT_BY_AGENT[name];
+        if (!seat) {
+          throw new Error(
+            `[OfficeStage3D] Kursi rapat tidak ditemukan untuk agen "${name}" di SEAT_BY_AGENT`
+          );
+        }
         startX = meetingRoom.x + seat[0] + OFFSET_X;
         startZ = meetingRoom.y + seat[1] + OFFSET_Z;
       } else {
@@ -1150,8 +1159,10 @@ export function OfficeStage3D({
           agentRecords[nama]?.group.position.clone(),
         getAgentTargetPosition: (nama: string) =>
           agentRecords[nama]?.targetPos.clone(),
-        getAgentRotation: (nama: string) =>
-          agentRecords[nama]?.group.rotation.clone(),
+        getAgentRotation: (nama: string) => {
+          const r = agentRecords[nama]?.group.rotation;
+          return r ? { x: r.x, y: r.y, z: r.z, _x: r.x, _y: r.y, _z: r.z } : null;
+        },
         getDaylight: () => ({
           ...daylight.getDaylightState(),
           live: daylight.getLiveValues(),
@@ -1174,7 +1185,12 @@ export function OfficeStage3D({
         findPath: (from: string, to: string) => findPath(from, to),
         getAgentMeetingWaypoints: (nama: string) => {
           const mr = ROOMS.find((r) => r.meeting)!;
-          const seat = SEAT_BY_AGENT[nama] ?? [2.5, 2.5];
+          const seat = SEAT_BY_AGENT[nama];
+          if (!seat) {
+            throw new Error(
+              `[OfficeStage3D] Kursi rapat tidak ditemukan untuk agen "${nama}" di SEAT_BY_AGENT`
+            );
+          }
           const target = { x: mr.x + seat[0] + OFFSET_X, z: mr.y + seat[1] + OFFSET_Z };
           const p = agentRecords[nama]?.group.position;
           return getMeetingPathForAgent(nama, { x: p.x, z: p.z }, target);

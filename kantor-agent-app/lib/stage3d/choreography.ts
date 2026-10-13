@@ -276,7 +276,12 @@ export class ChoreographyEngine {
 
     let idx = 0;
     for (const [name, actor] of this.actors.entries()) {
-      const seatRel = seatByAgent[name] ?? [2.5, 2.5];
+      const seatRel = seatByAgent[name];
+      if (!seatRel) {
+        throw new Error(
+          `[choreography] Kursi rapat tidak ditemukan untuk agen "${name}" di seatByAgent`
+        );
+      }
       const targetSeatWorld = {
         x: meetingRoomPos.x + seatRel[0] + OFFSET_X,
         z: meetingRoomPos.y + seatRel[1] + OFFSET_Z,
@@ -408,15 +413,15 @@ export class ChoreographyEngine {
 
       if (actor.isDrainingBacklog) {
         if (tripsCount >= 5) {
-          speedMultiplier = 5.2;
+          speedMultiplier = 4.2;
           waitMultiplier = 0.0; // Lewati jeda saat backlog sangat tinggi
         } else if (tripsCount >= 3) {
-          speedMultiplier = 4.0;
-          waitMultiplier = 0.02; // Jeda hampir instan
+          speedMultiplier = 3.2;
+          waitMultiplier = 0.05; // Jeda hampir instan
         } else {
           // Sisa 1-2 perjalanan terakhir dari backlog tetap dipercepat agar antrean segera tuntas
-          speedMultiplier = 3.2;
-          waitMultiplier = 0.05;
+          speedMultiplier = 2.6;
+          waitMultiplier = 0.1;
         }
       } else {
         // Mode normal
