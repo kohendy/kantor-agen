@@ -35,6 +35,7 @@ export interface ActorRecord {
   walkStep: number;
   isBusy: boolean;
   isDrainingBacklog?: boolean;
+  effectiveSpeed?: number;
   onCompleteCallbacks: Array<() => void>;
   speechText: string | null;
   speechTimer: number;
@@ -89,6 +90,11 @@ export class ChoreographyEngine {
     const actor = this.actors.get(actorId);
     if (!actor) return 0;
     return actor.queue.length + (actor.currentTask ? 1 : 0);
+  }
+
+  public getEffectiveSpeed(actorId: string): number {
+    const actor = this.actors.get(actorId);
+    return actor?.effectiveSpeed ?? 0;
   }
 
   // Tambahkan tugas ke antrean aktor
@@ -421,26 +427,31 @@ export class ChoreographyEngine {
 
       if (actor.isDrainingBacklog) {
         if (tripsCount >= 5) {
-          speedMultiplier = 7.5;
+          speedMultiplier = 4.2;
           waitMultiplier = 0.0; // Lewati jeda saat backlog sangat tinggi
         } else if (tripsCount >= 3) {
-          speedMultiplier = 6.0;
-          waitMultiplier = 0.0; // Lewati jeda saat backlog tinggi
+          speedMultiplier = 3.2;
+          waitMultiplier = 0.05; // Jeda hampir instan
         } else {
           // Sisa 1-2 perjalanan terakhir dari backlog tetap dipercepat agar antrean segera tuntas
-          speedMultiplier = 4.8;
-          waitMultiplier = 0.0;
+          speedMultiplier = 2.6;
+          waitMultiplier = 0.1;
         }
       } else {
         // Mode normal
         if (tripsCount >= 2) {
-          speedMultiplier = 1.8;
-          waitMultiplier = 0.3; // Jeda diperpendek sedikit jika ada 2 antrean
+          speedMultiplier = 1.4;
+          waitMultiplier = 0.4; // Jeda diperpendek sedikit jika ada 2 antrean
         }
       }
 
-      const baseSpeed = 3.6; // Unit per detik (disesuaikan untuk denah 44x36 dan kehalusan animasi)
+      // baseSpeed disesuaikan ke 3.2 unit/detik (dari nilai awal V1a 2.6) karena dimensi denah bertambah ke 44x36
+      // sehingga jarak tempuh antar-ruangan bertambah sekitar 60-90 unit. Kecepatan 3.2 unit/detik memastikan
+      // gerakan agen tetap terlihat natural dan tidak lambat, sambil menjaga batas kecepatan efektif maksimum
+      // sebesar 3.2 x 4.2 = 13.44 unit/detik (tegas berada di bawah batas toleransi maksimum 14 unit/detik).
+      const baseSpeed = 3.2;
       const currentSpeed = baseSpeed * speedMultiplier;
+      actor.effectiveSpeed = currentSpeed;
 
       // Update speech bubble timeout
       if (actor.speechTimer > 0) {

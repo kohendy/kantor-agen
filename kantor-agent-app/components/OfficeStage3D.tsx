@@ -19,9 +19,11 @@ import {
   STATUS_LABEL,
   colorOfAgent,
   roomOfAgent,
+  RoomConfig,
 } from "@/lib/officeConfig";
 import {
   FLOORPLAN,
+  FloorplanData,
   WallSide,
   validateFloorplan,
 } from "@/lib/stage3d/floorplan";
@@ -31,6 +33,7 @@ import {
   createWalkwayVisuals,
   getMeetingPathForAgent,
   findPath,
+  generateWalkwayGraph,
 } from "@/lib/stage3d/walkways";
 import { ChoreographyEngine } from "@/lib/stage3d/choreography";
 import {
@@ -44,6 +47,7 @@ import {
   DynamicDeskResult,
   DynamicAgentResult,
 } from "@/lib/stage3d/instances";
+import { THEME, softenColor } from "@/lib/stage3d/theme";
 
 export type Selection = {
   type: "room" | "agent" | "agent_instance";
@@ -108,10 +112,10 @@ function createHatchedTexture(): THREE.CanvasTexture {
   canvas.width = 128;
   canvas.height = 128;
   const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#141726";
+  ctx.fillStyle = THEME.bay.background;
   ctx.fillRect(0, 0, 128, 128);
-  ctx.strokeStyle = "rgba(245, 166, 35, 0.35)"; // garis arsiran amber halus
-  ctx.lineWidth = 10;
+  ctx.strokeStyle = THEME.bay.hatchColor;
+  ctx.lineWidth = 8;
   for (let d = -128; d <= 256; d += 24) {
     ctx.beginPath();
     ctx.moveTo(d, 0);
@@ -729,18 +733,26 @@ export function OfficeStage3D({
     const daylight = daylightControllerRef.current;
     const choreo = choreoEngineRef.current;
 
-    const ambientLight = new THREE.AmbientLight(0x2d2b56, 1.4);
+    const ambientLight = new THREE.AmbientLight(0xfffbf2, 1.55);
     scene.add(ambientLight);
 
-    const dirLight1 = new THREE.DirectionalLight(0xe8f0ff, 1.6);
-    dirLight1.position.set(45, 35, 42);
+    // Directional light utama kiri-atas dari sudut pandang isometrik tenggara
+    const dirLight1 = new THREE.DirectionalLight(0xfffaed, 1.65);
+    dirLight1.position.set(-15, 42, 45);
+    dirLight1.target.position.set(20.5, 0, 17.0);
     scene.add(dirLight1);
+    scene.add(dirLight1.target);
 
-    const dirLight2 = new THREE.DirectionalLight(0xa78bfa, 0.8);
-    dirLight2.position.set(-5, 25, -8);
+    // Directional light sekunder (fill light)
+    const dirLight2 = new THREE.DirectionalLight(0xdbeafe, 0.75);
+    dirLight2.position.set(50, 28, 20);
+    dirLight2.target.position.set(20.5, 0, 17.0);
     scene.add(dirLight2);
+    scene.add(dirLight2.target);
 
-    const meetingPoint = new THREE.PointLight(0xb7f34a, 0.9, 14);
+    scene.background = new THREE.Color(THEME.background.day);
+
+    const meetingPoint = new THREE.PointLight(0xb7f34a, 0.6, 14);
     meetingPoint.position.set(7.5, 2.5, 4.5);
     scene.add(meetingPoint);
 
@@ -756,6 +768,7 @@ export function OfficeStage3D({
     // Track raycast hit targets
     const raycastHitMeshes: THREE.Mesh[] = [];
     raycastHitMeshesRef.current = raycastHitMeshes;
+    const floorMaterials: THREE.MeshStandardMaterial[] = [];
 
     // Merged Static Geometry: High Walls, Low Cutaway Walls, Door Sills, Corridors, Bays
     const WALL_THICKNESS = 0.16;
@@ -780,9 +793,24 @@ export function OfficeStage3D({
     FLOORPLAN.rooms
       .filter((r) => r.kind === "common" && r.doors.length === 0)
       .forEach((cr) => {
-        const geo = new THREE.BoxGeometry(cr.w, 0.06, cr.d);
-        geo.translate(cr.x + cr.w / 2, -0.035, cr.z + cr.d / 2);
-        corridorGeos.push(geo);
+        if (cr.id === "taman_kecil") {
+          const tGeo = new THREE.BoxGeometry(cr.w, 0.08, cr.d);
+          const tMat = new THREE.MeshStandardMaterial({
+            color: THEME.commonFloors.taman_kecil,
+            roughness: 0.45,
+            metalness: 0.05,
+          });
+          floorMaterials.push(tMat);
+          const tMesh = new THREE.Mesh(tGeo, tMat);
+          tMesh.position.set(cr.x + cr.w / 2, -0.04, cr.z + cr.d / 2);
+          tMesh.name = `floor_${cr.id}`;
+          tMesh.userData.isStatic = true;
+          scene.add(tMesh);
+        } else {
+          const geo = new THREE.BoxGeometry(cr.w, 0.06, cr.d);
+          geo.translate(cr.x + cr.w / 2, -0.035, cr.z + cr.d / 2);
+          corridorGeos.push(geo);
+        }
       });
 
     // Bays (hatched floor)
@@ -854,30 +882,30 @@ export function OfficeStage3D({
     });
 
     const highWallMat = new THREE.MeshStandardMaterial({
-      color: 0x181a2e,
-      roughness: 0.5,
-      metalness: 0.2,
+      color: THEME.walls.high,
+      roughness: THEME.walls.highRoughness,
+      metalness: THEME.walls.highMetalness,
     });
     const lowWallMat = new THREE.MeshStandardMaterial({
-      color: 0x222642,
-      roughness: 0.5,
-      metalness: 0.2,
+      color: THEME.walls.low,
+      roughness: THEME.walls.lowRoughness,
+      metalness: THEME.walls.lowMetalness,
     });
     const sillMat = new THREE.MeshStandardMaterial({
-      color: 0x3d4368,
-      roughness: 0.4,
-      metalness: 0.3,
+      color: THEME.walls.doorSill,
+      roughness: THEME.walls.doorSillRoughness,
+      metalness: THEME.walls.doorSillMetalness,
     });
     const corridorMat = new THREE.MeshStandardMaterial({
-      color: 0x101322,
-      roughness: 0.4,
-      metalness: 0.15,
+      color: THEME.corridor.floor,
+      roughness: THEME.corridor.floorRoughness,
+      metalness: THEME.corridor.floorMetalness,
     });
     const hatchedTex = createHatchedTexture();
     const bayMat = new THREE.MeshStandardMaterial({
       map: hatchedTex,
       roughness: 0.45,
-      metalness: 0.2,
+      metalness: 0.1,
     });
 
     let highWallMesh: THREE.Mesh | null = null;
@@ -934,7 +962,6 @@ export function OfficeStage3D({
 
     // Build Rooms
     const roomRecords: Record<string, Room3DRecord> = {};
-    const floorMaterials: THREE.MeshStandardMaterial[] = [];
 
     ROOMS.forEach((room) => {
       const roomGroup = new THREE.Group();
@@ -942,14 +969,13 @@ export function OfficeStage3D({
       const cz = room.z + room.d / 2;
       const roomColorHex = new THREE.Color(room.color).getHex();
 
-      // Thin glass floor plate
+      // Pelat lantai SOLID dilunakkan (softened 60% putih)
+      const softenedColorHex = softenColor(room.color, THEME.roomFloor.whiteMixRatio);
       const floorBoxGeo = new THREE.BoxGeometry(room.w, 0.08, room.d);
       const floorMat = new THREE.MeshStandardMaterial({
-        color: roomColorHex,
-        transparent: true,
-        opacity: 0.18,
-        roughness: 0.25,
-        metalness: 0.1,
+        color: softenedColorHex,
+        roughness: THEME.roomFloor.roughness,
+        metalness: THEME.roomFloor.metalness,
       });
       floorMaterials.push(floorMat);
 
@@ -964,7 +990,7 @@ export function OfficeStage3D({
       const edgeMat = new THREE.LineBasicMaterial({
         color: roomColorHex,
         transparent: true,
-        opacity: 0.75,
+        opacity: THEME.roomFloor.edgeOpacity,
       });
       const edgeLines = new THREE.LineSegments(floorEdgesGeo, edgeMat);
       edgeLines.position.set(cx, -0.04, cz);
@@ -977,9 +1003,9 @@ export function OfficeStage3D({
         // Meeting Conference Table (8.0 x 0.42 x 1.6) at (7.5, 0.21, 4.5)
         const tableGeo = new THREE.BoxGeometry(8.0, 0.42, 1.6);
         const tableMat = new THREE.MeshStandardMaterial({
-          color: 0x14122e,
-          roughness: 0.3,
-          metalness: 0.4,
+          color: THEME.furniture.meetingTable,
+          roughness: 0.35,
+          metalness: 0.2,
         });
         const tableMesh = new THREE.Mesh(tableGeo, tableMat);
         tableMesh.position.set(7.5, 0.21, 4.5);
@@ -991,7 +1017,7 @@ export function OfficeStage3D({
         const tableEdgeMat = new THREE.LineBasicMaterial({
           color: roomColorHex,
           transparent: true,
-          opacity: 0.7,
+          opacity: THEME.furniture.meetingTableEdgeOpacity,
         });
         const tableEdges = new THREE.LineSegments(tableEdgeGeo, tableEdgeMat);
         tableEdges.position.copy(tableMesh.position);
@@ -1006,15 +1032,15 @@ export function OfficeStage3D({
         screenCanvas.height = 144;
         const sctx = screenCanvas.getContext("2d");
         if (sctx) {
-          sctx.fillStyle = "#0b0a1a";
+          sctx.fillStyle = "#1e293b";
           sctx.fillRect(0, 0, 512, 144);
           sctx.strokeStyle = room.color;
           sctx.lineWidth = 6;
           sctx.strokeRect(4, 4, 504, 136);
-          sctx.fillStyle = room.color;
+          sctx.fillStyle = "#ffffff";
           sctx.font = "bold 34px 'Chakra Petch', sans-serif";
           sctx.fillText("REPORT H+1", 24, 56);
-          sctx.fillStyle = "rgba(183, 243, 74, 0.75)";
+          sctx.fillStyle = "rgba(183, 243, 74, 0.95)";
           sctx.font = "24px 'Chakra Petch', sans-serif";
           sctx.fillText("Tiap hari 09.00", 24, 104);
         }
@@ -1028,7 +1054,7 @@ export function OfficeStage3D({
 
         // 19 meeting chair seats (merged geometry)
         const chairMat = new THREE.MeshStandardMaterial({
-          color: 0x120f26,
+          color: THEME.furniture.meetingChair,
           roughness: 0.5,
         });
         const chairGeos: THREE.BufferGeometry[] = [];
@@ -1048,9 +1074,9 @@ export function OfficeStage3D({
         // Executive L-Desk at (4.5, 0.22, 15.8)
         const mgrDeskGeo = new THREE.BoxGeometry(2.2, 0.44, 0.72);
         const mgrDeskMat = new THREE.MeshStandardMaterial({
-          color: 0x18142a,
+          color: THEME.furniture.managerDesk,
           roughness: 0.35,
-          metalness: 0.4,
+          metalness: 0.25,
         });
         const mgrDeskMesh = new THREE.Mesh(mgrDeskGeo, mgrDeskMat);
         mgrDeskMesh.position.set(4.5, 0.22, 15.8);
@@ -1088,7 +1114,7 @@ export function OfficeStage3D({
 
         const chairSeatGeo = new THREE.BoxGeometry(0.55, 0.08, 0.50);
         const chairBackGeo = new THREE.BoxGeometry(0.55, 0.56, 0.08);
-        const chairMat = new THREE.MeshStandardMaterial({ color: 0x100e22, roughness: 0.5 });
+        const chairMat = new THREE.MeshStandardMaterial({ color: THEME.furniture.chair, roughness: 0.5 });
         const chairSeat = new THREE.Mesh(chairSeatGeo, chairMat);
         chairSeat.position.set(4.5, 0.24, 14.4);
         chairSeat.name = "mgrChairSeat";
@@ -1103,7 +1129,7 @@ export function OfficeStage3D({
 
         const trayGeo = new THREE.BoxGeometry(0.36, 0.06, 0.26);
         const trayMat = new THREE.MeshStandardMaterial({
-          color: 0x221a28,
+          color: 0x475569,
           emissive: 0xf07167,
           emissiveIntensity: 0.25,
           roughness: 0.35,
@@ -1116,7 +1142,7 @@ export function OfficeStage3D({
         roomGroup.add(trayMesh);
 
         const papersGeo = new THREE.BoxGeometry(0.28, 0.02, 0.20);
-        const papersMat = new THREE.MeshStandardMaterial({ color: 0xf5f5ff, roughness: 0.6 });
+        const papersMat = new THREE.MeshStandardMaterial({ color: THEME.furniture.paper, roughness: 0.6 });
         const papersMesh = new THREE.Mesh(papersGeo, papersMat);
         papersMesh.position.set(5.2, 0.51, 15.8);
         papersMesh.name = "mgrPapers";
@@ -1126,9 +1152,9 @@ export function OfficeStage3D({
         // HR Desk at (4.5, 0.24, 23.8)
         const hrDeskGeo = new THREE.BoxGeometry(2.0, 0.48, 0.7);
         const hrDeskMat = new THREE.MeshStandardMaterial({
-          color: 0x18142a,
+          color: THEME.furniture.hrDesk,
           roughness: 0.35,
-          metalness: 0.35,
+          metalness: 0.25,
         });
         const hrDeskMesh = new THREE.Mesh(hrDeskGeo, hrDeskMat);
         hrDeskMesh.position.set(4.5, 0.24, 23.8);
@@ -1147,7 +1173,7 @@ export function OfficeStage3D({
 
         const hrChair = new THREE.Mesh(
           new THREE.BoxGeometry(0.5, 0.08, 0.45),
-          new THREE.MeshStandardMaterial({ color: 0x120f24, roughness: 0.5 })
+          new THREE.MeshStandardMaterial({ color: THEME.furniture.chair, roughness: 0.5 })
         );
         hrChair.position.set(4.5, 0.24, 22.4);
         hrChair.name = "hrChair";
@@ -1186,7 +1212,7 @@ export function OfficeStage3D({
         // Lounge Sofa at (2.0, 0.14, 23.8)
         const sofa = new THREE.Mesh(
           new THREE.BoxGeometry(1.4, 0.28, 0.6),
-          new THREE.MeshStandardMaterial({ color: 0x1e1838, roughness: 0.5 })
+          new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.5 })
         );
         sofa.position.set(2.0, 0.14, 23.8);
         sofa.name = "hrSofa";
@@ -1196,9 +1222,9 @@ export function OfficeStage3D({
         // Industrial Desk at (21.5, 0.22, 5.3)
         const opsDeskGeo = new THREE.BoxGeometry(2.0, 0.44, 0.75);
         const opsDeskMat = new THREE.MeshStandardMaterial({
-          color: 0x161a24,
+          color: THEME.furniture.opsDesk,
           roughness: 0.4,
-          metalness: 0.5,
+          metalness: 0.3,
         });
         const opsDeskMesh = new THREE.Mesh(opsDeskGeo, opsDeskMat);
         opsDeskMesh.position.set(21.5, 0.22, 5.3);
@@ -1217,7 +1243,7 @@ export function OfficeStage3D({
 
         const opsChair = new THREE.Mesh(
           new THREE.BoxGeometry(0.5, 0.08, 0.45),
-          new THREE.MeshStandardMaterial({ color: 0x10141e, roughness: 0.6 })
+          new THREE.MeshStandardMaterial({ color: THEME.furniture.chair, roughness: 0.6 })
         );
         opsChair.position.set(21.5, 0.24, 3.9);
         opsChair.name = "opsChair";
@@ -1253,7 +1279,7 @@ export function OfficeStage3D({
         // Blueprint table at (19.2, 0.23, 5.3)
         const bpBase = new THREE.Mesh(
           new THREE.BoxGeometry(1.3, 0.46, 0.85),
-          new THREE.MeshStandardMaterial({ color: 0x121722, roughness: 0.4, metalness: 0.4 })
+          new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.4, metalness: 0.3 })
         );
         bpBase.position.set(19.2, 0.23, 5.3);
         bpBase.name = "opsBpBase";
@@ -1263,7 +1289,7 @@ export function OfficeStage3D({
         // Trolley at (23.8, 0.3, 5.3)
         const trolley = new THREE.Mesh(
           new THREE.BoxGeometry(0.7, 0.6, 0.5),
-          new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.6 })
+          new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.4, metalness: 0.5 })
         );
         trolley.position.set(23.8, 0.3, 5.3);
         trolley.name = "opsTrolley";
@@ -1273,7 +1299,7 @@ export function OfficeStage3D({
         // Server rack at (24.5, 0.8, 0.5)
         const rack = new THREE.Mesh(
           new THREE.BoxGeometry(0.85, 1.6, 0.45),
-          new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4, metalness: 0.6 })
+          new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.4 })
         );
         rack.position.set(24.5, 0.8, 0.5);
         rack.name = "opsRack";
@@ -1283,9 +1309,9 @@ export function OfficeStage3D({
         // Creative Desk at (5.0, 0.22, 31.3)
         const sosDeskGeo = new THREE.BoxGeometry(1.85, 0.44, 0.72);
         const sosDeskMat = new THREE.MeshStandardMaterial({
-          color: 0x1c172e,
+          color: THEME.furniture.sosmedDesk,
           roughness: 0.35,
-          metalness: 0.3,
+          metalness: 0.25,
         });
         const sosDeskMesh = new THREE.Mesh(sosDeskGeo, sosDeskMat);
         sosDeskMesh.position.set(5.0, 0.22, 31.3);
@@ -1304,7 +1330,7 @@ export function OfficeStage3D({
 
         const sosChair = new THREE.Mesh(
           new THREE.BoxGeometry(0.5, 0.08, 0.45),
-          new THREE.MeshStandardMaterial({ color: 0x141026, roughness: 0.5 })
+          new THREE.MeshStandardMaterial({ color: THEME.furniture.chair, roughness: 0.5 })
         );
         sosChair.position.set(5.0, 0.24, 29.9);
         sosChair.name = "sosChair";
@@ -1345,9 +1371,9 @@ export function OfficeStage3D({
       } else {
         // Regular room desks for agents (Riset, Advertiser, Creative, Copy, Landing Page)
         const deskMat = new THREE.MeshStandardMaterial({
-          color: 0x14122e,
-          roughness: 0.4,
-          metalness: 0.3,
+          color: THEME.furniture.desk,
+          roughness: THEME.furniture.deskRoughness,
+          metalness: THEME.furniture.deskMetalness,
         });
         const deskEdgeMat = new THREE.LineBasicMaterial({
           color: roomColorHex,
@@ -1355,12 +1381,13 @@ export function OfficeStage3D({
           opacity: 0.5,
         });
         const chairMat = new THREE.MeshStandardMaterial({
-          color: 0x100e22,
-          roughness: 0.6,
+          color: THEME.furniture.chair,
+          roughness: THEME.furniture.chairRoughness,
+          metalness: THEME.furniture.chairMetalness,
         });
         const monMat = new THREE.MeshStandardMaterial({
-          color: roomColorHex,
-          emissive: roomColorHex,
+          color: THEME.furniture.monitorScreen,
+          emissive: THEME.furniture.monitorScreen,
           emissiveIntensity: 0.4,
         });
 
@@ -1492,14 +1519,15 @@ export function OfficeStage3D({
         const cx = cRoom.x + cRoom.w / 2;
         const cz = cRoom.z + cRoom.d / 2;
         const roomColorHex = new THREE.Color(cRoom.color).getHex();
+        const commonColorHex =
+          THEME.commonFloors[cRoom.id as keyof typeof THEME.commonFloors] ||
+          softenColor(cRoom.color, 0.60);
 
         const floorBoxGeo = new THREE.BoxGeometry(cRoom.w, 0.08, cRoom.d);
         const floorMat = new THREE.MeshStandardMaterial({
-          color: roomColorHex,
-          transparent: true,
-          opacity: 0.18,
-          roughness: 0.25,
-          metalness: 0.1,
+          color: commonColorHex,
+          roughness: THEME.roomFloor.roughness,
+          metalness: THEME.roomFloor.metalness,
         });
         floorMaterials.push(floorMat);
 
@@ -1513,7 +1541,7 @@ export function OfficeStage3D({
         const edgeMat = new THREE.LineBasicMaterial({
           color: roomColorHex,
           transparent: true,
-          opacity: 0.75,
+          opacity: THEME.roomFloor.edgeOpacity,
         });
         const edgeLines = new THREE.LineSegments(floorEdgesGeo, edgeMat);
         edgeLines.position.set(cx, -0.04, cz);
@@ -1574,12 +1602,12 @@ export function OfficeStage3D({
     const shadowMat = new THREE.MeshBasicMaterial({
       color: 0x000000,
       transparent: true,
-      opacity: 0.45,
+      opacity: THEME.character.shadowOpacity,
     });
     const bodyGeo = new THREE.BoxGeometry(0.5, 0.44, 0.38);
     const headGeo = new THREE.BoxGeometry(0.56, 0.42, 0.42);
     const visorGeo = new THREE.BoxGeometry(0.44, 0.2, 0.04);
-    const visorMat = new THREE.MeshBasicMaterial({ color: 0x14122b });
+    const visorMat = new THREE.MeshBasicMaterial({ color: 0x1e293b });
     const eyeGeo = new THREE.BoxGeometry(0.08, 0.08, 0.02);
     const antennaGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.18);
     const tipGeo = new THREE.SphereGeometry(0.07, 12, 12);
@@ -2045,6 +2073,12 @@ export function OfficeStage3D({
           daylight.setHourOverride(h);
           setHourOverrideState(h);
         },
+        getTheme: () => THEME,
+        getEffectiveSpeed: (actorId: string = MANAGER_AGENT_NAME) =>
+          choreo.getEffectiveSpeed(actorId),
+        generateWalkwayGraph: (fp?: FloorplanData) => generateWalkwayGraph(fp),
+        calculateRoomSlotPosition: (room: RoomConfig, slotIdx: number, isExp?: boolean) =>
+          calculateRoomSlotPosition(room, slotIdx, isExp),
         demoDelegate: (roomId: string) => choreo.delegate(roomId),
         clearChoreo: (actorId: string = MANAGER_AGENT_NAME) => choreo.clear(actorId),
         isChoreoBusy: (actorId: string = MANAGER_AGENT_NAME) => choreo.isBusy(actorId),

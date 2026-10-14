@@ -16,6 +16,7 @@ import {
   ROOMS,
   roomOfAgent,
 } from "@/lib/officeConfig";
+import { THEME } from "./theme";
 
 export interface WaypointNode {
   id: string;
@@ -127,9 +128,9 @@ export function segmentIntersectsUnallowedRooms(
 
 // Generator graf otomatis dari Floorplan
 export function generateWalkwayGraph(
-  fp: FloorplanData,
-  homePosMap: Record<string, [number, number]>,
-  seatPosMap: Record<string, [number, number]>
+  fp: FloorplanData = FLOORPLAN,
+  homePosMap: Record<string, [number, number]> = HOME_POSITIONS,
+  seatPosMap: Record<string, [number, number]> = SEAT_BY_AGENT
 ): Record<string, WaypointNode> {
   const nodes: Record<string, WaypointNode> = {};
 
@@ -151,156 +152,132 @@ export function generateWalkwayGraph(
     if (!nodes[id2].neighbors.includes(id1)) nodes[id2].neighbors.push(id1);
   }
 
-  // 1. PERSIMPANGAN KORIDOR (Intersections)
-  // H_N (z: 9..11, cz = 10) bersimpangan dengan:
-  // - V_W (x: 9..11, cx = 10) di (10, 10)
-  // - lorong_1 (x: 15..17, cx = 16) di (16, 10)
-  // - lorong_2 (x: 26..28, cx = 27) di (27, 10)
-  // - V_E (x: 28..30, cx = 29) di (29, 10)
-  // - E_lane (x: 38..39, cx = 38.5) di (38.5, 10)
-  addNode({ id: "I_HN_VW", x: 10, z: 10, neighbors: [] });
-  addNode({ id: "I_HN_L1", x: 16, z: 10, neighbors: [] });
-  addNode({ id: "I_HN_L2", x: 27, z: 10, neighbors: [] });
-  addNode({ id: "I_HN_VE", x: 29, z: 10, neighbors: [] });
-  addNode({ id: "I_HN_EL", x: 38.5, z: 10, neighbors: [] });
+  // 1. KORIDOR & PERSIMPANGAN OTOMATIS DITURUNKAN DARI DATA (FLOORPLAN.corridors)
+  const nodesByCorridor: Record<string, string[]> = {};
+  for (const c of fp.corridors) {
+    nodesByCorridor[c.id] = [];
+    const isHoriz = c.w > c.d;
+    const midX = +(c.x + c.w / 2).toFixed(3);
+    const midZ = +(c.z + c.d / 2).toFixed(3);
+    const midId = `mid_${c.id}`;
+    addNode({ id: midId, x: midX, z: midZ, neighbors: [] });
+    nodesByCorridor[c.id].push(midId);
 
-  // H_S (z: 25..27, cz = 26) bersimpangan dengan:
-  // - V_W (x: 9..11, cx = 10) di (10, 26)
-  // - V_E (x: 28..30, cx = 29) di (29, 26)
-  // - E_lane (x: 38..39, cx = 38.5) di (38.5, 26)
-  addNode({ id: "I_HS_VW", x: 10, z: 26, neighbors: [] });
-  addNode({ id: "I_HS_VE", x: 29, z: 26, neighbors: [] });
-  addNode({ id: "I_HS_EL", x: 38.5, z: 26, neighbors: [] });
-
-  // 2. NODE DI SEPANJANG KORIDOR UTAMA
-  // H_N (cz = 10)
-  addNode({ id: "HN_w_end", x: 2.0, z: 10, neighbors: [] });
-  addNode({ id: "HN_d_meeting", x: 7.0, z: 10, neighbors: [] });
-  addNode({ id: "HN_d_ops", x: 21.0, z: 10, neighbors: [] });
-  addNode({ id: "HN_d_adv", x: 34.0, z: 10, neighbors: [] });
-  addNode({ id: "HN_e_end", x: 42.0, z: 10, neighbors: [] });
-
-  // Hubungkan segmen horizontal H_N berurutan dari barat ke timur
-  const hnChain = [
-    "HN_w_end",
-    "HN_d_meeting",
-    "I_HN_VW",
-    "I_HN_L1",
-    "HN_d_ops",
-    "I_HN_L2",
-    "I_HN_VE",
-    "HN_d_adv",
-    "I_HN_EL",
-    "HN_e_end",
-  ];
-  for (let i = 0; i < hnChain.length - 1; i++) {
-    addEdge(hnChain[i], hnChain[i + 1]);
+    // Node ujung koridor
+    if (isHoriz) {
+      const wEndId = `end_${c.id}_w`;
+      const eEndId = `end_${c.id}_e`;
+      addNode({ id: wEndId, x: +(c.x + 1.0).toFixed(3), z: midZ, neighbors: [] });
+      addNode({ id: eEndId, x: +(c.x + c.w - 1.0).toFixed(3), z: midZ, neighbors: [] });
+      nodesByCorridor[c.id].push(wEndId, eEndId);
+    } else {
+      const nEndId = `end_${c.id}_n`;
+      const sEndId = `end_${c.id}_s`;
+      addNode({ id: nEndId, x: midX, z: +(c.z + 1.0).toFixed(3), neighbors: [] });
+      addNode({ id: sEndId, x: midX, z: +(c.z + c.d - 1.0).toFixed(3), neighbors: [] });
+      nodesByCorridor[c.id].push(nEndId, sEndId);
+    }
   }
 
-  // H_S (cz = 26)
-  addNode({ id: "HS_w_end", x: 2.0, z: 26, neighbors: [] });
-  addNode({ id: "HS_d_sosmed", x: 5.0, z: 26, neighbors: [] });
-  addNode({ id: "HS_d_creative", x: 16.0, z: 26, neighbors: [] });
-  addNode({ id: "HS_d_copy", x: 27.0, z: 26, neighbors: [] });
-  addNode({ id: "HS_d_lp", x: 37.0, z: 26, neighbors: [] });
-  addNode({ id: "HS_d_resepsi", x: 42.0, z: 26, neighbors: [] });
+  // Persimpangan antar-koridor: hitung titik temu centerline pasangan koridor yang berpotongan/bersentuhan
+  for (let i = 0; i < fp.corridors.length; i++) {
+    for (let j = i + 1; j < fp.corridors.length; j++) {
+      const c1 = fp.corridors[i];
+      const c2 = fp.corridors[j];
 
-  // Hubungkan segmen horizontal H_S berurutan dari barat ke timur
-  const hsChain = [
-    "HS_w_end",
-    "HS_d_sosmed",
-    "I_HS_VW",
-    "HS_d_creative",
-    "HS_d_copy",
-    "I_HS_VE",
-    "HS_d_lp",
-    "I_HS_EL",
-    "HS_d_resepsi",
-  ];
-  for (let i = 0; i < hsChain.length - 1; i++) {
-    addEdge(hsChain[i], hsChain[i + 1]);
+      const overlapMinX = Math.max(c1.x, c2.x);
+      const overlapMaxX = Math.min(c1.x + c1.w, c2.x + c2.w);
+      const overlapMinZ = Math.max(c1.z, c2.z);
+      const overlapMaxZ = Math.min(c1.z + c1.d, c2.z + c2.d);
+
+      const touchesX = overlapMaxX - overlapMinX >= -0.2;
+      const touchesZ = overlapMaxZ - overlapMinZ >= -0.2;
+
+      if (touchesX && touchesZ) {
+        let ix: number;
+        let iz: number;
+        const c1Horiz = c1.w > c1.d;
+        const c2Horiz = c2.w > c2.d;
+
+        if (c1Horiz && !c2Horiz) {
+          ix = +(c2.x + c2.w / 2).toFixed(3);
+          iz = +(c1.z + c1.d / 2).toFixed(3);
+        } else if (!c1Horiz && c2Horiz) {
+          ix = +(c1.x + c1.w / 2).toFixed(3);
+          iz = +(c2.z + c2.d / 2).toFixed(3);
+        } else {
+          ix = +((overlapMinX + overlapMaxX) / 2).toFixed(3);
+          iz = +((overlapMinZ + overlapMaxZ) / 2).toFixed(3);
+        }
+
+        const isectId = `isect_${c1.id}_${c2.id}`;
+        addNode({ id: isectId, x: ix, z: iz, neighbors: [] });
+        nodesByCorridor[c1.id].push(isectId);
+        nodesByCorridor[c2.id].push(isectId);
+      }
+    }
   }
 
-  // V_W (cx = 10, dari z = 10 sampai z = 26)
-  addNode({ id: "VW_d_riset_w", x: 10, z: 14.0, neighbors: [] });
-  addNode({ id: "VW_d_manager", x: 10, z: 15.0, neighbors: [] });
-  addNode({ id: "VW_mid", x: 10, z: 19.0, neighbors: [] });
-  addNode({ id: "VW_d_hr", x: 10, z: 23.0, neighbors: [] });
+  // 2. COMMON AREA WALKWAYS (Atrium & Area Terbuka Lainnya Diturunkan Otomatis)
+  const commonRooms = fp.rooms.filter((r) => r.kind === "common" && r.doors.length === 0);
+  for (const cr of commonRooms) {
+    const cx = +(cr.x + cr.w / 2).toFixed(3);
+    const cz = +(cr.z + cr.d / 2).toFixed(3);
+    const centerId = `common_${cr.id}_center`;
+    addNode({ id: centerId, x: cx, z: cz, roomId: cr.id, neighbors: [] });
 
-  const vwChain = [
-    "I_HN_VW",
-    "VW_d_riset_w",
-    "VW_d_manager",
-    "VW_mid",
-    "VW_d_hr",
-    "I_HS_VW",
-  ];
-  for (let i = 0; i < vwChain.length - 1; i++) {
-    addEdge(vwChain[i], vwChain[i + 1]);
+    if (cr.w >= 10) {
+      const westId = `common_${cr.id}_w`;
+      const eastId = `common_${cr.id}_e`;
+      addNode({ id: westId, x: +(cr.x + 3.0).toFixed(3), z: cz, roomId: cr.id, neighbors: [] });
+      addNode({ id: eastId, x: +(cr.x + cr.w - 3.0).toFixed(3), z: cz, roomId: cr.id, neighbors: [] });
+      addEdge(westId, centerId);
+      addEdge(centerId, eastId);
+    }
   }
 
-  // V_E (cx = 29, dari z = 10 sampai z = 26)
-  addNode({ id: "VE_d_pantry", x: 29, z: 14.0, neighbors: [] });
-  addNode({ id: "VE_mid", x: 29, z: 18.0, neighbors: [] });
-  addNode({ id: "VE_d_lounge", x: 29, z: 22.0, neighbors: [] });
-
-  const veChain = [
-    "I_HN_VE",
-    "VE_d_pantry",
-    "VE_mid",
-    "VE_d_lounge",
-    "I_HS_VE",
-  ];
-  for (let i = 0; i < veChain.length - 1; i++) {
-    addEdge(veChain[i], veChain[i + 1]);
+  // Hubungkan common area yang bersentuhan
+  for (let i = 0; i < commonRooms.length; i++) {
+    for (let j = i + 1; j < commonRooms.length; j++) {
+      const cr1 = commonRooms[i];
+      const cr2 = commonRooms[j];
+      const overlapX = Math.min(cr1.x + cr1.w, cr2.x + cr2.w) - Math.max(cr1.x, cr2.x);
+      const overlapZ = Math.min(cr1.z + cr1.d, cr2.z + cr2.d) - Math.max(cr1.z, cr2.z);
+      if (overlapX > 0.5 && overlapZ >= -0.2) {
+        const midX = +((Math.max(cr1.x, cr2.x) + Math.min(cr1.x + cr1.w, cr2.x + cr2.w)) / 2).toFixed(3);
+        const bz = +(cr1.z + cr1.d).toFixed(3);
+        const bridgeId = `bridge_${cr1.id}_${cr2.id}`;
+        addNode({ id: bridgeId, x: midX, z: bz, neighbors: [] });
+        addEdge(`common_${cr1.id}_center`, bridgeId);
+        addEdge(`common_${cr2.id}_center`, bridgeId);
+      }
+    }
   }
 
-  // Lorong 1 (cx = 16, dari z = 4 sampai z = 10)
-  addNode({ id: "L1_doors", x: 16, z: 4.0, neighbors: [] });
-  addEdge("L1_doors", "I_HN_L1");
-
-  // Lorong 2 (cx = 27, dari z = 4 sampai z = 10)
-  addNode({ id: "L2_doors", x: 27, z: 4.0, neighbors: [] });
-  addEdge("L2_doors", "I_HN_L2");
-
-  // E_lane (cx = 38.5, dari z = 10 sampai z = 26)
-  addNode({ id: "EL_d_toilet", x: 38.5, z: 14.0, neighbors: [] });
-  addNode({ id: "EL_mid", x: 38.5, z: 18.0, neighbors: [] });
-  addNode({ id: "EL_d_taman", x: 38.5, z: 21.0, neighbors: [] });
-
-  const elChain = [
-    "I_HN_EL",
-    "EL_d_toilet",
-    "EL_mid",
-    "EL_d_taman",
-    "I_HS_EL",
-  ];
-  for (let i = 0; i < elChain.length - 1; i++) {
-    addEdge(elChain[i], elChain[i + 1]);
+  // Hubungkan common area ke koridor yang berbatasan
+  for (const cr of commonRooms) {
+    for (const c of fp.corridors) {
+      const overlapX = Math.min(cr.x + cr.w, c.x + c.w) - Math.max(cr.x, c.x);
+      const overlapZ = Math.min(cr.z + cr.d, c.z + c.d) - Math.max(cr.z, c.z);
+      if (overlapX > 0.5 && (Math.abs(cr.z - (c.z + c.d)) <= 0.25 || Math.abs(cr.z + cr.d - c.z) <= 0.25)) {
+        const mx = +((Math.max(cr.x, c.x) + Math.min(cr.x + cr.w, c.x + c.w)) / 2).toFixed(3);
+        const cz = +(c.z + c.d / 2).toFixed(3);
+        const connId = `conn_${cr.id}_${c.id}`;
+        addNode({ id: connId, x: mx, z: cz, neighbors: [] });
+        nodesByCorridor[c.id].push(connId);
+        addEdge(`common_${cr.id}_center`, connId);
+      } else if (overlapZ > 0.5 && (Math.abs(cr.x - (c.x + c.w)) <= 0.25 || Math.abs(cr.x + cr.w - c.x) <= 0.25)) {
+        const mz = +((Math.max(cr.z, c.z) + Math.min(cr.z + cr.d, c.z + c.d)) / 2).toFixed(3);
+        const cx = +(c.x + c.w / 2).toFixed(3);
+        const connId = `conn_${cr.id}_${c.id}`;
+        addNode({ id: connId, x: cx, z: mz, neighbors: [] });
+        nodesByCorridor[c.id].push(connId);
+        addEdge(`common_${cr.id}_center`, connId);
+      }
+    }
   }
 
-  // 3. COMMON AREA WALKWAYS (Atrium & Atrium Selatan)
-  // Atrium (21..28, 11..21)
-  addNode({ id: "atrium_nw", x: 23.0, z: 14.0, roomId: "atrium", neighbors: [] });
-  addNode({ id: "atrium_center", x: 24.5, z: 16.0, roomId: "atrium", neighbors: [] });
-  addNode({ id: "atrium_s", x: 24.5, z: 20.0, roomId: "atrium", neighbors: [] });
-  addEdge("atrium_nw", "atrium_center");
-  addEdge("atrium_center", "atrium_s");
-  // Hubungkan Atrium ke V_E
-  addEdge("atrium_center", "VE_d_pantry");
-  addEdge("atrium_center", "VE_mid");
-
-  // Atrium Selatan (11..28, 21..25)
-  addNode({ id: "atrium_s_w", x: 16.0, z: 23.0, roomId: "atrium_selatan", neighbors: [] });
-  addNode({ id: "atrium_s_e", x: 24.5, z: 23.0, roomId: "atrium_selatan", neighbors: [] });
-  addEdge("atrium_s_w", "atrium_s_e");
-  addEdge("atrium_s_e", "atrium_s"); // Sambungan Atrium ke Atrium Selatan
-  addEdge("atrium_s_w", "VW_d_hr");
-  addEdge("atrium_s_e", "VE_d_lounge");
-  addEdge("atrium_s_w", "HS_d_creative");
-  addEdge("atrium_s_e", "HS_d_copy");
-
-  // 4. PINTU (Doors) - Node di kedua sisi tiap pintu (outside & inside)
+  // 3. PINTU OTOMATIS: Dihubungkan ke koridor, area umum, atau bay yang memuat titik luar pintu
   for (const door of fp.doors) {
     const room = fp.rooms.find((r) => r.id === door.roomId);
     if (!room) continue;
@@ -329,35 +306,112 @@ export function generateWalkwayGraph(
     // Ambang pintu menghubungkan luar dan dalam
     addEdge(outId, inId);
 
-    // Sambungkan door outside ke koridor terdekat yang sesuai spesifikasi
-    if (door.id === "d_meeting_s") addEdge(outId, "HN_d_meeting");
-    else if (door.id === "d_meeting_e") addEdge(outId, "L1_doors");
-    else if (door.id === "d_ops_w") addEdge(outId, "L1_doors");
-    else if (door.id === "d_ops_s") addEdge(outId, "HN_d_ops");
-    else if (door.id === "d_adv_w") addEdge(outId, "L2_doors");
-    else if (door.id === "d_adv_s") addEdge(outId, "HN_d_adv");
-    else if (door.id === "d_manager_e") addEdge(outId, "VW_d_manager");
-    else if (door.id === "d_riset_w") addEdge(outId, "VW_d_riset_w");
-    else if (door.id === "d_riset_e") addEdge(outId, "atrium_nw");
-    else if (door.id === "d_riset_s") {
-      // Pintu selatan Riset keluar lewat celah bay_riset ke Atrium Selatan
-      addNode({ id: "bay_riset_path", x: 16.0, z: 20.0, neighbors: [] });
-      addEdge(outId, "bay_riset_path");
-      addEdge("bay_riset_path", "atrium_s_w");
-    } else if (door.id === "d_hr_e") addEdge(outId, "VW_d_hr");
-    else if (door.id === "d_sosmed_n") addEdge(outId, "HS_d_sosmed");
-    else if (door.id === "d_creative_n") addEdge(outId, "HS_d_creative");
-    else if (door.id === "d_copy_n") addEdge(outId, "HS_d_copy");
-    else if (door.id === "d_lp_n") addEdge(outId, "HS_d_lp");
-    else if (door.id === "d_pantry_w") addEdge(outId, "VE_d_pantry");
-    else if (door.id === "d_lounge_w") addEdge(outId, "VE_d_lounge");
-    else if (door.id === "d_toilet_w") addEdge(outId, "EL_d_toilet");
-    else if (door.id === "d_taman_w") addEdge(outId, "EL_d_taman");
-    else if (door.id === "d_resepsi_n") addEdge(outId, "HS_d_resepsi");
-    else if (door.id === "d_main") {
-      // Pintu utama (timur resepsi x=44)
-      addNode({ id: "main_entrance_out", x: 44.8, z: 30.0, neighbors: [] });
-      addEdge(outId, "main_entrance_out");
+    const ox = span.outsideX;
+    const oz = span.outsideZ;
+
+    // 3a. Cari koridor yang memuat atau berbatasan dengan titik luar pintu
+    let foundCorridor: FloorplanData["corridors"][0] | null = null;
+    let minCorrDist = Infinity;
+    for (const c of fp.corridors) {
+      const inX = ox >= c.x - 0.2 && ox <= c.x + c.w + 0.2;
+      const inZ = oz >= c.z - 0.2 && oz <= c.z + c.d + 0.2;
+      if (inX && inZ) {
+        foundCorridor = c;
+        break;
+      }
+      const dx = Math.max(c.x - ox, 0, ox - (c.x + c.w));
+      const dz = Math.max(c.z - oz, 0, oz - (c.z + c.d));
+      const dist = Math.hypot(dx, dz);
+      if (dist < minCorrDist && dist < 0.8) {
+        minCorrDist = dist;
+        foundCorridor = c;
+      }
+    }
+
+    if (foundCorridor) {
+      const isHoriz = foundCorridor.w > foundCorridor.d;
+      let px: number;
+      let pz: number;
+      if (isHoriz) {
+        px = ox;
+        pz = +(foundCorridor.z + foundCorridor.d / 2).toFixed(3);
+      } else {
+        px = +(foundCorridor.x + foundCorridor.w / 2).toFixed(3);
+        pz = oz;
+      }
+      const projId = `proj_${door.id}`;
+      addNode({ id: projId, x: px, z: pz, neighbors: [] });
+      addEdge(outId, projId);
+      nodesByCorridor[foundCorridor.id].push(projId);
+      continue;
+    }
+
+    // 3b. Cek apakah berada di dalam atau berbatasan dengan area umum terbuka
+    const foundCommon = fp.rooms.find(
+      (r) =>
+        r.kind === "common" &&
+        ox >= r.x - 0.2 &&
+        ox <= r.x + r.w + 0.2 &&
+        oz >= r.z - 0.2 &&
+        oz <= r.z + r.d + 0.2
+    );
+    if (foundCommon) {
+      const centerId = `common_${foundCommon.id}_center`;
+      if (nodes[centerId]) {
+        addEdge(outId, centerId);
+      }
+      continue;
+    }
+
+    // 3c. Cek apakah berada di dalam bay (mis. bay_riset)
+    const foundBay = fp.bays.find(
+      (b) =>
+        ox >= b.x - 0.2 &&
+        ox <= b.x + b.w + 0.2 &&
+        oz >= b.z - 0.2 &&
+        oz <= b.z + b.d + 0.2
+    );
+    if (foundBay) {
+      const bayNodeId = `bay_${foundBay.id}_node`;
+      const bx = +(foundBay.x + foundBay.w / 2).toFixed(3);
+      const bz = +(foundBay.z + foundBay.d / 2).toFixed(3);
+      addNode({ id: bayNodeId, x: bx, z: bz, neighbors: [] });
+      addEdge(outId, bayNodeId);
+
+      // Sambungkan bay ke common room terdekat (mis. atrium_selatan)
+      const nearestComm = commonRooms.find(
+        (r) =>
+          Math.max(r.x - bx, 0, bx - (r.x + r.w)) < 1.5 &&
+          Math.max(r.z - bz, 0, bz - (r.z + r.d)) < 1.5
+      );
+      if (nearestComm && nodes[`common_${nearestComm.id}_center`]) {
+        addEdge(bayNodeId, `common_${nearestComm.id}_center`);
+      }
+      continue;
+    }
+
+    // 3d. Pintu keluar utama atau luar denah
+    if (ox >= fp.width - 0.5 || ox <= 0.5 || oz >= fp.height - 0.5 || oz <= 0.5 || door.id === "d_main") {
+      const extId = `ext_${door.id}`;
+      addNode({ id: extId, x: +(ox + 0.5).toFixed(3), z: oz, neighbors: [] });
+      addEdge(outId, extId);
+    }
+  }
+
+  // 4. SAMBUNGKAN SELURUH NODE DI TIAP KORIDOR SECARA BERURUTAN
+  for (const c of fp.corridors) {
+    const rawIds = Array.from(new Set(nodesByCorridor[c.id] || []));
+    const corrNodeList = rawIds.map((id) => nodes[id]).filter(Boolean);
+    const isHoriz = c.w > c.d;
+
+    if (isHoriz) {
+      corrNodeList.sort((a, b) => a.x - b.x);
+    } else {
+      corrNodeList.sort((a, b) => a.z - b.z);
+    }
+
+    for (let k = 0; k < corrNodeList.length - 1; k++) {
+      addEdge(corrNodeList[k].id, corrNodeList[k + 1].id);
     }
   }
 
@@ -387,9 +441,24 @@ export function generateWalkwayGraph(
     addEdge(meetingLoop[i], meetingLoop[(i + 1) % meetingLoop.length]);
   }
 
-  // Sambungkan pintu meeting inside ke aisle meeting
-  addEdge("door_d_meeting_s_in", "meeting_aisle_s");
-  addEdge("door_d_meeting_e_in", "meeting_aisle_e");
+  // Sambungkan seluruh pintu meeting inside ke aisle meeting terdekat
+  const meetingDoors = fp.doors.filter((d) => d.roomId === "meeting");
+  for (const md of meetingDoors) {
+    const inId = `door_${md.id}_in`;
+    const dn = nodes[inId];
+    if (!dn) continue;
+    let bestAisle = meetingLoop[0];
+    let minD = Infinity;
+    for (const aId of meetingLoop) {
+      const an = nodes[aId];
+      const d = Math.hypot(an.x - dn.x, an.z - dn.z);
+      if (d < minD) {
+        minD = d;
+        bestAisle = aId;
+      }
+    }
+    addEdge(inId, bestAisle);
+  }
 
   // Tambahkan 19 kursi rapat ke graf dan sambungkan ke aisle meeting
   for (const [agentName, [sx, sz]] of Object.entries(seatPosMap)) {
@@ -794,9 +863,9 @@ export function createWalkwayVisuals(): {
 
   const geo = new THREE.BufferGeometry().setFromPoints(linePoints);
   const mat = new THREE.LineBasicMaterial({
-    color: 0x4a4875,
+    color: new THREE.Color(THEME.corridor.lineVisual),
     transparent: true,
-    opacity: 0.22,
+    opacity: THEME.corridor.lineOpacity,
   });
 
   const lines = new THREE.LineSegments(geo, mat);

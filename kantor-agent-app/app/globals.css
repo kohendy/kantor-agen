@@ -1173,20 +1173,20 @@ pre.json {
   overflow: hidden;
 }
 .room-tag3d {
-  background: #0b0a1a;
+  background: rgba(255, 255, 255, 0.94);
   border: 1.5px solid var(--c);
-  color: var(--c);
-  border-radius: 3px;
+  color: #0f172a;
+  border-radius: 4px;
   padding: 2px 8px;
   font-family: var(--display);
   font-weight: 700;
   font-size: 11px;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.10em;
   text-transform: uppercase;
   pointer-events: auto;
   cursor: pointer;
   user-select: none;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15), 0 1px 3px rgba(15, 23, 42, 0.1);
   transition: transform 0.15s, background-color 0.15s, color 0.15s, opacity 0.2s;
   white-space: nowrap;
 }
@@ -1196,15 +1196,15 @@ pre.json {
 }
 .room-tag3d.sel {
   background: var(--c);
-  color: #0b0a1a;
+  color: #0f172a;
   box-shadow: 0 0 12px var(--c);
 }
 
 .agent-tag3d {
-  background: #0b0a1a;
-  border: 1px solid var(--c);
-  color: var(--c);
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1.5px solid var(--c);
+  color: #0f172a;
+  border-radius: 4px;
   padding: 1px 7px;
   font-family: var(--display);
   font-weight: 700;
@@ -1216,7 +1216,7 @@ pre.json {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15), 0 1px 3px rgba(15, 23, 42, 0.1);
   transition: transform 0.15s, background-color 0.15s, color 0.15s, opacity 0.2s;
   white-space: nowrap;
 }
@@ -1228,11 +1228,11 @@ pre.json {
 }
 .agent-tag3d.sel {
   background: var(--c);
-  color: #0b0a1a;
+  color: #0f172a;
   box-shadow: 0 0 12px var(--c);
 }
 .agent-tag3d.sel .agent-name3d {
-  color: #0b0a1a;
+  color: #0f172a;
 }
 .agent-dot3d {
   display: inline-block;
@@ -1252,9 +1252,9 @@ pre.json {
 
 /* ATLAS Speech Bubble (CSS2D) */
 .atlas-speech-bubble {
-  background: rgba(11, 10, 26, 0.94);
+  background: rgba(255, 255, 255, 0.96);
   border: 1.5px solid #f07167;
-  color: #fff;
+  color: #0f172a;
   border-radius: 12px;
   padding: 3px 10px;
   font-family: var(--display);
@@ -1264,7 +1264,7 @@ pre.json {
   pointer-events: none;
   user-select: none;
   white-space: nowrap;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.7), 0 0 8px rgba(240, 113, 103, 0.4);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.16), 0 0 8px rgba(240, 113, 103, 0.3);
   opacity: 0;
   display: none;
   transition: opacity 0.25s ease-in-out;
@@ -1295,7 +1295,7 @@ pre.json {
   top: 14px;
   left: 14px;
   z-index: 25;
-  background: rgba(11, 10, 26, 0.92);
+  background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(240, 113, 103, 0.4);
   border-radius: 8px;
   padding: 8px 10px;
@@ -1331,9 +1331,9 @@ pre.json {
   gap: 5px;
 }
 .stage-demo-btn {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: #d8dbfa;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: #1e293b;
   border-radius: 4px;
   padding: 3px 7px;
   font-size: 11px;
@@ -1344,7 +1344,7 @@ pre.json {
 .stage-demo-btn:hover {
   background: rgba(240, 113, 103, 0.22);
   border-color: #f07167;
-  color: #fff;
+  color: #0f172a;
 }
 .stage-demo-btn.is-active {
   background: #f07167;

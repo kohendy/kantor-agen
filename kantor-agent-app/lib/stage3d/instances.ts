@@ -8,6 +8,7 @@ import {
   RoomConfig,
 } from "@/lib/officeConfig";
 import { FLOORPLAN } from "./floorplan";
+import { THEME } from "./theme";
 import type { AgentStatus } from "@/lib/types";
 
 export type DeskState = "kosong" | "disiapkan" | "terisi";
@@ -65,30 +66,60 @@ export function calculateRoomSlotPosition(
   const normRoomId = room.id === "ads" ? "advertiser" : room.id === "lp" ? "landing_page" : room.id;
   const bay = FLOORPLAN.bays.find((b) => b.roomId === normRoomId);
 
-  // Jika slot tambahan (slotIndex >= 3) dan bay tersedia: tempatkan di zona bay
-  if (slotIndex >= 3 && bay && isExpanded) {
-    const wx = +(bay.x + bay.w / 2).toFixed(3);
+  // Jumlah slot dasar ruangan: Manager, HR, Operasional, Sosmed memiliki 1 agen dasar
+  const baseSlotsCount =
+    normRoomId === "manager" ||
+    normRoomId === "hr" ||
+    normRoomId === "operasional" ||
+    normRoomId === "sosmed"
+      ? 1
+      : room.agents?.length || 3;
+
+  // Jika slot ekspansi (slotIndex >= baseSlotsCount) dan bay tersedia: tempatkan tersebar di dalam bay
+  if (slotIndex >= baseSlotsCount && bay && (isExpanded || true)) {
+    const bayIndex = slotIndex - baseSlotsCount;
+    let wx: number;
+    let wz: number;
+
+    if (bay.d > bay.w) {
+      // Bay vertikal (mis. bay_manager, bay_hr, bay_advertiser): sebar sepanjang sumbu Z
+      const maxSlots = Math.max(2, Math.floor(bay.d / 1.3));
+      const stepZ = bay.d / (maxSlots + 1);
+      const currentStep = (bayIndex % maxSlots) + 1;
+      wx = +(bay.x + bay.w / 2).toFixed(3);
+      wz = +(bay.z + currentStep * stepZ).toFixed(3);
+    } else {
+      // Bay horizontal (mis. bay_operasional, bay_riset, bay_creative, dll): sebar sepanjang sumbu X
+      const maxSlots = Math.max(2, Math.floor(bay.w / 1.8));
+      const stepX = bay.w / (maxSlots + 1);
+      const currentStep = (bayIndex % maxSlots) + 1;
+      wx = +(bay.x + currentStep * stepX).toFixed(3);
+      wz = +(bay.z + bay.d / 2).toFixed(3);
+    }
+
     const wy = 0;
-    const wz = +(bay.z + bay.d / 2).toFixed(3);
     return {
-      rel: [wx - room.x, wz - room.y],
+      rel: [+(wx - room.x).toFixed(3), +(wz - room.y).toFixed(3)],
       world: { x: wx, y: wy, z: wz },
     };
   }
 
-  // Posisi slot standar di dalam ruangan
+  // Posisi slot standar di dalam ruangan (untuk slotIndex < baseSlotsCount)
   let relX: number;
   let relY: number;
 
   if (room.id === "hr") {
-    relX = slotIndex === 0 ? 4.5 : 2.5;
-    relY = 2.0;
+    relX = 4.5;
+    relY = 2.5;
   } else if (normRoomId === "operasional") {
-    relX = slotIndex === 0 ? 4.5 : 2.5;
+    relX = 4.5;
     relY = 4.5;
   } else if (normRoomId === "manager") {
     relX = 4.5;
     relY = 4.0;
+  } else if (normRoomId === "sosmed") {
+    relX = 5.0;
+    relY = 3.5;
   } else if (normRoomId === "advertiser") {
     relX = 3.5 + (slotIndex % 3) * 3.0;
     relY = 4.5;
@@ -133,7 +164,7 @@ export function createDeskMesh(
   const deskTopEdgeGeo = new THREE.EdgesGeometry(deskGeo);
 
   const deskMat = new THREE.MeshStandardMaterial({
-    color: deskState === "disiapkan" ? 0x1d1a38 : 0x14122e,
+    color: deskState === "disiapkan" ? 0x243248 : new THREE.Color(THEME.furniture.desk).getHex(),
     roughness: 0.35,
     metalness: 0.3,
   });
