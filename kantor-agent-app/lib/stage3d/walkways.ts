@@ -513,29 +513,145 @@ export function generateWalkwayGraph(
     addEdge(seatNodeId, bestAisle);
   }
 
-  // 5b. INTERIOR RUANG RISET (Aisle loop mengelilingi lab island)
-  addNode({ id: "riset_aisle_nw", x: 12.8, z: 13.0, roomId: "riset", isAisle: true, neighbors: [] });
-  addNode({ id: "riset_aisle_n",  x: 16.0, z: 13.0, roomId: "riset", isAisle: true, neighbors: [] });
-  addNode({ id: "riset_aisle_ne", x: 19.2, z: 13.0, roomId: "riset", isAisle: true, neighbors: [] });
-  addNode({ id: "riset_aisle_w",  x: 12.8, z: 16.0, roomId: "riset", isAisle: true, neighbors: [] });
-  addNode({ id: "riset_aisle_e",  x: 19.2, z: 16.0, roomId: "riset", isAisle: true, neighbors: [] });
-  addNode({ id: "riset_aisle_sw", x: 14.0, z: 18.2, roomId: "riset", isAisle: true, neighbors: [] });
-  addNode({ id: "riset_aisle_se", x: 18.0, z: 18.2, roomId: "riset", isAisle: true, neighbors: [] });
-  addNode({ id: "riset_aisle_metis_w", x: 14.0, z: 16.5, roomId: "riset", isAisle: true, neighbors: [] });
-  addNode({ id: "riset_aisle_metis_e", x: 18.0, z: 16.5, roomId: "riset", isAisle: true, neighbors: [] });
+  // 5b. INTERIOR RUANG DENGAN OBSTACLE: Data-Driven Aisle & Visibility Graph
+  // Menggantikan hardcoded Riset nodes dan agent-specific connections dengan
+  // aisle otomatis yang diturunkan dari koordinat obstacle (blocksWalk) + margin.
+  const deptRoomsWithObstacles = fp.rooms.filter((r) => r.id !== "meeting" && r.kind === "dept");
 
-  addEdge("riset_aisle_nw", "riset_aisle_n");
-  addEdge("riset_aisle_n", "riset_aisle_ne");
-  addEdge("riset_aisle_nw", "door_d_riset_w_in");
-  addEdge("riset_aisle_w", "door_d_riset_w_in");
-  addEdge("riset_aisle_ne", "door_d_riset_e_in");
-  addEdge("riset_aisle_e", "door_d_riset_e_in");
-  addEdge("riset_aisle_w", "riset_aisle_metis_w");
-  addEdge("riset_aisle_metis_w", "riset_aisle_sw");
-  addEdge("riset_aisle_sw", "door_d_riset_s_in");
-  addEdge("riset_aisle_e", "riset_aisle_metis_e");
-  addEdge("riset_aisle_metis_e", "riset_aisle_se");
-  addEdge("riset_aisle_se", "door_d_riset_s_in");
+  for (const room of deptRoomsWithObstacles) {
+    const roomObs = obstacles.filter((obs) => obs.roomId === room.id);
+    const roomAisleIds: string[] = [];
+
+    // Jika ruangan memiliki obstacle statis, turunkan titik-titik aisle di sekeliling tiap obstacle
+    const margin = 0.65;
+    for (const obs of roomObs) {
+      const candidates: [number, number][] = [
+        [obs.minX - margin, obs.minZ - margin],
+        [obs.maxX + margin, obs.minZ - margin],
+        [obs.maxX + margin, obs.maxZ + margin],
+        [obs.minX - margin, obs.maxZ + margin],
+      ];
+
+      // Tambahkan titik tengah sisi untuk obstacle yang lebar/panjang
+      const obsW = obs.maxX - obs.minX;
+      const obsD = obs.maxZ - obs.minZ;
+      if (obsW >= 1.2) {
+        const midX = (obs.minX + obs.maxX) / 2;
+        candidates.push([midX, obs.minZ - margin], [midX, obs.maxZ + margin]);
+      }
+      if (obsD >= 1.2) {
+        const midZ = (obs.minZ + obs.maxZ) / 2;
+        candidates.push([obs.minX - margin, midZ], [obs.maxX + margin, midZ]);
+      }
+
+      for (const [rawX, rawZ] of candidates) {
+        const cx = +rawX.toFixed(3);
+        const cz = +rawZ.toFixed(3);
+
+        // 1. Pastikan titik berada di dalam batas interior ruangan
+        if (
+          cx < room.x + 0.45 ||
+          cx > room.x + room.w - 0.45 ||
+          cz < room.z + 0.45 ||
+          cz > room.z + room.d - 0.45
+        ) {
+          continue;
+        }
+
+        // 2. Pastikan titik tidak berada di dalam obstacle manapun di ruangan ini
+        let insideObs = false;
+        for (const o of roomObs) {
+          if (
+            cx > o.minX + 0.05 &&
+            cx < o.maxX - 0.05 &&
+            cz > o.minZ + 0.05 &&
+            cz < o.maxZ - 0.05
+          ) {
+            insideObs = true;
+            break;
+          }
+        }
+        if (insideObs) continue;
+
+        // 3. Hindari penumpukan titik (deduplikasi / clustering jarak minimum 0.5 tile)
+        let tooClose = false;
+        for (const aId of roomAisleIds) {
+          const an = nodes[aId];
+          if (an && Math.hypot(an.x - cx, an.z - cz) < 0.5) {
+            tooClose = true;
+            break;
+          }
+        }
+        if (tooClose) continue;
+
+        const aisleId = `${room.id}_aisle_${Math.round(cx * 10)}_${Math.round(cz * 10)}`;
+        addNode({
+          id: aisleId,
+          x: cx,
+          z: cz,
+          roomId: room.id,
+          isAisle: true,
+          neighbors: [],
+        });
+        if (!roomAisleIds.includes(aisleId)) {
+          roomAisleIds.push(aisleId);
+        }
+      }
+    }
+
+    // Hubungkan antar sesama node aisle di ruangan ini jika memiliki Line-of-Sight (LOS) tanpa menabrak obstacle
+    for (let i = 0; i < roomAisleIds.length; i++) {
+      for (let j = i + 1; j < roomAisleIds.length; j++) {
+        const id1 = roomAisleIds[i];
+        const id2 = roomAisleIds[j];
+        const n1 = nodes[id1];
+        const n2 = nodes[id2];
+        if (!n1 || !n2) continue;
+        const d = Math.hypot(n1.x - n2.x, n1.z - n2.z);
+        if (d <= 5.5) {
+          addEdge(id1, id2);
+        }
+      }
+    }
+
+    // Hubungkan seluruh pintu inside ruangan ke node aisle atau pintu lain yang terlihat (LOS)
+    const roomDoors = fp.doors.filter((d) => d.roomId === room.id);
+    for (const d of roomDoors) {
+      const doorInId = `door_${d.id}_in`;
+      const dn = nodes[doorInId];
+      if (!dn) continue;
+
+      let connectedCount = 0;
+      for (const aId of roomAisleIds) {
+        const an = nodes[aId];
+        if (!an) continue;
+        const dist = Math.hypot(dn.x - an.x, dn.z - an.z);
+        if (dist <= 6.0) {
+          const beforeLen = nodes[doorInId].neighbors.length;
+          addEdge(doorInId, aId);
+          if (nodes[doorInId].neighbors.length > beforeLen) {
+            connectedCount++;
+          }
+        }
+      }
+
+      // Jika belum terhubung ke aisle manapun, sambungkan ke aisle terdekat
+      if (connectedCount === 0 && roomAisleIds.length > 0) {
+        let bestAisle = roomAisleIds[0];
+        let minD = Infinity;
+        for (const aId of roomAisleIds) {
+          const an = nodes[aId];
+          if (!an) continue;
+          const dist = Math.hypot(dn.x - an.x, dn.z - an.z);
+          if (dist < minD) {
+            minD = dist;
+            bestAisle = aId;
+          }
+        }
+        addEdge(doorInId, bestAisle);
+      }
+    }
+  }
 
   // 6. INTERIOR DEPARTEMEN LAIN: Meja Agent (Home Desks) & Lorong Interior
   for (const [agentName, [hx, hz]] of Object.entries(homePosMap)) {
@@ -551,19 +667,33 @@ export function generateWalkwayGraph(
       neighbors: [],
     });
 
-    if (rId === "riset") {
-      if (agentName === "METIS") {
-        addEdge(deskNodeId, "riset_aisle_metis_w");
-        addEdge(deskNodeId, "riset_aisle_metis_e");
-      } else if (agentName === "ATHENA") {
-        addEdge(deskNodeId, "riset_aisle_nw");
-        addEdge(deskNodeId, "riset_aisle_n");
-        addEdge(deskNodeId, "door_d_riset_w_in");
-      } else if (agentName === "ARGUS") {
-        addEdge(deskNodeId, "riset_aisle_ne");
-        addEdge(deskNodeId, "riset_aisle_n");
-        addEdge(deskNodeId, "door_d_riset_e_in");
+    // Hubungkan meja ke aisle terdekat atau pintu jika ada LOS
+    const roomAisles = Object.values(nodes).filter(
+      (n) => n.roomId === rId && n.isAisle
+    );
+    let connectedToAisle = 0;
+    for (const an of roomAisles) {
+      const d = Math.hypot(hx - an.x, hz - an.z);
+      if (d <= 5.5) {
+        const before = nodes[deskNodeId].neighbors.length;
+        addEdge(deskNodeId, an.id);
+        if (nodes[deskNodeId].neighbors.length > before) {
+          connectedToAisle++;
+        }
       }
+    }
+
+    if (connectedToAisle === 0 && roomAisles.length > 0) {
+      let bestAisle = roomAisles[0].id;
+      let minD = Infinity;
+      for (const an of roomAisles) {
+        const d = Math.hypot(hx - an.x, hz - an.z);
+        if (d < minD) {
+          minD = d;
+          bestAisle = an.id;
+        }
+      }
+      addEdge(deskNodeId, bestAisle);
     }
 
     // Sambungkan ke seluruh pintu masuk inside yang dapat dijangkau tanpa tabrakan
@@ -607,11 +737,12 @@ function nodeDistance(a: WaypointNode, b: WaypointNode): number {
 export function findNearestNode(
   x: number,
   z: number,
-  allowedRoomId?: string
+  allowedRoomId?: string,
+  graph: Record<string, WaypointNode> = WALKWAY_GRAPH
 ): string {
   let nearestId = "HN_w_end";
   let minDist = Infinity;
-  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
+  for (const [id, node] of Object.entries(graph)) {
     if (node.roomId && allowedRoomId && node.roomId !== allowedRoomId) {
       continue;
     }
@@ -628,9 +759,10 @@ export function findNearestNode(
 export function findNearestCorridorNode(
   x: number,
   z: number,
-  allowedRoomIds: string[] = []
+  allowedRoomIds: string[] = [],
+  graph: Record<string, WaypointNode> = WALKWAY_GRAPH
 ): string {
-  const candidates = Object.entries(WALKWAY_GRAPH)
+  const candidates = Object.entries(graph)
     .filter(([, node]) => !node.roomId)
     .map(([id, node]) => ({
       id,
@@ -658,17 +790,18 @@ export function findNearestCorridorNode(
 export function findPathNodes(
   startNodeId: string,
   endNodeId: string,
-  allowedRoomIds: string[] = []
+  allowedRoomIds: string[] = [],
+  graph: Record<string, WaypointNode> = WALKWAY_GRAPH
 ): WaypointNode[] {
   if (startNodeId === endNodeId) {
-    return [WALKWAY_GRAPH[startNodeId]].filter(Boolean);
+    return [graph[startNodeId]].filter(Boolean);
   }
 
   const dist: Record<string, number> = {};
   const prev: Record<string, string | null> = {};
   const unvisited = new Set<string>();
 
-  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
+  for (const [id, node] of Object.entries(graph)) {
     // Lewati node yang berada di dalam ruangan lain yang tidak diizinkan
     if (node.roomId && !allowedRoomIds.includes(node.roomId)) {
       continue;
@@ -699,12 +832,12 @@ export function findPathNodes(
     }
 
     unvisited.delete(closestId);
-    const currNode = WALKWAY_GRAPH[closestId];
+    const currNode = graph[closestId];
     if (!currNode) continue;
 
     for (const neighborId of currNode.neighbors) {
       if (!unvisited.has(neighborId)) continue;
-      const neighborNode = WALKWAY_GRAPH[neighborId];
+      const neighborNode = graph[neighborId];
       if (!neighborNode) continue;
 
       const alt = dist[closestId] + nodeDistance(currNode, neighborNode);
@@ -719,7 +852,7 @@ export function findPathNodes(
   const path: WaypointNode[] = [];
   let curr: string | null = endNodeId;
   while (curr) {
-    const node = WALKWAY_GRAPH[curr];
+    const node = graph[curr];
     if (node) path.unshift(node);
     curr = prev[curr] ?? null;
   }
@@ -728,18 +861,21 @@ export function findPathNodes(
 }
 
 // Resolusi target identitas ke node ID di graf
-function resolveTargetNodeId(target: string): { nodeId: string; roomId?: string } {
+function resolveTargetNodeId(
+  target: string,
+  graph: Record<string, WaypointNode> = WALKWAY_GRAPH
+): { nodeId: string; roomId?: string } {
   // Alias landing page & advertiser
   const t = target === "lp" ? "landing_page" : target === "ads" ? "advertiser" : target;
 
-  if (WALKWAY_GRAPH[`desk_${t}`]) {
+  if (graph[`desk_${t}`]) {
     return { nodeId: `desk_${t}`, roomId: roomOfAgent(t)?.id };
   }
-  if (WALKWAY_GRAPH[`seat_${t}`]) {
+  if (graph[`seat_${t}`]) {
     return { nodeId: `seat_${t}`, roomId: "meeting" };
   }
-  if (WALKWAY_GRAPH[t]) {
-    return { nodeId: t, roomId: WALKWAY_GRAPH[t].roomId };
+  if (graph[t]) {
+    return { nodeId: t, roomId: graph[t].roomId };
   }
 
   // Jika berupa ID ruangan
@@ -748,53 +884,64 @@ function resolveTargetNodeId(target: string): { nodeId: string; roomId?: string 
     // Cari meja kepala departemen atau pintu masuk inside
     const roomCfg = ROOMS.find((rc) => rc.id === room.id);
     const firstAgent = room.id === "manager" ? MANAGER_AGENT_NAME : roomCfg?.agents[0];
-    if (firstAgent && WALKWAY_GRAPH[`desk_${firstAgent}`]) {
+    if (firstAgent && graph[`desk_${firstAgent}`]) {
       return { nodeId: `desk_${firstAgent}`, roomId: room.id };
     }
     const door = room.doors[0];
-    if (door && WALKWAY_GRAPH[`door_${door.id}_in`]) {
+    if (door && graph[`door_${door.id}_in`]) {
       return { nodeId: `door_${door.id}_in`, roomId: room.id };
     }
   }
 
-  return { nodeId: findNearestNode(10, 10) };
+  return { nodeId: findNearestNode(10, 10, undefined, graph) };
 }
 
 // API publik utama findPath
 export function findPath(
   from: string | { x: number; z: number },
   to: string | { x: number; z: number },
-  customAllowedRoomIds?: string[]
+  customAllowedRoomIds?: string[],
+  customGraph?: Record<string, WaypointNode>
 ): THREE.Vector3[] {
+  const graph = customGraph ?? WALKWAY_GRAPH;
   let startId: string;
   let endId: string;
   let fromRoom: string | undefined;
   let toRoom: string | undefined;
 
   if (typeof from === "string") {
-    const res = resolveTargetNodeId(from);
+    const res = resolveTargetNodeId(from, graph);
     startId = res.nodeId;
     fromRoom = res.roomId;
   } else {
     fromRoom = getRoomAtPosition(from.x, from.z) ?? undefined;
-    startId = findNearestNode(from.x, from.z, fromRoom);
+    startId = findNearestNode(from.x, from.z, fromRoom, graph);
   }
 
   if (typeof to === "string") {
-    const res = resolveTargetNodeId(to);
+    const res = resolveTargetNodeId(to, graph);
     endId = res.nodeId;
     toRoom = res.roomId;
   } else {
     toRoom = getRoomAtPosition(to.x, to.z) ?? undefined;
-    endId = findNearestNode(to.x, to.z, toRoom);
+    endId = findNearestNode(to.x, to.z, toRoom, graph);
   }
 
   const allowed =
     customAllowedRoomIds ??
     ([fromRoom, toRoom].filter(Boolean) as string[]);
 
-  const nodes = findPathNodes(startId, endId, allowed);
+  const nodes = findPathNodes(startId, endId, allowed, graph);
   return nodes.map((n) => new THREE.Vector3(n.x, 0, n.z));
+}
+
+export function findPathWithGraph(
+  from: string | { x: number; z: number },
+  to: string | { x: number; z: number },
+  graph: Record<string, WaypointNode>,
+  customAllowedRoomIds?: string[]
+): THREE.Vector3[] {
+  return findPath(from, to, customAllowedRoomIds, graph);
 }
 
 // Bersihkan waypoint ganda berdekatan

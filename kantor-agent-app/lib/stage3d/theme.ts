@@ -81,12 +81,18 @@ export const THEME = {
     edgeOpacity: 0.85,
   },
 
-  // Lantai Spesifik Departemen Tahap 2a (Warm wood Meeting, Karpet Manager, Lab Riset, Semen Ops)
+  // Lantai Spesifik Departemen Tahap 2a & 2b
   deptFloors: {
     meeting: "#deb887",     // Lantai kayu hangat (warm oak / burlywood pastel)
     manager: "#d9777f",     // Karpet merah tua pastel hangat
     riset: "#cbd5e1",       // Lantai biru abu-abu bersih
     operasional: "#b0b8c4", // Lantai abu semen industri
+    advertiser: "#dbeafe",   // Biru muda pastel
+    hr: "#fae8ff",           // Magenta muda pastel
+    sosmed: "#ffedd5",       // Oranye muda pastel
+    creative: "#ede9fe",     // Ungu muda pastel
+    copy: "#fce7f3",         // Pink muda pastel
+    landing_page: "#dcfce7", // Hijau muda pastel
   },
 
   // Library Warna Prop Voxel (Tahap 2a) - Terang, pastel, tegas, kontras dengan lantai
@@ -210,6 +216,57 @@ export const THEME = {
       welcomeRug: "#b91c1c",
       signKiosk: "#1e293b",
       waitingBench: "#52525b",
+    },
+    advertiser: {
+      screenWall: "#0f172a",
+      screenGlow: "#38bdf8",
+      screenDim: "#0284c7",
+      arcDesk: "#1e3a5f",
+      cpaBoard: "#0284c7",
+      trolley: "#64748b",
+      cpaBars: ["#22c55e", "#38bdf8", "#f59e0b", "#ec4899"],
+    },
+    hr: {
+      receptionCurved: "#701a75",
+      receptionTop: "#fdf4ff",
+      portalFrame: "#581c87",
+      portalGlow: "#f0abfc",
+      fileShelf: "#4a044e",
+      waitingChair: "#a21caf",
+    },
+    sosmed: {
+      greenScreen: "#16a34a",
+      ringLight: "#ffffff",
+      ringStand: "#334155",
+      desk: "#7c2d12",
+      sofa: "#c2410c",
+      calendarGrid: ["#fb923c", "#38bdf8", "#a855f7", "#22c55e", "#f43f5e"],
+      slotDashed: "#fb923c",
+    },
+    creative: {
+      draftingDesk: "#4c1d95",
+      easel: "#b45309",
+      canvas: "#ffffff",
+      paintRack: "#3b0764",
+      artFrame1: "#7c3aed",
+      artFrame2: "#ec4899",
+      paints: ["#ef4444", "#3b82f6", "#10b981", "#f59e0b", "#8b5cf6"],
+    },
+    copy: {
+      triangleDesk: "#831843",
+      centerTable: "#78350f",
+      typewriter: "#1e293b",
+      deskLamp: "#fef08a",
+      whiteboard: "#f8fafc",
+      bookshelf: "#500724",
+      bookSpines: ["#f43f5e", "#0284c7", "#10b981", "#eab308", "#8b5cf6"],
+    },
+    landing_page: {
+      zigzagDesk: "#064e3b",
+      wireframeBoard: "#047857",
+      wireframeCards: "#a7f3d0",
+      wireframeAccent: "#10b981",
+      monitorRack: "#1e293b",
     },
   },
 
