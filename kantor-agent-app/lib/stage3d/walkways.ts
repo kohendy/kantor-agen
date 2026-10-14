@@ -1,644 +1,71 @@
-// Walkways & Pathfinding (BFS/Dijkstra) untuk koreografi kantor 3D
-// Memetakan koridor di sela 1-unit antar pelat dan titik pintu/lorong tiap ruangan.
-// Jalur tidak boleh melintasi bagian dalam ruangan lain selain ruangan asal & tujuan.
+// lib/stage3d/walkways.ts
+// Walkways & Pathfinding (Dijkstra) otomatis diturunkan dari Floorplan.
+// Memetakan koridor, persimpangan, kedua sisi tiap pintu, dan meja/kursi tanpa kode tulis-tangan manual.
+// Menjamin jalur tidak menembus dinding ruangan lain (Liang-Barsky).
 
 import * as THREE from "three";
-import { ROOMS, MANAGER_AGENT_NAME, roomOfAgent } from "@/lib/officeConfig";
-
-export const OFFSET_X = -8.5;
-export const OFFSET_Z = -5.5;
+import {
+  FLOORPLAN,
+  FloorplanData,
+  getDoorSpan,
+} from "./floorplan";
+import {
+  HOME_POSITIONS,
+  SEAT_BY_AGENT,
+  MANAGER_AGENT_NAME,
+  ROOMS,
+  roomOfAgent,
+} from "@/lib/officeConfig";
+import { THEME } from "./theme";
 
 export interface WaypointNode {
   id: string;
-  x: number; // World coordinate X
-  z: number; // World coordinate Z
-  roomId?: string; // Jika berada di dalam atau di ambang pintu ruangan tertentu
+  x: number; // World X
+  z: number; // World Z
+  roomId?: string; // Jika berada di dalam ruangan tertentu
   isDoor?: boolean;
+  isDoorOut?: boolean;
   isAisle?: boolean;
   isDesk?: boolean;
+  isSeat?: boolean;
   neighbors: string[];
 }
 
-// Konversi koordinat konfigurasi (0..17) ke World coordinates Three.js
-export function configToWorld(cx: number, cy: number): { x: number; z: number } {
-  return {
-    x: +(cx + OFFSET_X).toFixed(3),
-    z: +(cy + OFFSET_Z).toFixed(3),
-  };
-}
+export const OFFSET_X = 0;
+export const OFFSET_Z = 0;
 
-// Graf waypoint koridor dan pintu ruangan
-export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
-  // --- PERSIMPANGAN KORIDOR ---
-  "I_V1_H1": {
-    id: "I_V1_H1",
-    ...configToWorld(5.5, 5.5), // world (-3.0, 0.0)
-    neighbors: ["V1_N", "V1_M", "H1_W", "H1_M"],
-  },
-  "I_V2_H1": {
-    id: "I_V2_H1",
-    ...configToWorld(11.5, 5.5), // world (+3.0, 0.0)
-    neighbors: ["V2_N", "V2_M", "H1_M", "H1_E"],
-  },
-  "I_V1_H2": {
-    id: "I_V1_H2",
-    ...configToWorld(5.5, 11.5), // world (-3.0, +6.0)
-    neighbors: ["V1_M", "V1_S", "H2_W", "H2_M"],
-  },
-  "I_V2_H2": {
-    id: "I_V2_H2",
-    ...configToWorld(11.5, 11.5), // world (+3.0, +6.0)
-    neighbors: ["V2_M", "V2_S", "H2_M", "H2_E"],
-  },
-  "I_V1_H3": {
-    id: "I_V1_H3",
-    ...configToWorld(5.5, 17.5), // world (-3.0, +12.0)
-    neighbors: ["V1_S", "H3_W", "H3_M"],
-  },
-  "I_V2_H3": {
-    id: "I_V2_H3",
-    ...configToWorld(11.5, 17.5), // world (+3.0, +12.0)
-    neighbors: ["V2_S", "H3_M", "H3_E"],
-  },
 
-  // --- SEGMEN KORIDOR VERTIKAL (V1: x=5.5 -> world x=-3.0) ---
-  "V1_N": {
-    id: "V1_N",
-    ...configToWorld(5.5, 2.5), // (-3.0, -3.0)
-    neighbors: ["I_V1_H1", "door_riset", "door_meeting_west"],
-  },
-  "V1_M": {
-    id: "V1_M",
-    ...configToWorld(5.5, 8.5), // (-3.0, +3.0)
-    neighbors: ["I_V1_H1", "I_V1_H2", "door_lp", "door_ads"],
-  },
-  "V1_S": {
-    id: "V1_S",
-    ...configToWorld(5.5, 14.5), // (-3.0, +9.0)
-    neighbors: ["I_V1_H2", "I_V1_H3", "door_hr"],
-  },
-
-  // --- SEGMEN KORIDOR VERTIKAL (V2: x=11.5 -> world x=+3.0) ---
-  "V2_N": {
-    id: "V2_N",
-    ...configToWorld(11.5, 2.5), // (+3.0, -3.0)
-    neighbors: ["I_V2_H1", "door_copy", "door_meeting_east"],
-  },
-  "V2_M": {
-    id: "V2_M",
-    ...configToWorld(11.5, 8.5), // (+3.0, +3.0)
-    neighbors: ["I_V2_H1", "I_V2_H2", "door_creative"],
-  },
-  "V2_S": {
-    id: "V2_S",
-    ...configToWorld(11.5, 14.5), // (+3.0, +9.0)
-    neighbors: ["I_V2_H2", "I_V2_H3", "door_operasional"],
-  },
-
-  // --- SEGMEN KORIDOR HORIZONTAL (H1: y=5.5 -> world z=0.0) ---
-  "H1_W": {
-    id: "H1_W",
-    ...configToWorld(2.5, 5.5), // (-6.0, 0.0)
-    neighbors: ["I_V1_H1"],
-  },
-  "H1_M": {
-    id: "H1_M",
-    ...configToWorld(8.5, 5.5), // (0.0, 0.0)
-    neighbors: ["I_V1_H1", "I_V2_H1", "door_meeting_south"],
-  },
-  "H1_E": {
-    id: "H1_E",
-    ...configToWorld(14.5, 5.5), // (+6.0, 0.0)
-    neighbors: ["I_V2_H1"],
-  },
-
-  // --- SEGMEN KORIDOR HORIZONTAL (H2: y=11.5 -> world z=+6.0) ---
-  "H2_W": {
-    id: "H2_W",
-    ...configToWorld(2.5, 11.5), // (-6.0, +6.0)
-    neighbors: ["I_V1_H2"],
-  },
-  "H2_M": {
-    id: "H2_M",
-    ...configToWorld(8.5, 11.5), // (0.0, +6.0)
-    neighbors: ["I_V1_H2", "I_V2_H2", "door_manager"],
-  },
-  "H2_E": {
-    id: "H2_E",
-    ...configToWorld(14.5, 11.5), // (+6.0, +6.0)
-    neighbors: ["I_V2_H2"],
-  },
-
-  // --- SEGMEN KORIDOR HORIZONTAL (H3: y=17.5 -> world z=+12.0) ---
-  "H3_W": {
-    id: "H3_W",
-    ...configToWorld(2.5, 17.5), // (-6.0, +12.0)
-    neighbors: ["I_V1_H3"],
-  },
-  "H3_M": {
-    id: "H3_M",
-    ...configToWorld(8.5, 17.5), // (0.0, +12.0)
-    neighbors: ["I_V1_H3", "I_V2_H3", "door_sosmed"],
-  },
-  "H3_E": {
-    id: "H3_E",
-    ...configToWorld(14.5, 17.5), // (+6.0, +12.0)
-    neighbors: ["I_V2_H3"],
-  },
-
-  // --- RUANG HR (x:0, y:12) - Kepala Departemen: HERA ---
-  "door_hr": {
-    id: "door_hr",
-    ...configToWorld(5.0, 14.5), // (-3.5, +9.0) - Pintu timur menghadap V1_S
-    roomId: "hr",
-    isDoor: true,
-    neighbors: ["V1_S", "aisle_hr"],
-  },
-  "aisle_hr": {
-    id: "aisle_hr",
-    ...configToWorld(3.2, 14.5), // (-5.3, +9.0)
-    roomId: "hr",
-    isAisle: true,
-    neighbors: ["door_hr", "desk_hr"],
-  },
-  "desk_hr": {
-    id: "desk_hr",
-    ...configToWorld(1.9, 14.5), // (-6.6, +9.0) - Meja resepsionis HERA
-    roomId: "hr",
-    isDesk: true,
-    neighbors: ["aisle_hr"],
-  },
-
-  // --- RUANG OPERASIONAL (x:12, y:12) - Kepala Departemen: HEPHAESTUS ---
-  "door_operasional": {
-    id: "door_operasional",
-    ...configToWorld(12.0, 14.5), // (+3.5, +9.0) - Pintu barat menghadap V2_S
-    roomId: "operasional",
-    isDoor: true,
-    neighbors: ["V2_S", "aisle_operasional"],
-  },
-  "aisle_operasional": {
-    id: "aisle_operasional",
-    ...configToWorld(12.8, 14.5), // (+4.3, +9.0)
-    roomId: "operasional",
-    isAisle: true,
-    neighbors: ["door_operasional", "desk_operasional"],
-  },
-  "desk_operasional": {
-    id: "desk_operasional",
-    ...configToWorld(14.5, 14.5), // (+6.0, +9.0) - Meja HEPHAESTUS
-    roomId: "operasional",
-    isDesk: true,
-    neighbors: ["aisle_operasional"],
-  },
-
-  // --- RUANG SOSIAL MEDIA (x:6, y:18) - Kepala Departemen: HERMES ---
-  "door_sosmed": {
-    id: "door_sosmed",
-    ...configToWorld(8.5, 18.0), // (0.0, +12.5) - Pintu utara menghadap H3_M
-    roomId: "sosmed",
-    isDoor: true,
-    neighbors: ["H3_M", "aisle_sosmed"],
-  },
-  "aisle_sosmed": {
-    id: "aisle_sosmed",
-    ...configToWorld(8.5, 19.3), // (0.0, +13.8)
-    roomId: "sosmed",
-    isAisle: true,
-    neighbors: ["door_sosmed", "desk_sosmed"],
-  },
-  "desk_sosmed": {
-    id: "desk_sosmed",
-    ...configToWorld(8.5, 20.7), // (0.0, +15.2) - Meja HERMES
-    roomId: "sosmed",
-    isDesk: true,
-    neighbors: ["aisle_sosmed"],
-  },
-
-  // --- RUANG MANAGER (x:6, y:12) ---
-  "door_manager": {
-    id: "door_manager",
-    ...configToWorld(8.5, 12.0), // (0.0, 6.5) - Pintu sisi utara menghadap H2
-    roomId: "manager",
-    isDoor: true,
-    neighbors: ["H2_M", "aisle_manager"],
-  },
-  "aisle_manager": {
-    id: "aisle_manager",
-    ...configToWorld(8.5, 13.2), // (0.0, 7.7) - Lorong tengah ruang Manager
-    roomId: "manager",
-    isAisle: true,
-    neighbors: ["door_manager", "desk_manager"],
-  },
-  "desk_manager": {
-    id: "desk_manager",
-    ...configToWorld(8.5, 14.7), // (0.0, 9.2) - Posisi duduk ATLAS di meja
-    roomId: "manager",
-    isDesk: true,
-    neighbors: ["aisle_manager"],
-  },
-
-  // --- RUANG RISET (x:0, y:0) - Kepala Departemen: ATHENA ---
-  "door_riset": {
-    id: "door_riset",
-    ...configToWorld(5.0, 2.5), // (-3.5, -3.0) - Pintu timur menghadap V1
-    roomId: "riset",
-    isDoor: true,
-    neighbors: ["V1_N", "aisle_riset"],
-  },
-  "aisle_riset": {
-    id: "aisle_riset",
-    ...configToWorld(3.2, 2.5), // (-5.3, -3.0)
-    roomId: "riset",
-    isAisle: true,
-    neighbors: ["door_riset", "desk_riset"],
-  },
-  "desk_riset": {
-    id: "desk_riset",
-    ...configToWorld(1.9, 2.2), // (-6.6, -3.3) - Meja ATHENA
-    roomId: "riset",
-    isDesk: true,
-    neighbors: ["aisle_riset"],
-  },
-
-  // --- RUANG COPY (x:12, y:0) - Kepala Departemen: CLIO ---
-  "door_copy": {
-    id: "door_copy",
-    ...configToWorld(12.0, 2.5), // (+3.5, -3.0) - Pintu barat menghadap V2
-    roomId: "copy",
-    isDoor: true,
-    neighbors: ["V2_N", "aisle_copy"],
-  },
-  "aisle_copy": {
-    id: "aisle_copy",
-    ...configToWorld(12.6, 2.5), // (+4.1, -3.0)
-    roomId: "copy",
-    isAisle: true,
-    neighbors: ["door_copy", "desk_copy"],
-  },
-  "desk_copy": {
-    id: "desk_copy",
-    ...configToWorld(13.5, 2.2), // (+5.0, -3.3) - Meja CLIO
-    roomId: "copy",
-    isDesk: true,
-    neighbors: ["aisle_copy"],
-  },
-
-  // --- RUANG LANDING PAGE (x:0, y:6) - Kepala Departemen: HESTIA ---
-  "door_lp": {
-    id: "door_lp",
-    ...configToWorld(5.0, 8.5), // (-3.5, +3.0) - Pintu timur menghadap V1
-    roomId: "lp",
-    isDoor: true,
-    neighbors: ["V1_M", "aisle_lp"],
-  },
-  "aisle_lp": {
-    id: "aisle_lp",
-    ...configToWorld(3.2, 8.5), // (-5.3, +3.0)
-    roomId: "lp",
-    isAisle: true,
-    neighbors: ["door_lp", "desk_lp"],
-  },
-  "desk_lp": {
-    id: "desk_lp",
-    ...configToWorld(1.9, 8.2), // (-6.6, +2.7) - Meja HESTIA
-    roomId: "lp",
-    isDesk: true,
-    neighbors: ["aisle_lp"],
-  },
-
-  // --- RUANG ADVERTISER (x:6, y:6) - Kepala Departemen: ZEUS ---
-  "door_ads": {
-    id: "door_ads",
-    ...configToWorld(6.0, 8.5), // (-2.5, +3.0) - Pintu barat menghadap V1
-    roomId: "ads",
-    isDoor: true,
-    neighbors: ["V1_M", "aisle_ads"],
-  },
-  "aisle_ads": {
-    id: "aisle_ads",
-    ...configToWorld(6.8, 8.5), // (-1.7, +3.0)
-    roomId: "ads",
-    isAisle: true,
-    neighbors: ["door_ads", "desk_ads"],
-  },
-  "desk_ads": {
-    id: "desk_ads",
-    ...configToWorld(7.5, 8.2), // (-1.0, +2.7) - Meja ZEUS
-    roomId: "ads",
-    isDesk: true,
-    neighbors: ["aisle_ads"],
-  },
-
-  // --- RUANG CREATIVE (x:12, y:6) - Kepala Departemen: THEIA ---
-  "door_creative": {
-    id: "door_creative",
-    ...configToWorld(12.0, 8.5), // (+3.5, +3.0) - Pintu barat menghadap V2
-    roomId: "creative",
-    isDoor: true,
-    neighbors: ["V2_M", "aisle_creative"],
-  },
-  "aisle_creative": {
-    id: "aisle_creative",
-    ...configToWorld(12.6, 8.5), // (+4.1, +3.0)
-    roomId: "creative",
-    isAisle: true,
-    neighbors: ["door_creative", "desk_creative"],
-  },
-  "desk_creative": {
-    id: "desk_creative",
-    ...configToWorld(13.5, 8.2), // (+5.0, +2.7) - Meja THEIA
-    roomId: "creative",
-    isDesk: true,
-    neighbors: ["aisle_creative"],
-  },
-
-  // --- RUANG MEETING (x:6, y:0) ---
-  "door_meeting_south": {
-    id: "door_meeting_south",
-    ...configToWorld(8.5, 5.0), // (0.0, -0.5) - Pintu selatan menghadap H1
-    roomId: "meeting",
-    isDoor: true,
-    neighbors: ["H1_M", "aisle_meeting_south"],
-  },
-  "door_meeting_west": {
-    id: "door_meeting_west",
-    ...configToWorld(6.0, 2.5), // (-2.5, -3.0) - Pintu barat menghadap V1
-    roomId: "meeting",
-    isDoor: true,
-    neighbors: ["V1_N", "aisle_meeting_west"],
-  },
-  "door_meeting_east": {
-    id: "door_meeting_east",
-    ...configToWorld(11.0, 2.5), // (+2.5, -3.0) - Pintu timur menghadap V2
-    roomId: "meeting",
-    isDoor: true,
-    neighbors: ["V2_N", "aisle_meeting_east"],
-  },
-  "aisle_meeting_south": {
-    id: "aisle_meeting_south",
-    ...configToWorld(8.5, 4.2), // (0.0, -1.3)
-    roomId: "meeting",
-    isAisle: true,
-    neighbors: ["door_meeting_south", "aisle_meeting_west", "aisle_meeting_east"],
-  },
-  "aisle_meeting_west": {
-    id: "aisle_meeting_west",
-    ...configToWorld(6.8, 2.5), // (-1.7, -3.0)
-    roomId: "meeting",
-    isAisle: true,
-    neighbors: ["door_meeting_west", "aisle_meeting_south", "aisle_meeting_north"],
-  },
-  "aisle_meeting_east": {
-    id: "aisle_meeting_east",
-    ...configToWorld(10.2, 2.5), // (+1.7, -3.0)
-    roomId: "meeting",
-    isAisle: true,
-    neighbors: ["door_meeting_east", "aisle_meeting_south", "aisle_meeting_north"],
-  },
-  "aisle_meeting_north": {
-    id: "aisle_meeting_north",
-    ...configToWorld(8.5, 0.9), // (0.0, -4.6)
-    roomId: "meeting",
-    isAisle: true,
-    neighbors: ["aisle_meeting_west", "aisle_meeting_east"],
-  },
-};
-
-// Pemetaan ID ruangan ke titik desk / door utama
-export const ROOM_NODE_MAP: Record<string, { doorId: string; deskId: string }> = {
-  manager: { doorId: "door_manager", deskId: "desk_manager" },
-  riset: { doorId: "door_riset", deskId: "desk_riset" },
-  copy: { doorId: "door_copy", deskId: "desk_copy" },
-  lp: { doorId: "door_lp", deskId: "desk_lp" },
-  ads: { doorId: "door_ads", deskId: "desk_ads" },
-  creative: { doorId: "door_creative", deskId: "desk_creative" },
-  meeting: { doorId: "door_meeting_south", deskId: "aisle_meeting_south" },
-  hr: { doorId: "door_hr", deskId: "desk_hr" },
-  operasional: { doorId: "door_operasional", deskId: "desk_operasional" },
-  sosmed: { doorId: "door_sosmed", deskId: "desk_sosmed" },
-};
-
-export const ROOM_AISLE_MAP: Record<string, { aisleId: string; doorId: string }> = {
-  manager: { aisleId: "aisle_manager", doorId: "door_manager" },
-  riset: { aisleId: "aisle_riset", doorId: "door_riset" },
-  copy: { aisleId: "aisle_copy", doorId: "door_copy" },
-  lp: { aisleId: "aisle_lp", doorId: "door_lp" },
-  ads: { aisleId: "aisle_ads", doorId: "door_ads" },
-  creative: { aisleId: "aisle_creative", doorId: "door_creative" },
-  hr: { aisleId: "aisle_hr", doorId: "door_hr" },
-  operasional: { aisleId: "aisle_operasional", doorId: "door_operasional" },
-  sosmed: { aisleId: "aisle_sosmed", doorId: "door_sosmed" },
-};
-
-export const MEETING_AISLE_IDS = [
-  "aisle_meeting_south",
-  "aisle_meeting_north",
-  "aisle_meeting_west",
-  "aisle_meeting_east",
-];
-
-export function getNearestMeetingAisle(worldX: number, worldZ: number): string {
-  let bestId = "aisle_meeting_south";
-  let minDist = Infinity;
-  for (const id of MEETING_AISLE_IDS) {
-    const node = WALKWAY_GRAPH[id];
-    if (!node) continue;
-    const d = Math.hypot(node.x - worldX, node.z - worldZ);
-    if (d < minDist) {
-      minDist = d;
-      bestId = id;
-    }
-  }
-  return bestId;
-}
-
-// Hitung jarak Euclidean antar dua node
-function nodeDistance(a: WaypointNode, b: WaypointNode): number {
-  return Math.hypot(a.x - b.x, a.z - b.z);
-}
-
-// Cari node terdekat ke titik sembarang (x, z)
-export function findNearestNode(x: number, z: number, allowedRoomId?: string): string {
-  let nearestId = "H2_M";
-  let minDist = Infinity;
-  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
-    // Jangan pilih node di dalam ruangan lain yang tertutup
-    if (node.roomId && allowedRoomId && node.roomId !== allowedRoomId) {
-      continue;
-    }
-    const dist = Math.hypot(node.x - x, node.z - z);
-    if (dist < minDist) {
-      minDist = dist;
-      nearestId = id;
-    }
-  }
-  return nearestId;
-}
-
-// Algoritma Dijkstra / BFS untuk mencari jalur terpendek
-export function findPathNodes(
-  startNodeId: string,
-  endNodeId: string,
-  allowedRoomIds: string[] = []
-): WaypointNode[] {
-  if (startNodeId === endNodeId) {
-    return [WALKWAY_GRAPH[startNodeId]].filter(Boolean);
-  }
-
-  const dist: Record<string, number> = {};
-  const prev: Record<string, string | null> = {};
-  const unvisited = new Set<string>();
-
-  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
-    // Lewati node yang berada di dalam ruangan lain yang tidak diizinkan
-    if (node.roomId && !allowedRoomIds.includes(node.roomId)) {
-      continue;
-    }
-    dist[id] = Infinity;
-    prev[id] = null;
-    unvisited.add(id);
-  }
-
-  dist[startNodeId] = 0;
-
-  while (unvisited.size > 0) {
-    let closestId: string | null = null;
-    let closestDist = Infinity;
-    for (const id of unvisited) {
-      if (dist[id] < closestDist) {
-        closestDist = dist[id];
-        closestId = id;
-      }
-    }
-
-    if (!closestId || closestDist === Infinity || closestId === endNodeId) {
-      break;
-    }
-
-    unvisited.delete(closestId);
-    const currNode = WALKWAY_GRAPH[closestId];
-    if (!currNode) continue;
-
-    for (const neighborId of currNode.neighbors) {
-      if (!unvisited.has(neighborId)) continue;
-      const neighborNode = WALKWAY_GRAPH[neighborId];
-      if (!neighborNode) continue;
-
-      const alt = dist[closestId] + nodeDistance(currNode, neighborNode);
-      if (alt < dist[neighborId]) {
-        dist[neighborId] = alt;
-        prev[neighborId] = closestId;
-      }
-    }
-  }
-
-  // Rekonstruksi jalur
-  const path: WaypointNode[] = [];
-  let curr: string | null = endNodeId;
-  while (curr) {
-    const node = WALKWAY_GRAPH[curr];
-    if (node) path.unshift(node);
-    curr = prev[curr] ?? null;
-  }
-
-  return path;
-}
-
-// Fungsi publik utama findPath: menerima roomId atau titik koordinat
-export function findPath(
-  from: string | { x: number; z: number },
-  to: string | { x: number; z: number },
-  customAllowedRoomIds?: string[]
-): THREE.Vector3[] {
-  let startId: string;
-  let endId: string;
-  let fromRoom: string | undefined;
-  let toRoom: string | undefined;
-
-  if (typeof from === "string") {
-    fromRoom = ROOM_NODE_MAP[from] ? from : WALKWAY_GRAPH[from]?.roomId;
-    startId = ROOM_NODE_MAP[from]?.deskId ?? ROOM_NODE_MAP[from]?.doorId ?? from;
-  } else {
-    fromRoom = getRoomAtPosition(from.x, from.z) ?? undefined;
-    startId = findNearestNode(from.x, from.z, fromRoom);
-  }
-
-  if (typeof to === "string") {
-    toRoom = ROOM_NODE_MAP[to] ? to : WALKWAY_GRAPH[to]?.roomId;
-    endId = ROOM_NODE_MAP[to]?.deskId ?? ROOM_NODE_MAP[to]?.doorId ?? to;
-  } else {
-    toRoom = getRoomAtPosition(to.x, to.z) ?? undefined;
-    endId = findNearestNode(to.x, to.z, toRoom);
-  }
-
-  const allowed =
-    customAllowedRoomIds ??
-    ([fromRoom, toRoom].filter(Boolean) as string[]);
-  const nodes = findPathNodes(startId, endId, allowed);
-  return nodes.map((n) => new THREE.Vector3(n.x, 0, n.z));
-}
-
-// Buat visual garis koridor yang halus di lantai (LineSegments Three.js)
-export function createWalkwayVisuals(): {
-  group: THREE.Group;
-  mat: THREE.LineBasicMaterial;
-} {
-  const group = new THREE.Group();
-  const linePoints: THREE.Vector3[] = [];
-  const addedEdges = new Set<string>();
-
-  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
-    // Gambar hanya koridor utama di luar ruangan (bukan interior)
-    if (node.roomId) continue;
-
-    for (const neighborId of node.neighbors) {
-      const neighbor = WALKWAY_GRAPH[neighborId];
-      if (!neighbor || neighbor.roomId) continue;
-
-      const edgeKey = [id, neighborId].sort().join("--");
-      if (addedEdges.has(edgeKey)) continue;
-      addedEdges.add(edgeKey);
-
-      // Garis koridor halus tepat di atas lantai (y = 0.003)
-      linePoints.push(new THREE.Vector3(node.x, 0.003, node.z));
-      linePoints.push(new THREE.Vector3(neighbor.x, 0.003, neighbor.z));
-    }
-  }
-
-  const geo = new THREE.BufferGeometry().setFromPoints(linePoints);
-  const mat = new THREE.LineBasicMaterial({
-    color: 0x4a4875,
-    transparent: true,
-    opacity: 0.22,
-    linewidth: 1,
-  });
-
-  const lines = new THREE.LineSegments(geo, mat);
-  group.add(lines);
-
-  return { group, mat };
-}
-
-// Bounding box pelat ruangan untuk deteksi tabrakan dinding
-// Ruangan 5x5 dengan margin tipis 0.08 dari tepi pelat
+// Bounding box pelat ruangan untuk deteksi tabrakan dinding (Liang-Barsky)
 export const ROOM_BOUNDS_MAP: Record<
   string,
   { minX: number; maxX: number; minZ: number; maxZ: number }
-> = {
-  riset: { minX: 0 + OFFSET_X + 0.08, maxX: 5 + OFFSET_X - 0.08, minZ: 0 + OFFSET_Z + 0.08, maxZ: 5 + OFFSET_Z - 0.08 },
-  meeting: { minX: 6 + OFFSET_X + 0.08, maxX: 11 + OFFSET_X - 0.08, minZ: 0 + OFFSET_Z + 0.08, maxZ: 5 + OFFSET_Z - 0.08 },
-  copy: { minX: 12 + OFFSET_X + 0.08, maxX: 17 + OFFSET_X - 0.08, minZ: 0 + OFFSET_Z + 0.08, maxZ: 5 + OFFSET_Z - 0.08 },
-  lp: { minX: 0 + OFFSET_X + 0.08, maxX: 5 + OFFSET_X - 0.08, minZ: 6 + OFFSET_Z + 0.08, maxZ: 11 + OFFSET_Z - 0.08 },
-  ads: { minX: 6 + OFFSET_X + 0.08, maxX: 11 + OFFSET_X - 0.08, minZ: 6 + OFFSET_Z + 0.08, maxZ: 11 + OFFSET_Z - 0.08 },
-  creative: { minX: 12 + OFFSET_X + 0.08, maxX: 17 + OFFSET_X - 0.08, minZ: 6 + OFFSET_Z + 0.08, maxZ: 11 + OFFSET_Z - 0.08 },
-  manager: { minX: 6 + OFFSET_X + 0.08, maxX: 11 + OFFSET_X - 0.08, minZ: 12 + OFFSET_Z + 0.08, maxZ: 17 + OFFSET_Z - 0.08 },
-  hr: { minX: 0 + OFFSET_X + 0.08, maxX: 5 + OFFSET_X - 0.08, minZ: 12 + OFFSET_Z + 0.08, maxZ: 17 + OFFSET_Z - 0.08 },
-  operasional: { minX: 12 + OFFSET_X + 0.08, maxX: 17 + OFFSET_X - 0.08, minZ: 12 + OFFSET_Z + 0.08, maxZ: 17 + OFFSET_Z - 0.08 },
-  sosmed: { minX: 6 + OFFSET_X + 0.08, maxX: 11 + OFFSET_X - 0.08, minZ: 18 + OFFSET_Z + 0.08, maxZ: 23 + OFFSET_Z - 0.08 },
-};
+> = {};
 
-// Cek apakah segmen garis p1 -> p2 memotong interior ruangan tertentu (metode Liang-Barsky)
+for (const r of FLOORPLAN.rooms) {
+  ROOM_BOUNDS_MAP[r.id] = {
+    minX: +(r.x + 0.08).toFixed(3),
+    maxX: +(r.x + r.w - 0.08).toFixed(3),
+    minZ: +(r.z + 0.08).toFixed(3),
+    maxZ: +(r.z + r.d - 0.08).toFixed(3),
+  };
+}
+
+// Cek apakah posisi berada di dalam ruangan tertentu
+export function getRoomAtPosition(worldX: number, worldZ: number): string | null {
+  for (const r of FLOORPLAN.rooms) {
+    if (
+      worldX > r.x + 0.08 &&
+      worldX < r.x + r.w - 0.08 &&
+      worldZ > r.z + 0.08 &&
+      worldZ < r.z + r.d - 0.08
+    ) {
+      return r.id;
+    }
+  }
+  return null;
+}
+
+// Algoritma Liang-Barsky untuk mendeteksi apakah segmen p1 -> p2 memotong kotak
 export function segmentIntersectsBox(
   p1: { x: number; z: number },
   p2: { x: number; z: number },
@@ -699,13 +126,459 @@ export function segmentIntersectsUnallowedRooms(
   return false;
 }
 
+// Generator graf otomatis dari Floorplan
+export function generateWalkwayGraph(
+  fp: FloorplanData = FLOORPLAN,
+  homePosMap: Record<string, [number, number]> = HOME_POSITIONS,
+  seatPosMap: Record<string, [number, number]> = SEAT_BY_AGENT
+): Record<string, WaypointNode> {
+  const nodes: Record<string, WaypointNode> = {};
+
+  function addNode(node: WaypointNode) {
+    node.x = +node.x.toFixed(3);
+    node.z = +node.z.toFixed(3);
+    if (!nodes[node.id]) {
+      nodes[node.id] = { ...node, neighbors: [...node.neighbors] };
+    } else {
+      nodes[node.id].neighbors = Array.from(
+        new Set([...nodes[node.id].neighbors, ...node.neighbors])
+      );
+    }
+  }
+
+  function addEdge(id1: string, id2: string) {
+    if (id1 === id2 || !nodes[id1] || !nodes[id2]) return;
+    if (!nodes[id1].neighbors.includes(id2)) nodes[id1].neighbors.push(id2);
+    if (!nodes[id2].neighbors.includes(id1)) nodes[id2].neighbors.push(id1);
+  }
+
+  // 1. KORIDOR & PERSIMPANGAN OTOMATIS DITURUNKAN DARI DATA (FLOORPLAN.corridors)
+  const nodesByCorridor: Record<string, string[]> = {};
+  for (const c of fp.corridors) {
+    nodesByCorridor[c.id] = [];
+    const isHoriz = c.w > c.d;
+    const midX = +(c.x + c.w / 2).toFixed(3);
+    const midZ = +(c.z + c.d / 2).toFixed(3);
+    const midId = `mid_${c.id}`;
+    addNode({ id: midId, x: midX, z: midZ, neighbors: [] });
+    nodesByCorridor[c.id].push(midId);
+
+    // Node ujung koridor
+    if (isHoriz) {
+      const wEndId = `end_${c.id}_w`;
+      const eEndId = `end_${c.id}_e`;
+      addNode({ id: wEndId, x: +(c.x + 1.0).toFixed(3), z: midZ, neighbors: [] });
+      addNode({ id: eEndId, x: +(c.x + c.w - 1.0).toFixed(3), z: midZ, neighbors: [] });
+      nodesByCorridor[c.id].push(wEndId, eEndId);
+    } else {
+      const nEndId = `end_${c.id}_n`;
+      const sEndId = `end_${c.id}_s`;
+      addNode({ id: nEndId, x: midX, z: +(c.z + 1.0).toFixed(3), neighbors: [] });
+      addNode({ id: sEndId, x: midX, z: +(c.z + c.d - 1.0).toFixed(3), neighbors: [] });
+      nodesByCorridor[c.id].push(nEndId, sEndId);
+    }
+  }
+
+  // Persimpangan antar-koridor: hitung titik temu centerline pasangan koridor yang berpotongan/bersentuhan
+  for (let i = 0; i < fp.corridors.length; i++) {
+    for (let j = i + 1; j < fp.corridors.length; j++) {
+      const c1 = fp.corridors[i];
+      const c2 = fp.corridors[j];
+
+      const overlapMinX = Math.max(c1.x, c2.x);
+      const overlapMaxX = Math.min(c1.x + c1.w, c2.x + c2.w);
+      const overlapMinZ = Math.max(c1.z, c2.z);
+      const overlapMaxZ = Math.min(c1.z + c1.d, c2.z + c2.d);
+
+      const touchesX = overlapMaxX - overlapMinX >= -0.2;
+      const touchesZ = overlapMaxZ - overlapMinZ >= -0.2;
+
+      if (touchesX && touchesZ) {
+        let ix: number;
+        let iz: number;
+        const c1Horiz = c1.w > c1.d;
+        const c2Horiz = c2.w > c2.d;
+
+        if (c1Horiz && !c2Horiz) {
+          ix = +(c2.x + c2.w / 2).toFixed(3);
+          iz = +(c1.z + c1.d / 2).toFixed(3);
+        } else if (!c1Horiz && c2Horiz) {
+          ix = +(c1.x + c1.w / 2).toFixed(3);
+          iz = +(c2.z + c2.d / 2).toFixed(3);
+        } else {
+          ix = +((overlapMinX + overlapMaxX) / 2).toFixed(3);
+          iz = +((overlapMinZ + overlapMaxZ) / 2).toFixed(3);
+        }
+
+        const isectId = `isect_${c1.id}_${c2.id}`;
+        addNode({ id: isectId, x: ix, z: iz, neighbors: [] });
+        nodesByCorridor[c1.id].push(isectId);
+        nodesByCorridor[c2.id].push(isectId);
+      }
+    }
+  }
+
+  // 2. COMMON AREA WALKWAYS (Atrium & Area Terbuka Lainnya Diturunkan Otomatis)
+  const commonRooms = fp.rooms.filter((r) => r.kind === "common" && r.doors.length === 0);
+  for (const cr of commonRooms) {
+    const cx = +(cr.x + cr.w / 2).toFixed(3);
+    const cz = +(cr.z + cr.d / 2).toFixed(3);
+    const centerId = `common_${cr.id}_center`;
+    addNode({ id: centerId, x: cx, z: cz, roomId: cr.id, neighbors: [] });
+
+    if (cr.w >= 10) {
+      const westId = `common_${cr.id}_w`;
+      const eastId = `common_${cr.id}_e`;
+      addNode({ id: westId, x: +(cr.x + 3.0).toFixed(3), z: cz, roomId: cr.id, neighbors: [] });
+      addNode({ id: eastId, x: +(cr.x + cr.w - 3.0).toFixed(3), z: cz, roomId: cr.id, neighbors: [] });
+      addEdge(westId, centerId);
+      addEdge(centerId, eastId);
+    }
+  }
+
+  // Hubungkan common area yang bersentuhan
+  for (let i = 0; i < commonRooms.length; i++) {
+    for (let j = i + 1; j < commonRooms.length; j++) {
+      const cr1 = commonRooms[i];
+      const cr2 = commonRooms[j];
+      const overlapX = Math.min(cr1.x + cr1.w, cr2.x + cr2.w) - Math.max(cr1.x, cr2.x);
+      const overlapZ = Math.min(cr1.z + cr1.d, cr2.z + cr2.d) - Math.max(cr1.z, cr2.z);
+      if (overlapX > 0.5 && overlapZ >= -0.2) {
+        const midX = +((Math.max(cr1.x, cr2.x) + Math.min(cr1.x + cr1.w, cr2.x + cr2.w)) / 2).toFixed(3);
+        const bz = +(cr1.z + cr1.d).toFixed(3);
+        const bridgeId = `bridge_${cr1.id}_${cr2.id}`;
+        addNode({ id: bridgeId, x: midX, z: bz, neighbors: [] });
+        addEdge(`common_${cr1.id}_center`, bridgeId);
+        addEdge(`common_${cr2.id}_center`, bridgeId);
+      }
+    }
+  }
+
+  // Hubungkan common area ke koridor yang berbatasan
+  for (const cr of commonRooms) {
+    for (const c of fp.corridors) {
+      const overlapX = Math.min(cr.x + cr.w, c.x + c.w) - Math.max(cr.x, c.x);
+      const overlapZ = Math.min(cr.z + cr.d, c.z + c.d) - Math.max(cr.z, c.z);
+      if (overlapX > 0.5 && (Math.abs(cr.z - (c.z + c.d)) <= 0.25 || Math.abs(cr.z + cr.d - c.z) <= 0.25)) {
+        const mx = +((Math.max(cr.x, c.x) + Math.min(cr.x + cr.w, c.x + c.w)) / 2).toFixed(3);
+        const cz = +(c.z + c.d / 2).toFixed(3);
+        const connId = `conn_${cr.id}_${c.id}`;
+        addNode({ id: connId, x: mx, z: cz, neighbors: [] });
+        nodesByCorridor[c.id].push(connId);
+        addEdge(`common_${cr.id}_center`, connId);
+      } else if (overlapZ > 0.5 && (Math.abs(cr.x - (c.x + c.w)) <= 0.25 || Math.abs(cr.x + cr.w - c.x) <= 0.25)) {
+        const mz = +((Math.max(cr.z, c.z) + Math.min(cr.z + cr.d, c.z + c.d)) / 2).toFixed(3);
+        const cx = +(c.x + c.w / 2).toFixed(3);
+        const connId = `conn_${cr.id}_${c.id}`;
+        addNode({ id: connId, x: cx, z: mz, neighbors: [] });
+        nodesByCorridor[c.id].push(connId);
+        addEdge(`common_${cr.id}_center`, connId);
+      }
+    }
+  }
+
+  // 3. PINTU OTOMATIS: Dihubungkan ke koridor, area umum, atau bay yang memuat titik luar pintu
+  for (const door of fp.doors) {
+    const room = fp.rooms.find((r) => r.id === door.roomId);
+    if (!room) continue;
+
+    const span = getDoorSpan(door, room);
+    const outId = `door_${door.id}_out`;
+    const inId = `door_${door.id}_in`;
+
+    addNode({
+      id: outId,
+      x: span.outsideX,
+      z: span.outsideZ,
+      isDoorOut: true,
+      neighbors: [],
+    });
+
+    addNode({
+      id: inId,
+      x: span.insideX,
+      z: span.insideZ,
+      roomId: door.roomId,
+      isDoor: true,
+      neighbors: [],
+    });
+
+    // Ambang pintu menghubungkan luar dan dalam
+    addEdge(outId, inId);
+
+    const ox = span.outsideX;
+    const oz = span.outsideZ;
+
+    // 3a. Cari koridor yang memuat atau berbatasan dengan titik luar pintu
+    let foundCorridor: FloorplanData["corridors"][0] | null = null;
+    let minCorrDist = Infinity;
+    for (const c of fp.corridors) {
+      const inX = ox >= c.x - 0.2 && ox <= c.x + c.w + 0.2;
+      const inZ = oz >= c.z - 0.2 && oz <= c.z + c.d + 0.2;
+      if (inX && inZ) {
+        foundCorridor = c;
+        break;
+      }
+      const dx = Math.max(c.x - ox, 0, ox - (c.x + c.w));
+      const dz = Math.max(c.z - oz, 0, oz - (c.z + c.d));
+      const dist = Math.hypot(dx, dz);
+      if (dist < minCorrDist && dist < 0.8) {
+        minCorrDist = dist;
+        foundCorridor = c;
+      }
+    }
+
+    if (foundCorridor) {
+      const isHoriz = foundCorridor.w > foundCorridor.d;
+      let px: number;
+      let pz: number;
+      if (isHoriz) {
+        px = ox;
+        pz = +(foundCorridor.z + foundCorridor.d / 2).toFixed(3);
+      } else {
+        px = +(foundCorridor.x + foundCorridor.w / 2).toFixed(3);
+        pz = oz;
+      }
+      const projId = `proj_${door.id}`;
+      addNode({ id: projId, x: px, z: pz, neighbors: [] });
+      addEdge(outId, projId);
+      nodesByCorridor[foundCorridor.id].push(projId);
+      continue;
+    }
+
+    // 3b. Cek apakah berada di dalam atau berbatasan dengan area umum terbuka
+    const foundCommon = fp.rooms.find(
+      (r) =>
+        r.kind === "common" &&
+        ox >= r.x - 0.2 &&
+        ox <= r.x + r.w + 0.2 &&
+        oz >= r.z - 0.2 &&
+        oz <= r.z + r.d + 0.2
+    );
+    if (foundCommon) {
+      const centerId = `common_${foundCommon.id}_center`;
+      if (nodes[centerId]) {
+        addEdge(outId, centerId);
+      }
+      continue;
+    }
+
+    // 3c. Cek apakah berada di dalam bay (mis. bay_riset)
+    const foundBay = fp.bays.find(
+      (b) =>
+        ox >= b.x - 0.2 &&
+        ox <= b.x + b.w + 0.2 &&
+        oz >= b.z - 0.2 &&
+        oz <= b.z + b.d + 0.2
+    );
+    if (foundBay) {
+      const bayNodeId = `bay_${foundBay.id}_node`;
+      const bx = +(foundBay.x + foundBay.w / 2).toFixed(3);
+      const bz = +(foundBay.z + foundBay.d / 2).toFixed(3);
+      addNode({ id: bayNodeId, x: bx, z: bz, neighbors: [] });
+      addEdge(outId, bayNodeId);
+
+      // Sambungkan bay ke common room terdekat (mis. atrium_selatan)
+      const nearestComm = commonRooms.find(
+        (r) =>
+          Math.max(r.x - bx, 0, bx - (r.x + r.w)) < 1.5 &&
+          Math.max(r.z - bz, 0, bz - (r.z + r.d)) < 1.5
+      );
+      if (nearestComm && nodes[`common_${nearestComm.id}_center`]) {
+        addEdge(bayNodeId, `common_${nearestComm.id}_center`);
+      }
+      continue;
+    }
+
+    // 3d. Pintu keluar utama atau luar denah
+    if (ox >= fp.width - 0.5 || ox <= 0.5 || oz >= fp.height - 0.5 || oz <= 0.5 || door.id === "d_main") {
+      const extId = `ext_${door.id}`;
+      addNode({ id: extId, x: +(ox + 0.5).toFixed(3), z: oz, neighbors: [] });
+      addEdge(outId, extId);
+    }
+  }
+
+  // 4. SAMBUNGKAN SELURUH NODE DI TIAP KORIDOR SECARA BERURUTAN
+  for (const c of fp.corridors) {
+    const rawIds = Array.from(new Set(nodesByCorridor[c.id] || []));
+    const corrNodeList = rawIds.map((id) => nodes[id]).filter(Boolean);
+    const isHoriz = c.w > c.d;
+
+    if (isHoriz) {
+      corrNodeList.sort((a, b) => a.x - b.x);
+    } else {
+      corrNodeList.sort((a, b) => a.z - b.z);
+    }
+
+    for (let k = 0; k < corrNodeList.length - 1; k++) {
+      addEdge(corrNodeList[k].id, corrNodeList[k + 1].id);
+    }
+  }
+
+  // 5. INTERIOR RUANG MEETING (Aisle loop mengelilingi meja panjang + 19 kursi)
+  // Meja meeting berada di x: 3.5..11.5, z: 3.5..5.5
+  // Aisle melingkari meja
+  addNode({ id: "meeting_aisle_w", x: 2.0, z: 4.5, roomId: "meeting", isAisle: true, neighbors: [] });
+  addNode({ id: "meeting_aisle_nw", x: 3.5, z: 2.0, roomId: "meeting", isAisle: true, neighbors: [] });
+  addNode({ id: "meeting_aisle_n", x: 7.5, z: 2.0, roomId: "meeting", isAisle: true, neighbors: [] });
+  addNode({ id: "meeting_aisle_ne", x: 11.5, z: 2.0, roomId: "meeting", isAisle: true, neighbors: [] });
+  addNode({ id: "meeting_aisle_e", x: 13.5, z: 4.0, roomId: "meeting", isAisle: true, neighbors: [] });
+  addNode({ id: "meeting_aisle_se", x: 11.5, z: 7.2, roomId: "meeting", isAisle: true, neighbors: [] });
+  addNode({ id: "meeting_aisle_s", x: 7.0, z: 7.2, roomId: "meeting", isAisle: true, neighbors: [] });
+  addNode({ id: "meeting_aisle_sw", x: 3.5, z: 7.2, roomId: "meeting", isAisle: true, neighbors: [] });
+
+  const meetingLoop = [
+    "meeting_aisle_w",
+    "meeting_aisle_nw",
+    "meeting_aisle_n",
+    "meeting_aisle_ne",
+    "meeting_aisle_e",
+    "meeting_aisle_se",
+    "meeting_aisle_s",
+    "meeting_aisle_sw",
+  ];
+  for (let i = 0; i < meetingLoop.length; i++) {
+    addEdge(meetingLoop[i], meetingLoop[(i + 1) % meetingLoop.length]);
+  }
+
+  // Sambungkan seluruh pintu meeting inside ke aisle meeting terdekat
+  const meetingDoors = fp.doors.filter((d) => d.roomId === "meeting");
+  for (const md of meetingDoors) {
+    const inId = `door_${md.id}_in`;
+    const dn = nodes[inId];
+    if (!dn) continue;
+    let bestAisle = meetingLoop[0];
+    let minD = Infinity;
+    for (const aId of meetingLoop) {
+      const an = nodes[aId];
+      const d = Math.hypot(an.x - dn.x, an.z - dn.z);
+      if (d < minD) {
+        minD = d;
+        bestAisle = aId;
+      }
+    }
+    addEdge(inId, bestAisle);
+  }
+
+  // Tambahkan 19 kursi rapat ke graf dan sambungkan ke aisle meeting
+  for (const [agentName, [sx, sz]] of Object.entries(seatPosMap)) {
+    const seatNodeId = `seat_${agentName}`;
+    addNode({
+      id: seatNodeId,
+      x: sx,
+      z: sz,
+      roomId: "meeting",
+      isSeat: true,
+      neighbors: [],
+    });
+
+    // Hubungkan ke aisle terdekat di ruang meeting
+    let bestAisle = "meeting_aisle_s";
+    let minD = Infinity;
+    for (const aId of meetingLoop) {
+      const an = nodes[aId];
+      const d = Math.hypot(an.x - sx, an.z - sz);
+      if (d < minD) {
+        minD = d;
+        bestAisle = aId;
+      }
+    }
+    addEdge(seatNodeId, bestAisle);
+  }
+
+  // 6. INTERIOR DEPARTEMEN LAIN: Meja Agent (Home Desks) & Lorong Interior
+  for (const [agentName, [hx, hz]] of Object.entries(homePosMap)) {
+    const deskNodeId = `desk_${agentName}`;
+    const rId = roomOfAgent(agentName)?.id ?? "manager";
+
+    addNode({
+      id: deskNodeId,
+      x: hx,
+      z: hz,
+      roomId: rId,
+      isDesk: true,
+      neighbors: [],
+    });
+
+    // Cari pintu masuk inside dari ruangan ini
+    const roomDoors = fp.doors.filter((d) => d.roomId === rId);
+    if (roomDoors.length > 0) {
+      // Hubungkan ke pintu inside terdekat
+      let bestDoorIn = `door_${roomDoors[0].id}_in`;
+      let minD = Infinity;
+      for (const d of roomDoors) {
+        const dinId = `door_${d.id}_in`;
+        const dn = nodes[dinId];
+        if (dn) {
+          const dist = Math.hypot(dn.x - hx, dn.z - hz);
+          if (dist < minD) {
+            minD = dist;
+            bestDoorIn = dinId;
+          }
+        }
+      }
+      addEdge(deskNodeId, bestDoorIn);
+    }
+  }
+
+  // Hubungkan sesama meja di dalam ruangan yang sama jika tidak ada halangan
+  const agentsByRoom: Record<string, string[]> = {};
+  for (const [name] of Object.entries(homePosMap)) {
+    const rId = roomOfAgent(name)?.id ?? "manager";
+    if (!agentsByRoom[rId]) agentsByRoom[rId] = [];
+    agentsByRoom[rId].push(name);
+  }
+  for (const names of Object.values(agentsByRoom)) {
+    for (let i = 0; i < names.length; i++) {
+      for (let j = i + 1; j < names.length; j++) {
+        addEdge(`desk_${names[i]}`, `desk_${names[j]}`);
+      }
+    }
+  }
+
+  return nodes;
+}
+
+// Inisialisasi graf global
+export const WALKWAY_GRAPH = generateWalkwayGraph(
+  FLOORPLAN,
+  HOME_POSITIONS,
+  SEAT_BY_AGENT
+);
+
+// Hitung jarak Euclidean antar node
+function nodeDistance(a: WaypointNode, b: WaypointNode): number {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+// Cari node terdekat ke titik sembarang (x, z)
+export function findNearestNode(
+  x: number,
+  z: number,
+  allowedRoomId?: string
+): string {
+  let nearestId = "HN_w_end";
+  let minDist = Infinity;
+  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
+    if (node.roomId && allowedRoomId && node.roomId !== allowedRoomId) {
+      continue;
+    }
+    const dist = Math.hypot(node.x - x, node.z - z);
+    if (dist < minDist) {
+      minDist = dist;
+      nearestId = id;
+    }
+  }
+  return nearestId;
+}
+
 // Cari node koridor terdekat yang tidak menembus dinding ruangan lain
 export function findNearestCorridorNode(
   x: number,
   z: number,
   allowedRoomIds: string[] = []
 ): string {
-  const corridorCandidates = Object.entries(WALKWAY_GRAPH)
+  const candidates = Object.entries(WALKWAY_GRAPH)
     .filter(([, node]) => !node.roomId)
     .map(([id, node]) => ({
       id,
@@ -714,7 +587,7 @@ export function findNearestCorridorNode(
     }))
     .sort((a, b) => a.dist - b.dist);
 
-  for (const cand of corridorCandidates) {
+  for (const cand of candidates) {
     if (
       !segmentIntersectsUnallowedRooms(
         { x, z },
@@ -726,23 +599,150 @@ export function findNearestCorridorNode(
     }
   }
 
-  return corridorCandidates[0]?.id ?? "I_V1_H1";
+  return candidates[0]?.id ?? "I_HN_VW";
 }
 
-// Verifikasi apakah suatu posisi berada di dalam batas ruangan tertentu
-export function getRoomAtPosition(worldX: number, worldZ: number): string | null {
-  for (const r of ROOMS) {
-    const minX = r.x + OFFSET_X;
-    const maxX = r.x + 5.0 + OFFSET_X;
-    const minZ = r.y + OFFSET_Z;
-    const maxZ = r.y + 5.0 + OFFSET_Z;
+// Algoritma Dijkstra untuk mencari rute terpendek antar dua node
+export function findPathNodes(
+  startNodeId: string,
+  endNodeId: string,
+  allowedRoomIds: string[] = []
+): WaypointNode[] {
+  if (startNodeId === endNodeId) {
+    return [WALKWAY_GRAPH[startNodeId]].filter(Boolean);
+  }
 
-    // Buffer tipis 0.08 agar tepi pelat tidak dihitung melanggar ruangan
-    if (worldX > minX + 0.08 && worldX < maxX - 0.08 && worldZ > minZ + 0.08 && worldZ < maxZ - 0.08) {
-      return r.id;
+  const dist: Record<string, number> = {};
+  const prev: Record<string, string | null> = {};
+  const unvisited = new Set<string>();
+
+  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
+    // Lewati node yang berada di dalam ruangan lain yang tidak diizinkan
+    if (node.roomId && !allowedRoomIds.includes(node.roomId)) {
+      continue;
+    }
+    dist[id] = Infinity;
+    prev[id] = null;
+    unvisited.add(id);
+  }
+
+  if (!(startNodeId in dist) || !(endNodeId in dist)) {
+    return [];
+  }
+
+  dist[startNodeId] = 0;
+
+  while (unvisited.size > 0) {
+    let closestId: string | null = null;
+    let closestDist = Infinity;
+    for (const id of unvisited) {
+      if (dist[id] < closestDist) {
+        closestDist = dist[id];
+        closestId = id;
+      }
+    }
+
+    if (!closestId || closestDist === Infinity || closestId === endNodeId) {
+      break;
+    }
+
+    unvisited.delete(closestId);
+    const currNode = WALKWAY_GRAPH[closestId];
+    if (!currNode) continue;
+
+    for (const neighborId of currNode.neighbors) {
+      if (!unvisited.has(neighborId)) continue;
+      const neighborNode = WALKWAY_GRAPH[neighborId];
+      if (!neighborNode) continue;
+
+      const alt = dist[closestId] + nodeDistance(currNode, neighborNode);
+      if (alt < dist[neighborId]) {
+        dist[neighborId] = alt;
+        prev[neighborId] = closestId;
+      }
     }
   }
-  return null;
+
+  // Rekonstruksi jalur
+  const path: WaypointNode[] = [];
+  let curr: string | null = endNodeId;
+  while (curr) {
+    const node = WALKWAY_GRAPH[curr];
+    if (node) path.unshift(node);
+    curr = prev[curr] ?? null;
+  }
+
+  return path;
+}
+
+// Resolusi target identitas ke node ID di graf
+function resolveTargetNodeId(target: string): { nodeId: string; roomId?: string } {
+  // Alias landing page & advertiser
+  const t = target === "lp" ? "landing_page" : target === "ads" ? "advertiser" : target;
+
+  if (WALKWAY_GRAPH[`desk_${t}`]) {
+    return { nodeId: `desk_${t}`, roomId: roomOfAgent(t)?.id };
+  }
+  if (WALKWAY_GRAPH[`seat_${t}`]) {
+    return { nodeId: `seat_${t}`, roomId: "meeting" };
+  }
+  if (WALKWAY_GRAPH[t]) {
+    return { nodeId: t, roomId: WALKWAY_GRAPH[t].roomId };
+  }
+
+  // Jika berupa ID ruangan
+  const room = FLOORPLAN.rooms.find((r) => r.id === t);
+  if (room) {
+    // Cari meja kepala departemen atau pintu masuk inside
+    const roomCfg = ROOMS.find((rc) => rc.id === room.id);
+    const firstAgent = room.id === "manager" ? MANAGER_AGENT_NAME : roomCfg?.agents[0];
+    if (firstAgent && WALKWAY_GRAPH[`desk_${firstAgent}`]) {
+      return { nodeId: `desk_${firstAgent}`, roomId: room.id };
+    }
+    const door = room.doors[0];
+    if (door && WALKWAY_GRAPH[`door_${door.id}_in`]) {
+      return { nodeId: `door_${door.id}_in`, roomId: room.id };
+    }
+  }
+
+  return { nodeId: findNearestNode(10, 10) };
+}
+
+// API publik utama findPath
+export function findPath(
+  from: string | { x: number; z: number },
+  to: string | { x: number; z: number },
+  customAllowedRoomIds?: string[]
+): THREE.Vector3[] {
+  let startId: string;
+  let endId: string;
+  let fromRoom: string | undefined;
+  let toRoom: string | undefined;
+
+  if (typeof from === "string") {
+    const res = resolveTargetNodeId(from);
+    startId = res.nodeId;
+    fromRoom = res.roomId;
+  } else {
+    fromRoom = getRoomAtPosition(from.x, from.z) ?? undefined;
+    startId = findNearestNode(from.x, from.z, fromRoom);
+  }
+
+  if (typeof to === "string") {
+    const res = resolveTargetNodeId(to);
+    endId = res.nodeId;
+    toRoom = res.roomId;
+  } else {
+    toRoom = getRoomAtPosition(to.x, to.z) ?? undefined;
+    endId = findNearestNode(to.x, to.z, toRoom);
+  }
+
+  const allowed =
+    customAllowedRoomIds ??
+    ([fromRoom, toRoom].filter(Boolean) as string[]);
+
+  const nodes = findPathNodes(startId, endId, allowed);
+  return nodes.map((n) => new THREE.Vector3(n.x, 0, n.z));
 }
 
 // Bersihkan waypoint ganda berdekatan
@@ -769,53 +769,21 @@ export function getMeetingPathForAgent(
   agentIndex: number = 0
 ): THREE.Vector3[] {
   const currentRoom = getRoomAtPosition(startPos.x, startPos.z);
-  const targetAisleId = getNearestMeetingAisle(targetSeatPos.x, targetSeatPos.z);
-  const waypoints: THREE.Vector3[] = [];
+  const startNodeId = findNearestNode(startPos.x, startPos.z, currentRoom ?? undefined);
+  const endNodeId = `seat_${agentName}`;
 
-  // 1. Titik awal
+  const allowed = ([currentRoom, "meeting"].filter(Boolean) as string[]);
+  const nodes = findPathNodes(startNodeId, endNodeId, allowed);
+
+  const waypoints: THREE.Vector3[] = [];
   waypoints.push(new THREE.Vector3(startPos.x, 0, startPos.z));
 
-  let startGraphNode: string;
-
-  if (currentRoom && currentRoom !== "meeting") {
-    // Berada di dalam ruangan asal: keluar lewat lorong dan pintu ruangan tersebut
-    const nav = ROOM_AISLE_MAP[currentRoom] ?? ROOM_AISLE_MAP.manager;
-    const aisleNode = WALKWAY_GRAPH[nav.aisleId];
-    if (aisleNode && Math.hypot(startPos.x - aisleNode.x, startPos.z - aisleNode.z) > 0.1) {
-      waypoints.push(new THREE.Vector3(aisleNode.x, 0, aisleNode.z));
-    }
-    const doorNode = WALKWAY_GRAPH[nav.doorId];
-    if (doorNode) {
-      waypoints.push(new THREE.Vector3(doorNode.x, 0, doorNode.z));
-    }
-    startGraphNode = nav.doorId;
-  } else if (currentRoom === "meeting") {
-    // Sudah di dalam ruang meeting: gunakan lorong terdekat di ruang meeting
-    startGraphNode = getNearestMeetingAisle(startPos.x, startPos.z);
-    const sn = WALKWAY_GRAPH[startGraphNode];
-    if (sn && Math.hypot(startPos.x - sn.x, startPos.z - sn.z) > 0.1) {
-      waypoints.push(new THREE.Vector3(sn.x, 0, sn.z));
-    }
-  } else {
-    // Posisi di koridor: langsung gabung ke graf di node koridor terdekat
-    startGraphNode = findNearestCorridorNode(startPos.x, startPos.z, ["meeting"]);
-    const sn = WALKWAY_GRAPH[startGraphNode];
-    if (sn && Math.hypot(startPos.x - sn.x, startPos.z - sn.z) > 0.05) {
-      waypoints.push(new THREE.Vector3(sn.x, 0, sn.z));
-    }
-  }
-
-  // Dijkstra dari startGraphNode ke lorong meeting tujuan
-  const allowed = ([currentRoom, "meeting"].filter(Boolean) as string[]);
-  const nodes = findPathNodes(startGraphNode, targetAisleId, allowed);
-
-  // Lewati koridor dengan lane offset halus (±0.12) agar antar agen tidak bertumpuk
   const laneOffset = ((agentIndex % 3) - 1) * 0.12;
   for (const n of nodes) {
     let px = n.x;
     let pz = n.z;
     if (!n.roomId) {
-      if (n.id.startsWith("V") || n.id.startsWith("I_V")) {
+      if (n.id.startsWith("V") || n.id.startsWith("I_")) {
         px += laneOffset;
       } else if (n.id.startsWith("H")) {
         pz += laneOffset;
@@ -824,13 +792,11 @@ export function getMeetingPathForAgent(
     waypoints.push(new THREE.Vector3(px, 0, pz));
   }
 
-  // Tiba di kursi rapat
   waypoints.push(new THREE.Vector3(targetSeatPos.x, 0, targetSeatPos.z));
-
   return cleanWaypoints(waypoints);
 }
 
-// Rute bubar rapat: dari kursi meeting kembali ke meja masing-masing lewat koridor
+// Rute bubar rapat: kembali dari kursi meeting ke meja masing-masing
 export function getReturnPathForAgent(
   agentName: string,
   currentPos: { x: number; z: number },
@@ -838,62 +804,26 @@ export function getReturnPathForAgent(
   agentIndex: number = 0
 ): THREE.Vector3[] {
   const isManager = agentName === MANAGER_AGENT_NAME;
-  const homeRoomId = isManager ? "manager" : roomOfAgent(agentName)?.id ?? "manager";
-  const homeNav = ROOM_AISLE_MAP[homeRoomId] ?? ROOM_AISLE_MAP.manager;
-  const currentRoom = getRoomAtPosition(currentPos.x, currentPos.z);
-  const waypoints: THREE.Vector3[] = [];
+  const homeRoomId = isManager
+    ? "manager"
+    : roomOfAgent(agentName)?.id ?? "manager";
 
-  // 1. Titik saat ini
+  const currentRoom = getRoomAtPosition(currentPos.x, currentPos.z);
+  const startNodeId = findNearestNode(currentPos.x, currentPos.z, currentRoom ?? undefined);
+  const endNodeId = `desk_${agentName}`;
+
+  const allowed = ([currentRoom, homeRoomId].filter(Boolean) as string[]);
+  const nodes = findPathNodes(startNodeId, endNodeId, allowed);
+
+  const waypoints: THREE.Vector3[] = [];
   waypoints.push(new THREE.Vector3(currentPos.x, 0, currentPos.z));
 
-  if (currentRoom === homeRoomId) {
-    // Sudah di ruangan rumah sendiri: cukup jalan langsung ke meja rumah
-    waypoints.push(new THREE.Vector3(homePos.x, 0, homePos.z));
-    return cleanWaypoints(waypoints);
-  }
-
-  let startGraphNode: string;
-
-  if (currentRoom === "meeting") {
-    // Sedang di kursi ruang meeting: jalan ke lorong meeting terdekat lalu ke graf
-    const startAisleId = getNearestMeetingAisle(currentPos.x, currentPos.z);
-    const startAisleNode = WALKWAY_GRAPH[startAisleId];
-    if (startAisleNode && Math.hypot(currentPos.x - startAisleNode.x, currentPos.z - startAisleNode.z) > 0.1) {
-      waypoints.push(new THREE.Vector3(startAisleNode.x, 0, startAisleNode.z));
-    }
-    startGraphNode = startAisleId;
-  } else if (currentRoom && currentRoom !== homeRoomId) {
-    // Sedang di dalam ruangan lain: keluar lewat pintu ruangan itu
-    const currNav = ROOM_AISLE_MAP[currentRoom] ?? ROOM_AISLE_MAP.manager;
-    const aisleNode = WALKWAY_GRAPH[currNav.aisleId];
-    if (aisleNode && Math.hypot(currentPos.x - aisleNode.x, currentPos.z - aisleNode.z) > 0.1) {
-      waypoints.push(new THREE.Vector3(aisleNode.x, 0, aisleNode.z));
-    }
-    const doorNode = WALKWAY_GRAPH[currNav.doorId];
-    if (doorNode) {
-      waypoints.push(new THREE.Vector3(doorNode.x, 0, doorNode.z));
-    }
-    startGraphNode = currNav.doorId;
-  } else {
-    // Sedang di koridor: langsung gabung ke graf di node koridor terdekat
-    startGraphNode = findNearestCorridorNode(currentPos.x, currentPos.z, [homeRoomId]);
-    const sn = WALKWAY_GRAPH[startGraphNode];
-    if (sn && Math.hypot(currentPos.x - sn.x, currentPos.z - sn.z) > 0.05) {
-      waypoints.push(new THREE.Vector3(sn.x, 0, sn.z));
-    }
-  }
-
-  // Dijkstra dari startGraphNode ke lorong ruangan rumah tujuan
-  const allowed = ([currentRoom, homeRoomId].filter(Boolean) as string[]);
-  const nodes = findPathNodes(startGraphNode, homeNav.aisleId, allowed);
-
-  // Lewati koridor dengan lane offset halus
   const laneOffset = ((agentIndex % 3) - 1) * 0.12;
   for (const n of nodes) {
     let px = n.x;
     let pz = n.z;
     if (!n.roomId) {
-      if (n.id.startsWith("V") || n.id.startsWith("I_V")) {
+      if (n.id.startsWith("V") || n.id.startsWith("I_")) {
         px += laneOffset;
       } else if (n.id.startsWith("H")) {
         pz += laneOffset;
@@ -902,8 +832,44 @@ export function getReturnPathForAgent(
     waypoints.push(new THREE.Vector3(px, 0, pz));
   }
 
-  // Dari lorong ruangan rumah kembali ke meja rumah
   waypoints.push(new THREE.Vector3(homePos.x, 0, homePos.z));
-
   return cleanWaypoints(waypoints);
+}
+
+// Visual garis koridor yang halus di lantai (Three.js LineSegments)
+export function createWalkwayVisuals(): {
+  group: THREE.Group;
+  mat: THREE.LineBasicMaterial;
+} {
+  const group = new THREE.Group();
+  const linePoints: THREE.Vector3[] = [];
+  const addedEdges = new Set<string>();
+
+  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
+    if (node.roomId) continue;
+
+    for (const neighborId of node.neighbors) {
+      const neighbor = WALKWAY_GRAPH[neighborId];
+      if (!neighbor || neighbor.roomId) continue;
+
+      const edgeKey = [id, neighborId].sort().join("--");
+      if (addedEdges.has(edgeKey)) continue;
+      addedEdges.add(edgeKey);
+
+      linePoints.push(new THREE.Vector3(node.x, 0.003, node.z));
+      linePoints.push(new THREE.Vector3(neighbor.x, 0.003, neighbor.z));
+    }
+  }
+
+  const geo = new THREE.BufferGeometry().setFromPoints(linePoints);
+  const mat = new THREE.LineBasicMaterial({
+    color: new THREE.Color(THEME.corridor.lineVisual),
+    transparent: true,
+    opacity: THEME.corridor.lineOpacity,
+  });
+
+  const lines = new THREE.LineSegments(geo, mat);
+  group.add(lines);
+
+  return { group, mat };
 }

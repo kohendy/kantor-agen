@@ -3,6 +3,7 @@
 // Transisi dilerp halus ±2 detik. Menjaga kecerahan lantai minimum agar label & lampu tetap terbaca.
 
 import * as THREE from "three";
+import { THEME } from "./theme";
 
 export type DaylightPhase = "pagi" | "siang" | "sore" | "malam";
 
@@ -36,13 +37,13 @@ const KEYFRAMES: Keyframe[] = [
     hour: 7,
     phase: "pagi",
     values: {
-      ambientColor: 0x3d3568,
+      ambientColor: 0xfff3e3,
       ambientIntensity: 1.35,
-      dir1Color: 0xffecd2,
-      dir1Intensity: 1.55,
-      dir2Color: 0xa89bf0,
-      dir2Intensity: 0.75,
-      bgColor: 0x0f0e26,
+      dir1Color: 0xffebcc,
+      dir1Intensity: 1.50,
+      dir2Color: 0xe0e7ff,
+      dir2Intensity: 0.65,
+      bgColor: new THREE.Color(THEME.background.morning).getHex(),
       floorEmissive: 0.0,
     },
   },
@@ -51,43 +52,43 @@ const KEYFRAMES: Keyframe[] = [
     hour: 13,
     phase: "siang",
     values: {
-      ambientColor: 0x333160,
+      ambientColor: 0xfffbf2,
       ambientIntensity: 1.55,
-      dir1Color: 0xf0f5ff,
-      dir1Intensity: 1.75,
-      dir2Color: 0x9fb2ff,
-      dir2Intensity: 0.85,
-      bgColor: 0x0c0b20,
+      dir1Color: 0xfffaed,
+      dir1Intensity: 1.65,
+      dir2Color: 0xdbeafe,
+      dir2Intensity: 0.75,
+      bgColor: new THREE.Color(THEME.background.day).getHex(),
       floorEmissive: 0.0,
     },
   },
-  // 17:00 - Sore (oranye redup)
+  // 17:00 - Sore (hangat oranye lembut tapi tetap terang)
   {
     hour: 17,
     phase: "sore",
     values: {
-      ambientColor: 0x3d2c52,
+      ambientColor: 0xffeedb,
       ambientIntensity: 1.25,
-      dir1Color: 0xff9955,
-      dir1Intensity: 1.40,
-      dir2Color: 0x8b66cc,
-      dir2Intensity: 0.65,
-      bgColor: 0x140e24,
+      dir1Color: 0xffb87a,
+      dir1Intensity: 1.35,
+      dir2Color: 0xd4d4f8,
+      dir2Intensity: 0.60,
+      bgColor: new THREE.Color(THEME.background.evening).getHex(),
       floorEmissive: 0.02,
     },
   },
-  // 22:00 - Malam (biru gelap, lantai minimum terjaga)
+  // 22:00 - Malam (biru gelap berkarakter, lantai dan dinding tetap terbaca dengan kontras minimum)
   {
     hour: 22,
     phase: "malam",
     values: {
-      ambientColor: 0x24224c,
+      ambientColor: 0x384166,
       ambientIntensity: 0.88,
-      dir1Color: 0x6e7cb8,
+      dir1Color: 0x889ac2,
       dir1Intensity: 0.72,
-      dir2Color: 0x483a78,
-      dir2Intensity: 0.42,
-      bgColor: 0x070614,
+      dir2Color: 0x4a5578,
+      dir2Intensity: 0.45,
+      bgColor: new THREE.Color(THEME.background.night).getHex(),
       floorEmissive: 0.08,
     },
   },
@@ -240,6 +241,7 @@ export class DaylightController {
       dir1Intensity: this.currentDir1Intensity,
       dir2Color: this.currentDir2Color.getHex(),
       dir2Intensity: this.currentDir2Intensity,
+      bgColor: this.currentBgColor.getHex(),
       floorEmissive: this.currentFloorEmissive,
     };
   }
