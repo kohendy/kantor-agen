@@ -95,6 +95,12 @@ export function RoomShape({
         const slot =
           room.id === "manager"
             ? ([2.5, 2.7] as [number, number])
+            : room.id === "hr"
+            ? ([1.9, 2.5] as [number, number])
+            : room.id === "operasional"
+            ? ([2.5, 2.5] as [number, number])
+            : room.id === "sosmed"
+            ? ([2.5, 2.7] as [number, number])
             : ({ 0: [1.3, 2.0], 1: [3.4, 1.5], 2: [2.6, 3.9] }[i] as [number, number]);
         const sx = x0 + slot[0];
         const sy = y0 + slot[1];

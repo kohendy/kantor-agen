@@ -33,8 +33,18 @@ import {
   DaylightController,
   getHourFromUrl,
 } from "@/lib/stage3d/daylight";
+import {
+  createDeskMesh,
+  createAgentCharacter,
+  calculateRoomSlotPosition,
+  DynamicDeskResult,
+  DynamicAgentResult,
+} from "@/lib/stage3d/instances";
 
-export type Selection = { type: "room" | "agent"; id: string } | null;
+export type Selection = {
+  type: "room" | "agent" | "agent_instance";
+  id: string;
+} | null;
 
 interface Agent3DRecord {
   group: THREE.Group;
@@ -67,10 +77,10 @@ interface Room3DRecord {
   labelDiv: HTMLDivElement;
 }
 
-// Framing kamera 3 baris ruangan (Row 0, 1, 2)
-// Row 0 z=-3, Row 1 z=3, Row 2 z=9 -> Pusat z = 3.0, Pusat x = 0.0
-const INIT_CAM_POS = new THREE.Vector3(15.5, 21.0, 22.0);
-const INIT_CAM_TARGET = new THREE.Vector3(0, 0, 3.0);
+// Framing kamera 4 baris ruangan (Row 0, 1, 2, 3)
+// Row 0 z=-3, Row 1 z=3, Row 2 z=9, Row 3 z=15 -> Pusat z = 5.5, Pusat x = 0.0
+const INIT_CAM_POS = new THREE.Vector3(16.5, 24.0, 26.5);
+const INIT_CAM_TARGET = new THREE.Vector3(0, 0, 5.5);
 
 function pill(status: string) {
   const cls = status === "working" ? "w" : status === "review" ? "r" : "";
@@ -176,7 +186,40 @@ export function OfficeStage3D({
 
   const gatheredRef = useRef<boolean>(false);
   const selectedRef = useRef<Selection>(null);
-  const hoveredRef = useRef<{ type: "room" | "agent"; id: string } | null>(null);
+  const hoveredRef = useRef<{
+    type: "room" | "agent" | "agent_instance";
+    id: string;
+  } | null>(null);
+  const raycastHitMeshesRef = useRef<THREE.Mesh[]>([]);
+
+  // Demo Instance & Dynamic Items Ref
+  const [demoInstanceStep, setDemoInstanceStep] = useState<number>(0);
+  const [demoStatusMessage, setDemoStatusMessage] = useState<string>("");
+  const [showCeoApprovalCard, setShowCeoApprovalCard] = useState<boolean>(false);
+  const [ceoApprovalStatus, setCeoApprovalStatus] = useState<
+    "pending" | "approved" | "rejected"
+  >("pending");
+
+  const dynamicDesksRef = useRef<DynamicDeskResult[]>([]);
+  const dynamicAgentsRef = useRef<DynamicAgentResult[]>([]);
+  const demoTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isInstanceDemoRunningRef = useRef<boolean>(false);
+  const demoQueueRef = useRef<Array<() => void>>([]);
+  const demoStateRef = useRef({
+    step: 0,
+    statusMessage: "",
+    showApprovalCard: false,
+    approvalStatus: "pending" as "pending" | "approved" | "rejected",
+  });
+
+  useEffect(() => {
+    demoStateRef.current = {
+      step: demoInstanceStep,
+      statusMessage: demoStatusMessage,
+      showApprovalCard: showCeoApprovalCard,
+      approvalStatus: ceoApprovalStatus,
+    };
+  }, [demoInstanceStep, demoStatusMessage, showCeoApprovalCard, ceoApprovalStatus]);
 
   const resetAnimRef = useRef<{
     active: boolean;
@@ -241,10 +284,214 @@ export function OfficeStage3D({
     setSelected({ type: "agent", id: name });
   }, []);
 
-  const handlersRef = useRef({ selectAgent, selectRoom });
+  const selectAgentInstance = useCallback((id: string) => {
+    setSelected({ type: "agent_instance", id });
+  }, []);
+
+  const handlersRef = useRef({ selectAgent, selectRoom, selectAgentInstance });
   useEffect(() => {
-    handlersRef.current = { selectAgent, selectRoom };
-  }, [selectAgent, selectRoom]);
+    handlersRef.current = { selectAgent, selectRoom, selectAgentInstance };
+  }, [selectAgent, selectRoom, selectAgentInstance]);
+
+  // Handler Demo Instance Request (7 Langkah Dinamis)
+  const handleResetInstanceDemo = useCallback(() => {
+    if (demoTimerRef.current) {
+      clearTimeout(demoTimerRef.current);
+      demoTimerRef.current = null;
+    }
+    // Bersihkan meja dinamis
+    dynamicDesksRef.current.forEach((d) => {
+      d.dispose();
+      d.group.removeFromParent?.();
+    });
+    dynamicDesksRef.current = [];
+
+    // Bersihkan agen dinamis
+    dynamicAgentsRef.current.forEach((a) => {
+      a.dispose();
+      a.group.removeFromParent?.();
+      const idx = raycastHitMeshesRef.current.indexOf(a.hitMesh);
+      if (idx !== -1) raycastHitMeshesRef.current.splice(idx, 1);
+    });
+    dynamicAgentsRef.current = [];
+
+    isInstanceDemoRunningRef.current = false;
+    demoQueueRef.current = [];
+    setDemoInstanceStep(0);
+    setDemoStatusMessage("");
+    setShowCeoApprovalCard(false);
+    setCeoApprovalStatus("pending");
+  }, []);
+
+  const handleApproveCeo = useCallback(() => {
+    setCeoApprovalStatus("approved");
+    setDemoInstanceStep(4);
+    setDemoStatusMessage(
+      "Langkah 4/7: CEO menyetujui penambahan. Menginstruksikan Operasional."
+    );
+    choreoEngineRef.current.say(
+      MANAGER_AGENT_NAME,
+      "Penambahan disetujui. HEPHAESTUS, siapkan fasilitasnya!",
+      2200
+    );
+
+    demoTimerRef.current = setTimeout(() => {
+      setShowCeoApprovalCard(false);
+      // LANGKAH 5: Operasional menyiapkan meja
+      setDemoInstanceStep(5);
+      setDemoStatusMessage(
+        "Langkah 5/7: HEPHAESTUS (Operasional) menyiapkan meja kerja baru"
+      );
+      choreoEngineRef.current.say(
+        "HEPHAESTUS",
+        "Siap! Menyiapkan meja kerja baru di Ruang Iklan...",
+        2200
+      );
+
+      const adsRoom = ROOMS.find((r) => r.id === "ads")!;
+      // Buat meja dinamis dengan status "disiapkan"
+      const deskRes = createDeskMesh(adsRoom, 3, "disiapkan");
+      dynamicDesksRef.current.push(deskRes);
+      const adsRec = roomRecordsRef.current["ads"];
+      if (adsRec) {
+        adsRec.group.add(deskRes.group);
+      }
+
+      demoTimerRef.current = setTimeout(() => {
+        // LANGKAH 6: Deploy Agen Baru
+        setDemoInstanceStep(6);
+        setDemoStatusMessage(
+          "Langkah 6/7: Meja siap. Deploying Agent: ARTEMIS · Akun B"
+        );
+
+        // Hapus glow & tag persiapan
+        if (deskRes.prepGlow) deskRes.prepGlow.visible = false;
+        if (deskRes.prepTag && deskRes.prepTag.element.parentNode) {
+          deskRes.prepTag.element.parentNode.removeChild(deskRes.prepTag.element);
+        }
+
+        const slotPos = calculateRoomSlotPosition(adsRoom, 3, true);
+        const agentRes = createAgentCharacter({
+          instanceId: "inst_ads_akun_b",
+          label: "ARTEMIS · Akun B",
+          role: "Pengelola Kampanye (Akun B)",
+          color: "#38bdf8",
+          initialPos: slotPos.world,
+          status: "working",
+          onClick: () => {
+            setSelected({ type: "agent_instance", id: "inst_ads_akun_b" });
+          },
+        });
+        dynamicAgentsRef.current.push(agentRes);
+        sceneRef.current?.add(agentRes.group);
+        raycastHitMeshesRef.current.push(agentRes.hitMesh);
+
+        // Balon ucapan agen baru
+        if (agentRes.bubbleDiv) {
+          agentRes.bubbleDiv.textContent =
+            "Instance ARTEMIS Akun B aktif! Siap kerja.";
+          agentRes.bubbleDiv.style.display = "block";
+          agentRes.bubbleDiv.style.opacity = "1";
+          setTimeout(() => {
+            if (agentRes.bubbleDiv) {
+              agentRes.bubbleDiv.style.opacity = "0";
+              agentRes.bubbleDiv.style.display = "none";
+            }
+          }, 2600);
+        }
+
+        demoTimerRef.current = setTimeout(() => {
+          // LANGKAH 7: Selesai & Aktif Bekerja
+          setDemoInstanceStep(7);
+          setDemoStatusMessage(
+            "Langkah 7/7: Instance Agen aktif bekerja di Ruang Iklan (Selesai)"
+          );
+          isInstanceDemoRunningRef.current = false;
+
+          // Jalankan antrean berikutnya jika ada
+          if (demoQueueRef.current.length > 0) {
+            const nextDemo = demoQueueRef.current.shift()!;
+            nextDemo();
+          }
+        }, 1800);
+      }, 2000);
+    }, 1600);
+  }, []);
+
+  const handleRejectCeo = useCallback(() => {
+    setCeoApprovalStatus("rejected");
+    setDemoStatusMessage("Permohonan penambahan agen ditolak oleh CEO.");
+    choreoEngineRef.current.say(
+      MANAGER_AGENT_NAME,
+      "Permintaan ditolak. Tetap gunakan tim yang ada saat ini.",
+      2500
+    );
+    demoTimerRef.current = setTimeout(() => {
+      setShowCeoApprovalCard(false);
+      isInstanceDemoRunningRef.current = false;
+      setDemoInstanceStep(0);
+      setDemoStatusMessage("");
+    }, 2000);
+  }, []);
+
+  const startInstanceDemo = useCallback(
+    (opts?: { autoApprove?: boolean }) => {
+      if (isInstanceDemoRunningRef.current) {
+        demoQueueRef.current.push(() => startInstanceDemo(opts));
+        setDemoStatusMessage(
+          "Permintaan diantrekan (Antrean #" + demoQueueRef.current.length + ")"
+        );
+        return;
+      }
+
+      handleResetInstanceDemo();
+      isInstanceDemoRunningRef.current = true;
+
+      // LANGKAH 1: Permintaan diajukan ke HR
+      setDemoInstanceStep(1);
+      setDemoStatusMessage("Langkah 1/7: Kebutuhan Kapasitas Tim Iklan diajukan ke HR");
+      choreoEngineRef.current.say(
+        "HERA",
+        "Menerima permohonan agen baru untuk Tim Iklan (Akun B)...",
+        2000
+      );
+
+      demoTimerRef.current = setTimeout(() => {
+        // LANGKAH 2: HERA Verifikasi
+        setDemoInstanceStep(2);
+        setDemoStatusMessage(
+          "Langkah 2/7: HERA memverifikasi kapasitas ruangan & beban kerja"
+        );
+        choreoEngineRef.current.say(
+          "HERA",
+          "Kapasitas saat ini penuh. Mengajukan proposal penambahan ke CEO.",
+          2000
+        );
+
+        demoTimerRef.current = setTimeout(() => {
+          // LANGKAH 3: Muncul Kartu Approval CEO
+          setDemoInstanceStep(3);
+          setDemoStatusMessage(
+            "Langkah 3/7: Menunggu Persetujuan CEO untuk Penambahan Agent"
+          );
+          setShowCeoApprovalCard(true);
+          setCeoApprovalStatus("pending");
+          choreoEngineRef.current.say(
+            MANAGER_AGENT_NAME,
+            "Permintaan agen diterima. Menunggu tanda tangan CEO...",
+            2600
+          );
+
+          if (opts?.autoApprove) {
+            demoTimerRef.current = setTimeout(() => {
+              handleApproveCeo();
+            }, 800);
+          }
+        }, 2000);
+      }, 2000);
+    },
+    [handleApproveCeo, handleResetInstanceDemo]
+  );
 
   // Update agent status & material when agents prop changes (WITHOUT rebuilding scene)
   useEffect(() => {
@@ -321,6 +568,14 @@ export function OfficeStage3D({
     // Agents
     Object.entries(agentRecordsRef.current).forEach(([agentName, aRec]) => {
       const isSel = selected?.type === "agent" && selected.id === agentName;
+      aRec.labelDiv.classList.toggle("sel", isSel);
+    });
+
+    // Dynamic Agent Instances
+    dynamicAgentsRef.current.forEach((aRec) => {
+      const isSel =
+        selected?.type === "agent_instance" &&
+        selected.id === (aRec.hitMesh.userData.id as string);
       aRec.labelDiv.classList.toggle("sel", isSel);
     });
   }, [selected]);
@@ -407,16 +662,16 @@ export function OfficeStage3D({
     controls.dampingFactor = 0.05;
     controls.target.copy(INIT_CAM_TARGET);
     controls.minDistance = 8;
-    controls.maxDistance = 65;
+    controls.maxDistance = 75;
     controls.maxPolarAngle = Math.PI / 2 - 0.08;
     controls.minPolarAngle = 0.12;
     controls.listenToKeyEvents(window);
 
-    // Pan clamping agar 3 baris ruangan tidak pernah hilang
+    // Pan clamping agar 4 baris ruangan tidak pernah hilang
     controls.addEventListener("change", () => {
-      controls.target.x = Math.max(-12, Math.min(12, controls.target.x));
+      controls.target.x = Math.max(-14, Math.min(14, controls.target.x));
       controls.target.y = Math.max(-2, Math.min(6, controls.target.y));
-      controls.target.z = Math.max(-8, Math.min(14, controls.target.z));
+      controls.target.z = Math.max(-8, Math.min(22, controls.target.z));
     });
 
     // Lighting (diinisialisasi dengan DaylightController)
@@ -444,6 +699,7 @@ export function OfficeStage3D({
 
     // Track raycast hit targets
     const raycastHitMeshes: THREE.Mesh[] = [];
+    raycastHitMeshesRef.current = raycastHitMeshes;
 
     // Build Rooms
     const roomRecords: Record<string, Room3DRecord> = {};
@@ -631,8 +887,472 @@ export function OfficeStage3D({
         const papersMesh = new THREE.Mesh(papersGeo, papersMat);
         papersMesh.position.set(cx + 0.70, 0.51, cz + 0.68);
         roomGroup.add(papersMesh);
+      } else if (room.id === "hr") {
+        // RUANG HR (HERA): Meja Resepsi Lengkung, Portal Rekrutmen, Sofa/Lounge
+        // Meja Resepsi Utama di depan HERA (HERA di cx - 0.6 = -6.6, cz = 9.0; meja di z = 8.15)
+        const hrDeskGeo = new THREE.BoxGeometry(1.9, 0.48, 0.7);
+        const hrDeskMat = new THREE.MeshStandardMaterial({
+          color: 0x18142a,
+          roughness: 0.35,
+          metalness: 0.35,
+        });
+        const hrDeskMesh = new THREE.Mesh(hrDeskGeo, hrDeskMat);
+        hrDeskMesh.position.set(cx - 0.6, 0.24, cz - 0.85);
+        roomGroup.add(hrDeskMesh);
+
+        const hrDeskEdgeGeo = new THREE.EdgesGeometry(hrDeskGeo);
+        const hrDeskEdgeMat = new THREE.LineBasicMaterial({
+          color: roomColorHex,
+          transparent: true,
+          opacity: 0.8,
+        });
+        const hrDeskEdges = new THREE.LineSegments(hrDeskEdgeGeo, hrDeskEdgeMat);
+        hrDeskEdges.position.copy(hrDeskMesh.position);
+        roomGroup.add(hrDeskEdges);
+
+        // Sayap L Resepsi (sisi barat meja)
+        const hrWingGeo = new THREE.BoxGeometry(0.65, 0.48, 0.65);
+        const hrWingMesh = new THREE.Mesh(hrWingGeo, hrDeskMat);
+        hrWingMesh.position.set(cx - 1.25, 0.24, cz - 0.55);
+        roomGroup.add(hrWingMesh);
+
+        const hrWingEdges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(hrWingGeo),
+          hrDeskEdgeMat
+        );
+        hrWingEdges.position.copy(hrWingMesh.position);
+        roomGroup.add(hrWingEdges);
+
+        // Strip Neon Magenta di depan counter resepsi
+        const hrStripGeo = new THREE.BoxGeometry(1.92, 0.04, 0.04);
+        const hrStripMat = new THREE.MeshBasicMaterial({ color: roomColorHex });
+        const hrStripMesh = new THREE.Mesh(hrStripGeo, hrStripMat);
+        hrStripMesh.position.set(cx - 0.6, 0.46, cz - 1.22);
+        roomGroup.add(hrStripMesh);
+
+        // Terminal Onboarding / Monitor di meja HERA
+        const hrMonGeo = new THREE.BoxGeometry(0.44, 0.28, 0.04);
+        const hrMonMat = new THREE.MeshStandardMaterial({
+          color: roomColorHex,
+          emissive: roomColorHex,
+          emissiveIntensity: 0.5,
+        });
+        const hrMonMesh = new THREE.Mesh(hrMonGeo, hrMonMat);
+        hrMonMesh.position.set(cx - 0.6, 0.62, cz - 0.95);
+        roomGroup.add(hrMonMesh);
+
+        // Kursi Resepsionis HERA di utara meja
+        const hrChairGeo = new THREE.BoxGeometry(0.5, 0.08, 0.45);
+        const hrChairMat = new THREE.MeshStandardMaterial({
+          color: 0x120f24,
+          roughness: 0.5,
+        });
+        const hrChairMesh = new THREE.Mesh(hrChairGeo, hrChairMat);
+        hrChairMesh.position.set(cx - 0.6, 0.24, cz + 0.15);
+        roomGroup.add(hrChairMesh);
+
+        // PORTAL REKRUTMEN HR (Holographic Gateway di utara ruangan)
+        const portalPillarGeo = new THREE.BoxGeometry(0.12, 1.7, 0.12);
+        const portalPillarMat = new THREE.MeshStandardMaterial({
+          color: 0x221a36,
+          roughness: 0.3,
+          metalness: 0.7,
+        });
+        const pLeft = new THREE.Mesh(portalPillarGeo, portalPillarMat);
+        pLeft.position.set(cx + 1.2 - 0.75, 0.85, cz - 2.25);
+        roomGroup.add(pLeft);
+
+        const pRight = new THREE.Mesh(portalPillarGeo, portalPillarMat);
+        pRight.position.set(cx + 1.2 + 0.75, 0.85, cz - 2.25);
+        roomGroup.add(pRight);
+
+        const pTop = new THREE.Mesh(
+          new THREE.BoxGeometry(1.65, 0.14, 0.14),
+          portalPillarMat
+        );
+        pTop.position.set(cx + 1.2, 1.72, cz - 2.25);
+        roomGroup.add(pTop);
+
+        // Field Energi Portal
+        const pFieldGeo = new THREE.BoxGeometry(1.38, 1.55, 0.04);
+        const pFieldMat = new THREE.MeshStandardMaterial({
+          color: roomColorHex,
+          emissive: roomColorHex,
+          emissiveIntensity: 0.65,
+          transparent: true,
+          opacity: 0.45,
+          roughness: 0.1,
+        });
+        const pFieldMesh = new THREE.Mesh(pFieldGeo, pFieldMat);
+        pFieldMesh.position.set(cx + 1.2, 0.85, cz - 2.25);
+        roomGroup.add(pFieldMesh);
+
+        // Papan Nama Portal
+        const pCanvas = document.createElement("canvas");
+        pCanvas.width = 512;
+        pCanvas.height = 128;
+        const pctx = pCanvas.getContext("2d");
+        if (pctx) {
+          pctx.fillStyle = "#120a24";
+          pctx.fillRect(0, 0, 512, 128);
+          pctx.strokeStyle = room.color;
+          pctx.lineWidth = 6;
+          pctx.strokeRect(4, 4, 504, 120);
+          pctx.fillStyle = room.color;
+          pctx.font = "bold 36px 'Chakra Petch', sans-serif";
+          pctx.fillText("PORTAL INSTANSI HR", 28, 56);
+          pctx.fillStyle = "rgba(232, 121, 249, 0.75)";
+          pctx.font = "24px 'Chakra Petch', sans-serif";
+          pctx.fillText("Rekrutmen & Penempatan", 28, 98);
+        }
+        const pSignTex = new THREE.CanvasTexture(pCanvas);
+        const pSignMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(1.6, 0.42, 0.05),
+          new THREE.MeshBasicMaterial({ map: pSignTex })
+        );
+        pSignMesh.position.set(cx + 1.2, 2.05, cz - 2.25);
+        roomGroup.add(pSignMesh);
+
+        // Lounge Sofa di sisi barat daya
+        const sofaGeo = new THREE.BoxGeometry(1.4, 0.28, 0.6);
+        const sofaMat = new THREE.MeshStandardMaterial({
+          color: 0x1e1838,
+          roughness: 0.5,
+        });
+        const sofaMesh = new THREE.Mesh(sofaGeo, sofaMat);
+        sofaMesh.position.set(cx - 1.2, 0.14, cz + 1.4);
+        roomGroup.add(sofaMesh);
+
+        const sofaBackGeo = new THREE.BoxGeometry(1.4, 0.35, 0.12);
+        const sofaBack = new THREE.Mesh(sofaBackGeo, sofaMat);
+        sofaBack.position.set(cx - 1.2, 0.4, cz + 1.7);
+        roomGroup.add(sofaBack);
+
+        // Meja kopi
+        const coffeeTable = new THREE.Mesh(
+          new THREE.BoxGeometry(0.6, 0.18, 0.5),
+          hrDeskMat
+        );
+        coffeeTable.position.set(cx - 1.2, 0.09, cz + 0.6);
+        roomGroup.add(coffeeTable);
+      } else if (room.id === "operasional") {
+        // RUANG OPERASIONAL (HEPHAESTUS): Meja Kerja Industri, Meja Blueprint Drafting, Troli Peralatan, Rak Server
+        // Meja Kerja HEPHAESTUS (HEPHAESTUS di cx, cz = 6.0, 9.0; meja di cz - 0.85 = 8.15)
+        const opsDeskGeo = new THREE.BoxGeometry(1.9, 0.44, 0.75);
+        const opsDeskMat = new THREE.MeshStandardMaterial({
+          color: 0x161a24,
+          roughness: 0.4,
+          metalness: 0.5,
+        });
+        const opsDeskMesh = new THREE.Mesh(opsDeskGeo, opsDeskMat);
+        opsDeskMesh.position.set(cx, 0.22, cz - 0.85);
+        roomGroup.add(opsDeskMesh);
+
+        const opsDeskEdgeMat = new THREE.LineBasicMaterial({
+          color: roomColorHex,
+          transparent: true,
+          opacity: 0.8,
+        });
+        const opsDeskEdges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(opsDeskGeo),
+          opsDeskEdgeMat
+        );
+        opsDeskEdges.position.copy(opsDeskMesh.position);
+        roomGroup.add(opsDeskEdges);
+
+        // Dual Monitor Teknis
+        const mon1 = new THREE.Mesh(
+          new THREE.BoxGeometry(0.42, 0.25, 0.04),
+          new THREE.MeshStandardMaterial({
+            color: roomColorHex,
+            emissive: roomColorHex,
+            emissiveIntensity: 0.45,
+          })
+        );
+        mon1.position.set(cx - 0.26, 0.58, cz - 0.92);
+        roomGroup.add(mon1);
+
+        const mon2 = new THREE.Mesh(
+          new THREE.BoxGeometry(0.42, 0.25, 0.04),
+          new THREE.MeshStandardMaterial({
+            color: 0x38bdf8,
+            emissive: 0x38bdf8,
+            emissiveIntensity: 0.45,
+          })
+        );
+        mon2.position.set(cx + 0.26, 0.58, cz - 0.92);
+        roomGroup.add(mon2);
+
+        // Kursi HEPHAESTUS di utara meja
+        const opsChairMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.08, 0.45),
+          new THREE.MeshStandardMaterial({ color: 0x10141e, roughness: 0.6 })
+        );
+        opsChairMesh.position.set(cx, 0.24, cz + 0.15);
+        roomGroup.add(opsChairMesh);
+
+        // MEJA BLUEPRINT / DRAFTING TABLE (di barat meja, cx - 1.3, cz + 1.0)
+        const bpBaseMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(1.3, 0.46, 0.85),
+          new THREE.MeshStandardMaterial({
+            color: 0x121722,
+            roughness: 0.4,
+            metalness: 0.4,
+          })
+        );
+        bpBaseMesh.position.set(cx - 1.3, 0.23, cz + 1.0);
+        roomGroup.add(bpBaseMesh);
+
+        // Papan Blueprint miring di atas meja
+        const bpCanvas = document.createElement("canvas");
+        bpCanvas.width = 512;
+        bpCanvas.height = 256;
+        const bpctx = bpCanvas.getContext("2d");
+        if (bpctx) {
+          bpctx.fillStyle = "#0c1527";
+          bpctx.fillRect(0, 0, 512, 256);
+          bpctx.strokeStyle = "#38bdf8";
+          bpctx.lineWidth = 4;
+          bpctx.strokeRect(6, 6, 500, 244);
+          // Grid
+          bpctx.strokeStyle = "rgba(56, 189, 248, 0.25)";
+          bpctx.lineWidth = 1;
+          for (let gx = 20; gx < 500; gx += 20) {
+            bpctx.beginPath();
+            bpctx.moveTo(gx, 10);
+            bpctx.lineTo(gx, 246);
+            bpctx.stroke();
+          }
+          for (let gy = 20; gy < 246; gy += 20) {
+            bpctx.beginPath();
+            bpctx.moveTo(10, gy);
+            bpctx.lineTo(502, gy);
+            bpctx.stroke();
+          }
+          bpctx.fillStyle = "#38bdf8";
+          bpctx.font = "bold 26px 'Chakra Petch', sans-serif";
+          bpctx.fillText("BLUEPRINT FASILITAS & MEJA V1b", 24, 46);
+          bpctx.fillStyle = "rgba(148, 163, 184, 0.8)";
+          bpctx.font = "18px 'Chakra Petch', sans-serif";
+          bpctx.fillText("Rencana Perluasan & Penambahan Meja", 24, 80);
+          // Gambar denah kotak meja
+          bpctx.strokeStyle = "#f5a623";
+          bpctx.lineWidth = 3;
+          bpctx.strokeRect(40, 110, 120, 60);
+          bpctx.strokeRect(180, 110, 120, 60);
+          bpctx.strokeRect(320, 110, 120, 60);
+        }
+        const bpTex = new THREE.CanvasTexture(bpCanvas);
+        const bpTopMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(1.28, 0.04, 0.82),
+          new THREE.MeshStandardMaterial({ map: bpTex, roughness: 0.3 })
+        );
+        bpTopMesh.rotation.x = -0.28;
+        bpTopMesh.position.set(cx - 1.3, 0.52, cz + 1.0);
+        roomGroup.add(bpTopMesh);
+
+        // TROLI PERALATAN (di timur meja, cx + 1.3, cz + 1.0)
+        const trolleyGroup = new THREE.Group();
+        trolleyGroup.position.set(cx + 1.3, 0, cz + 1.0);
+
+        const tShelvesGeo = new THREE.BoxGeometry(0.72, 0.03, 0.52);
+        const tShelvesMat = new THREE.MeshStandardMaterial({
+          color: 0x334155,
+          roughness: 0.3,
+          metalness: 0.7,
+        });
+        [0.12, 0.34, 0.56].forEach((y) => {
+          const s = new THREE.Mesh(tShelvesGeo, tShelvesMat);
+          s.position.set(0, y, 0);
+          trolleyGroup.add(s);
+        });
+
+        const tPoleGeo = new THREE.BoxGeometry(0.04, 0.58, 0.04);
+        [
+          [-0.34, -0.24],
+          [0.34, -0.24],
+          [-0.34, 0.24],
+          [0.34, 0.24],
+        ].forEach(([px, pz]) => {
+          const p = new THREE.Mesh(tPoleGeo, tShelvesMat);
+          p.position.set(px, 0.34, pz);
+          trolleyGroup.add(p);
+        });
+
+        // Kotak perkakas di rak atas troli
+        const toolboxMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.36, 0.14, 0.22),
+          new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.4 })
+        );
+        toolboxMesh.position.set(0, 0.65, 0);
+        trolleyGroup.add(toolboxMesh);
+        roomGroup.add(trolleyGroup);
+
+        // RAK SERVER / KABINET FASILITAS (dinding utara, cx + 1.4, cz - 2.1)
+        const rackMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.85, 1.6, 0.45),
+          new THREE.MeshStandardMaterial({
+            color: 0x0f172a,
+            roughness: 0.4,
+            metalness: 0.6,
+          })
+        );
+        rackMesh.position.set(cx + 1.4, 0.8, cz - 2.1);
+        roomGroup.add(rackMesh);
+
+        // Strip LED Server
+        const ledStrip = new THREE.Mesh(
+          new THREE.BoxGeometry(0.04, 1.4, 0.02),
+          new THREE.MeshBasicMaterial({ color: 0x2ee6a8 })
+        );
+        ledStrip.position.set(cx + 1.65, 0.8, cz - 1.86);
+        roomGroup.add(ledStrip);
+      } else if (room.id === "sosmed") {
+        // RUANG SOSIAL MEDIA (HERMES): Meja Konten Kreatif, Dinding Kalender Konten, Tripod & Ring Light
+        // Meja Kerja HERMES (HERMES di cx, cz = 0.0, 15.2; meja di cz - 0.75 = 14.45)
+        const sosDeskGeo = new THREE.BoxGeometry(1.85, 0.44, 0.72);
+        const sosDeskMat = new THREE.MeshStandardMaterial({
+          color: 0x1c172e,
+          roughness: 0.35,
+          metalness: 0.3,
+        });
+        const sosDeskMesh = new THREE.Mesh(sosDeskGeo, sosDeskMat);
+        sosDeskMesh.position.set(cx, 0.22, cz - 0.75);
+        roomGroup.add(sosDeskMesh);
+
+        const sosDeskEdges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(sosDeskGeo),
+          new THREE.LineBasicMaterial({
+            color: roomColorHex,
+            transparent: true,
+            opacity: 0.75,
+          })
+        );
+        sosDeskEdges.position.copy(sosDeskMesh.position);
+        roomGroup.add(sosDeskEdges);
+
+        // Ultrawide Curved Monitor
+        const ultrawideMon = new THREE.Mesh(
+          new THREE.BoxGeometry(0.78, 0.34, 0.04),
+          new THREE.MeshStandardMaterial({
+            color: roomColorHex,
+            emissive: roomColorHex,
+            emissiveIntensity: 0.55,
+          })
+        );
+        ultrawideMon.position.set(cx, 0.62, cz - 0.82);
+        roomGroup.add(ultrawideMon);
+
+        // Dudukan Smartphone Vertikal di meja
+        const phoneStand = new THREE.Mesh(
+          new THREE.BoxGeometry(0.08, 0.16, 0.04),
+          new THREE.MeshStandardMaterial({
+            color: 0x38bdf8,
+            emissive: 0x38bdf8,
+            emissiveIntensity: 0.4,
+          })
+        );
+        phoneStand.position.set(cx + 0.52, 0.52, cz - 0.75);
+        roomGroup.add(phoneStand);
+
+        // Kursi HERMES di utara meja
+        const sosChairMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.08, 0.45),
+          new THREE.MeshStandardMaterial({ color: 0x141026, roughness: 0.5 })
+        );
+        sosChairMesh.position.set(cx, 0.24, cz + 0.25);
+        roomGroup.add(sosChairMesh);
+
+        // DINDING KALENDER KONTEN (di dinding selatan, cx, cz + 2.35 = 17.35)
+        const calCanvas = document.createElement("canvas");
+        calCanvas.width = 1024;
+        calCanvas.height = 384;
+        const cctx = calCanvas.getContext("2d");
+        if (cctx) {
+          cctx.fillStyle = "#0c0a1f";
+          cctx.fillRect(0, 0, 1024, 384);
+          cctx.strokeStyle = room.color;
+          cctx.lineWidth = 8;
+          cctx.strokeRect(6, 6, 1012, 372);
+
+          cctx.fillStyle = room.color;
+          cctx.font = "bold 44px 'Chakra Petch', sans-serif";
+          cctx.fillText("KALENDER KONTEN \u00b7 IG & THREADS", 32, 64);
+
+          // Kolom Hari
+          const days = [
+            "SENIN",
+            "SELASA",
+            "RABU",
+            "KAMIS",
+            "JUMAT",
+            "SABTU",
+            "MINGGU",
+          ];
+          const colW = 132;
+          days.forEach((day, idx) => {
+            const x = 36 + idx * colW;
+            cctx.strokeStyle = "rgba(251, 146, 60, 0.3)";
+            cctx.lineWidth = 1;
+            cctx.strokeRect(x, 90, colW - 8, 260);
+
+            cctx.fillStyle = "rgba(251, 146, 60, 0.9)";
+            cctx.font = "bold 20px 'Chakra Petch', sans-serif";
+            cctx.fillText(day, x + 10, 120);
+
+            // Kartu Konten
+            const badgeColors = ["#fb923c", "#a78bfa", "#2ee6a8", "#f43f5e"];
+            const badgeTitles = [
+              "Reels #1",
+              "Carousel",
+              "Story UGC",
+              "Threads Hook",
+            ];
+            const bgCol = badgeColors[idx % badgeColors.length];
+            cctx.fillStyle = bgCol;
+            cctx.fillRect(x + 8, 140 + (idx % 2) * 60, colW - 24, 46);
+
+            cctx.fillStyle = "#0b0a1a";
+            cctx.font = "bold 16px 'Chakra Petch', sans-serif";
+            cctx.fillText(
+              badgeTitles[idx % badgeTitles.length],
+              x + 14,
+              168 + (idx % 2) * 60
+            );
+          });
+        }
+        const calTex = new THREE.CanvasTexture(calCanvas);
+        const calWallMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(3.6, 1.35, 0.06),
+          new THREE.MeshBasicMaterial({ map: calTex })
+        );
+        calWallMesh.position.set(cx, 1.15, cz + 2.35);
+        roomGroup.add(calWallMesh);
+
+        // TRIPOD & RING LIGHT (di sisi barat meja, cx - 1.5, cz + 0.4)
+        const tripodMesh = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.02, 0.02, 1.1, 8),
+          new THREE.MeshStandardMaterial({
+            color: 0x334155,
+            metalness: 0.8,
+            roughness: 0.2,
+          })
+        );
+        tripodMesh.position.set(cx - 1.5, 0.55, cz + 0.4);
+        roomGroup.add(tripodMesh);
+
+        const ringLightMesh = new THREE.Mesh(
+          new THREE.TorusGeometry(0.18, 0.025, 8, 24),
+          new THREE.MeshStandardMaterial({
+            color: 0xfff5e6,
+            emissive: 0xfff5e6,
+            emissiveIntensity: 1.2,
+          })
+        );
+        ringLightMesh.position.set(cx - 1.5, 1.15, cz + 0.4);
+        roomGroup.add(ringLightMesh);
       } else {
-        // Regular room desks for agents
+        // Regular room desks for agents (Riset, Copy, LP, Ads, Creative)
         const deskGeo = new THREE.BoxGeometry(1.8, 0.44, 0.7);
         const deskTopEdgeGeo = new THREE.EdgesGeometry(deskGeo);
         const deskMat = new THREE.MeshStandardMaterial({
@@ -1024,7 +1744,7 @@ export function OfficeStage3D({
         const hits = raycaster.intersectObjects(raycastHitMeshes, false);
         if (hits.length > 0) {
           const topHit = hits[0].object.userData as {
-            type: "room" | "agent";
+            type: "room" | "agent" | "agent_instance";
             id: string;
           };
           renderer.domElement.style.cursor = "pointer";
@@ -1068,14 +1788,20 @@ export function OfficeStage3D({
       raycaster.setFromCamera(mouse, camera);
       const hits = raycaster.intersectObjects(raycastHitMeshes, false);
       if (hits.length > 0) {
-        const agentHit = hits.find((h) => h.object.userData.type === "agent");
+        const agentHit = hits.find(
+          (h) =>
+            h.object.userData.type === "agent" ||
+            h.object.userData.type === "agent_instance"
+        );
         const hit = agentHit || hits[0];
         const data = hit.object.userData as {
-          type: "room" | "agent";
+          type: "room" | "agent" | "agent_instance";
           id: string;
         };
         if (data.type === "agent") {
           handlersRef.current.selectAgent(data.id);
+        } else if (data.type === "agent_instance") {
+          handlersRef.current.selectAgentInstance(data.id);
         } else if (data.type === "room") {
           handlersRef.current.selectRoom(data.id);
         }
@@ -1222,6 +1948,20 @@ export function OfficeStage3D({
         },
         getStatusOverride: (nama: string) =>
           statusOverridesRef.current[nama] ?? null,
+        startInstanceDemo: (opts?: { autoApprove?: boolean }) =>
+          startInstanceDemo(opts),
+        approveInstanceRequest: () => handleApproveCeo(),
+        rejectInstanceRequest: () => handleRejectCeo(),
+        resetInstanceDemo: () => handleResetInstanceDemo(),
+        getInstanceDemoState: () => ({
+          step: demoStateRef.current.step,
+          statusMessage: demoStateRef.current.statusMessage,
+          showApprovalCard: demoStateRef.current.showApprovalCard,
+          approvalStatus: demoStateRef.current.approvalStatus,
+          dynamicDesksCount: dynamicDesksRef.current.length,
+          dynamicAgentsCount: dynamicAgentsRef.current.length,
+          isRunning: isInstanceDemoRunningRef.current,
+        }),
         renderer,
         scene,
         camera,
@@ -1421,6 +2161,7 @@ export function OfficeStage3D({
 
     // Cleanup on unmount
     return () => {
+      handleResetInstanceDemo();
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
       }
@@ -1563,6 +2304,37 @@ export function OfficeStage3D({
         </>
       );
     }
+    if (selected.type === "agent_instance") {
+      return (
+        <>
+          <h3 style={{ color: "#38bdf8" }}>
+            ARTEMIS · Akun B <span className="pill w">bekerja</span>
+          </h3>
+          <p>
+            <b>Pengelola Kampanye (Akun B)</b>, ruang advertisers.
+            Instance agen dinamis sisi klien yang disiapkan melalui persetujuan
+            CEO untuk menangani lonjakan campaign iklan.
+          </p>
+          <div className="cols">
+            <div>
+              <div className="lbl">Status Instance</div>
+              <div className="chips">
+                <span className="chip">Sisi Klien (Demo)</span>
+                <span className="chip">Slot #4</span>
+                <span className="chip">Meta Ads (Akun B)</span>
+              </div>
+            </div>
+            <div>
+              <div className="lbl">Catatan Fasilitas</div>
+              <p style={{ margin: "4px 0", fontSize: "11px", color: "var(--muted)" }}>
+                Meja kerja runtime disiapkan oleh HEPHAESTUS (Operasional) tanpa
+                menulis ke database.
+              </p>
+            </div>
+          </div>
+        </>
+      );
+    }
     const name = selected.id;
     const cfg = AGENTS[name];
     const room = roomOfAgent(name);
@@ -1601,6 +2373,8 @@ export function OfficeStage3D({
   const selectedTitle = selected
     ? selected.type === "agent"
       ? selected.id
+      : selected.type === "agent_instance"
+      ? "ARTEMIS · Akun B"
       : ROOMS.find((r) => r.id === selected.id)?.name ?? "Detail"
     : "Jobdesc & Detail";
 
@@ -1639,6 +2413,49 @@ export function OfficeStage3D({
           aria-label="Peta kantor 3D interaktif. Gunakan klik kiri untuk memutar, klik kanan untuk menggeser, roda mouse untuk memperbesar."
         />
 
+        {/* Kartu Persetujuan CEO (Floating Demo Modal V1b) */}
+        {showCeoApprovalCard && (
+          <div
+            className="ceo-approval-demo-card"
+            role="dialog"
+            aria-label="Permintaan Persetujuan CEO"
+          >
+            <div className="ceo-card-badge">PERSETUJUAN CEO · DEMO</div>
+            <h4>Permohonan Penambahan Agen</h4>
+            <p className="ceo-card-desc">
+              <b>Ruang:</b> Advertisers (Iklan)
+              <br />
+              <b>Departemen:</b> Pemasaran & Meta Ads
+              <br />
+              <b>Template Agen:</b> ARTEMIS · Pengelola Kampanye
+              <br />
+              <b>Konteks:</b> Penanganan Campaign Akun B (beban tinggi)
+              <br />
+              <b>Peralatan:</b> 1 Meja & Workstation Baru (disiapkan Operasional)
+            </p>
+            {ceoApprovalStatus === "approved" ? (
+              <div className="ceo-approved-badge">✓ DISETUJUI OLEH CEO</div>
+            ) : (
+              <div className="ceo-card-actions">
+                <button
+                  type="button"
+                  className="ceo-approve-btn"
+                  onClick={handleApproveCeo}
+                >
+                  Setujui Penambahan (CEO)
+                </button>
+                <button
+                  type="button"
+                  className="ceo-reject-btn"
+                  onClick={handleRejectCeo}
+                >
+                  Tolak
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Panel Kontrol Mode Demo & Jam (Hanya non-production atau ?demo=1) */}
         {showDemoUI && (
           <aside
@@ -1647,7 +2464,7 @@ export function OfficeStage3D({
           >
             <div className="stage-demo-head">
               <span>Mode Demo</span>
-              <span className="stage-demo-badge">V1a</span>
+              <span className="stage-demo-badge">V1b</span>
             </div>
             <div className="stage-demo-btns">
               <button
@@ -1700,6 +2517,40 @@ export function OfficeStage3D({
                 Hentikan
               </button>
             </div>
+
+            {/* Bagian Simulasi Penambahan Instance Agen (V1b) */}
+            <div className="stage-demo-section-title">Demo Instance Agen</div>
+            <div className="stage-demo-btns">
+              <button
+                type="button"
+                className="stage-demo-btn is-highlight"
+                aria-label="Jalankan Simulasi Tambah Agen (7 Langkah)"
+                onClick={() => startInstanceDemo()}
+                disabled={demoInstanceStep > 0 && demoInstanceStep < 7}
+              >
+                {demoInstanceStep > 0
+                  ? `Simulasi (${demoInstanceStep}/7)`
+                  : "+ Tambah Agen (7 Langkah)"}
+              </button>
+              {demoInstanceStep > 0 && (
+                <button
+                  type="button"
+                  className="stage-demo-btn"
+                  style={{
+                    color: "var(--amber)",
+                    borderColor: "rgba(245, 166, 35, 0.4)",
+                  }}
+                  aria-label="Reset Simulasi Instance"
+                  onClick={handleResetInstanceDemo}
+                >
+                  Reset Instance
+                </button>
+              )}
+            </div>
+            {demoStatusMessage && (
+              <div className="stage-demo-status-pill">{demoStatusMessage}</div>
+            )}
+
             <div className="stage-demo-daylight">
               <span className="stage-demo-daylight-lbl">Jam:</span>
               {[7, 13, 17, 21].map((h) => (

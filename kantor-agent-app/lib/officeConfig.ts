@@ -25,25 +25,6 @@ export interface AgentConfig {
 export const MANAGER_AGENT_NAME = "ATLAS";
 export const MANAGER_ROOM_ID = "manager";
 
-// Slot posisi cadangan untuk V1b: HR di (x:0, y:12) dan Operasional di (x:12, y:12)
-// DOKUMENTASI CADANGAN: Jangan dirender sekarang di V1a, pertahankan koordinat grid.
-export const RESERVED_ROOM_SLOTS = [
-  {
-    id: "hr",
-    name: "HR",
-    x: 0,
-    y: 12,
-    desc: "Cadangan slot untuk HR (V1b)",
-  },
-  {
-    id: "operasional",
-    name: "OPERASIONAL",
-    x: 12,
-    y: 12,
-    desc: "Cadangan slot untuk Operasional (V1b)",
-  },
-] as const;
-
 export const ROOMS: RoomConfig[] = [
   {
     id: "riset",
@@ -109,6 +90,33 @@ export const ROOMS: RoomConfig[] = [
     desc: "Pusat komando dan orkestrasi kantor: menerima brief CEO, merencanakan workflow, dan mendelegasikan tugas ke kepala departemen.",
     agents: [MANAGER_AGENT_NAME],
   },
+  {
+    id: "hr",
+    name: "HR",
+    color: "#e879f9", // Magenta cerah
+    x: 0,
+    y: 12,
+    desc: "Menangani rekrutmen, penempatan agent, dan permintaan kapasitas tambahan tim.",
+    agents: ["HERA"],
+  },
+  {
+    id: "operasional",
+    name: "OPERASIONAL",
+    color: "#94a3b8", // Slate netral terang
+    x: 12,
+    y: 12,
+    desc: "Menyiapkan meja, peralatan kerja, dan memperluas ruangan untuk penambahan agent baru.",
+    agents: ["HEPHAESTUS"],
+  },
+  {
+    id: "sosmed",
+    name: "SOSIAL MEDIA",
+    color: "#fb923c", // Oranye hangat cerah
+    x: 6,
+    y: 18,
+    desc: "Merencanakan dan mengelola kalender konten media sosial untuk Instagram dan Threads.",
+    agents: ["HERMES"],
+  },
 ];
 
 export const AGENTS: Record<string, AgentConfig> = {
@@ -117,6 +125,24 @@ export const AGENTS: Record<string, AgentConfig> = {
     lead: true,
     tools: ["database"],
     desc: "Menerima brief CEO dan mendelegasikan ke departemen. Logika perencanaan dan orkestrasi otomatis (rencana) sedang dikembangkan.",
+  },
+  HERA: {
+    role: "Kepala HR",
+    lead: true,
+    tools: ["database"],
+    desc: "Menangani permintaan agent tambahan dan penempatan agent; logika otomatis masih dikembangkan.",
+  },
+  HEPHAESTUS: {
+    role: "Kepala Operasional",
+    lead: true,
+    tools: ["database"],
+    desc: "Menyiapkan meja dan memperluas ruangan untuk agent baru.",
+  },
+  HERMES: {
+    role: "Perencana Konten Sosial Media",
+    lead: true,
+    tools: ["panduan gaya", "database"],
+    desc: "Merencanakan kalender konten Instagram dan Threads; logika otomatis sedang dikembangkan, hasil akan melewati persetujuan.",
   },
   ATHENA: {
     role: "Koordinator Riset",
@@ -222,6 +248,7 @@ export const SEAT_BY_AGENT: Record<string, [number, number]> = {
   // Sisi barat (kiri meja)
   HESTIA: [0.6, 2.3],
   THEMIS: [0.6, 3.1],
+  HERMES: [0.6, 3.9],
   // Sisi timur (kanan meja)
   ZEUS: [4.4, 2.3],
   THEIA: [4.4, 3.1],
@@ -230,8 +257,27 @@ export const SEAT_BY_AGENT: Record<string, [number, number]> = {
   ARTEMIS: [2.0, 3.9],
   PLUTUS: [3.0, 3.9],
   LYRA: [3.8, 3.9],
+  HERA: [1.5, 4.5],
   IRIS: [2.5, 4.5],
+  HEPHAESTUS: [3.5, 4.5],
 };
+
+// Titik berdiri overflow deterministik di sepanjang dinding ruang Meeting
+// untuk agent instance dinamis tambahan
+export const OVERFLOW_MEETING_SEATS: [number, number][] = [
+  [0.5, 0.8],
+  [0.5, 1.6],
+  [4.5, 0.8],
+  [4.5, 1.6],
+  [1.5, 0.5],
+  [3.5, 0.5],
+  [0.5, 4.6],
+  [4.5, 4.6],
+];
+
+export function getOverflowSeat(index: number): [number, number] {
+  return OVERFLOW_MEETING_SEATS[index % OVERFLOW_MEETING_SEATS.length];
+}
 
 // Posisi "rumah" tiap agent di ruangannya, dihitung sekali dari konfigurasi statis
 // (sama seperti HOME yang dibangun saat render SVG pada prototipe).
@@ -240,7 +286,16 @@ function computeHomePositions(): Record<string, [number, number]> {
   const sortedRooms = ROOMS.slice().sort((a, b) => a.x + a.y - (b.x + b.y));
   sortedRooms.forEach((room) => {
     room.agents.forEach((name, i) => {
-      const slot = room.id === MANAGER_ROOM_ID ? [2.5, 2.7] : SLOTS[i];
+      const slot =
+        room.id === MANAGER_ROOM_ID
+          ? [2.5, 2.7]
+          : room.id === "hr"
+          ? [1.9, 2.5]
+          : room.id === "operasional"
+          ? [2.5, 2.5]
+          : room.id === "sosmed"
+          ? [2.5, 2.7]
+          : SLOTS[i];
       home[name] = [room.x + slot[0], room.y + slot[1]];
     });
   });

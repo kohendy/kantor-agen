@@ -231,7 +231,7 @@ export function OfficeStage({
         <div className="stage-svg-wrap">
           <svg
             className={`stage${gathered ? " gathered" : ""}`}
-            viewBox="0 0 940 580"
+            viewBox="-190 20 1140 640"
             role="group"
             aria-label="Kantor isometrik dengan ruang departemen dan manager"
           >

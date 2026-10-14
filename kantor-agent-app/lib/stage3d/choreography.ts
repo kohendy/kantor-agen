@@ -394,6 +394,14 @@ export class ChoreographyEngine {
     }
   }
 
+  // Bicara langsung di balon ucapan aktor (digunakan pada alur demo dan koordinasi)
+  public say(actorId: string, text: string, durationMs: number = 2500): void {
+    const actor = this.actors.get(actorId);
+    if (!actor) return;
+    this.showSpeechBubble(actor, text, false);
+    actor.speechTimer = durationMs / 1000;
+  }
+
   // Update loop utama (dipanggil per frame Three.js)
   public update(rawDt: number, reducedMotion: boolean = false): void {
     // Clamp delta time maks 0.1 detik agar tidak teleportasi saat tab kembali aktif

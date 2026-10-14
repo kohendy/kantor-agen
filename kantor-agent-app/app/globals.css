@@ -2132,12 +2132,171 @@ pre.json {
   .brief-modal-body {
     padding: 12px 14px;
   }
-  .fb-item-head {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-  }
+/* ==========================================================================
+   KARTU PERSATUJUAN CEO (DEMO CLIENT-SIDE V1b) & TAG INSTANCE
+   ========================================================================== */
+
+.ceo-approval-demo-card {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 60;
+  width: 320px;
+  max-width: calc(100vw - 36px);
+  background: rgba(15, 14, 36, 0.94);
+  border: 1px solid #f5a623;
+  border-radius: 8px;
+  padding: 12px 14px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7), 0 0 20px rgba(245, 166, 35, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: modalScaleUp 0.2s ease-out;
+  pointer-events: auto;
 }
+
+.ceo-card-badge {
+  font-family: var(--display);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #f5a623;
+  background: rgba(245, 166, 35, 0.15);
+  border: 1px solid rgba(245, 166, 35, 0.35);
+  border-radius: 3px;
+  padding: 2px 6px;
+  width: fit-content;
+  text-transform: uppercase;
+}
+
+.ceo-approval-demo-card h4 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.05em;
+}
+
+.ceo-card-desc {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.ceo-card-desc b {
+  color: var(--fg);
+}
+
+.ceo-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ceo-approve-btn {
+  flex: 1;
+  background: #f5a623;
+  color: #0b0a1a;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.ceo-approve-btn:hover {
+  background: #ffb84d;
+}
+
+.ceo-reject-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.ceo-reject-btn:hover {
+  color: var(--pink);
+  border-color: var(--pink);
+}
+
+.ceo-approved-badge {
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  background: rgba(46, 230, 168, 0.15);
+  border: 1px solid rgba(46, 230, 168, 0.4);
+  border-radius: 4px;
+  padding: 6px 10px;
+  text-align: center;
+  letter-spacing: 0.06em;
+}
+
+.stage-demo-section-title {
+  font-family: var(--display);
+  font-size: 10px;
+  font-weight: 700;
+  color: #38bdf8;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 6px;
+}
+
+.stage-demo-btn.is-highlight {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: #38bdf8;
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.stage-demo-btn.is-highlight:hover {
+  background: #38bdf8;
+  color: #0b0a1a;
+}
+
+.stage-demo-status-pill {
+  font-size: 10px;
+  color: #f5a623;
+  background: rgba(245, 166, 35, 0.12);
+  border: 1px solid rgba(245, 166, 35, 0.25);
+  border-radius: 4px;
+  padding: 3px 6px;
+  line-height: 1.3;
+}
+
+.desk-prep-tag {
+  background: rgba(245, 166, 35, 0.95);
+  color: #0b0a1a;
+  font-weight: 700;
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: var(--display);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.agent-tag3d.is-instance {
+  border-style: dashed;
+}
+
 
 
 

@@ -643,7 +643,7 @@ async function run() {
     // ========================================================
     // PEMBERSIHAN DATA SESUAI ATURAN KERAS:
     // status 'kedaluwarsa'; jangan hapus baris;
-    // pastikan 0 approval pending dan 16 agent idle di akhir.
+    // pastikan 0 approval pending dan 19 agent idle di akhir.
     // ========================================================
     console.log("\n7. Pembersihan data fixture...");
     await supabase
