@@ -12,7 +12,7 @@ import { THEME } from "./theme";
 import { createVoxelHuman } from "./characters/voxelHuman";
 import type { AgentStatus } from "@/lib/types";
 
-export type DeskState = "kosong" | "disiapkan" | "terisi";
+export type DeskState = "kosong" | "disiapkan" | "siap" | "terisi";
 export type ExpansionSide = "west" | "east" | "north" | "south" | "compact";
 
 export interface RoomSlot {
@@ -77,7 +77,7 @@ export function calculateRoomSlotPosition(
       : room.agents?.length || 3;
 
   // Jika slot ekspansi (slotIndex >= baseSlotsCount) dan bay tersedia: tempatkan tersebar di dalam bay
-  if (slotIndex >= baseSlotsCount && bay && (isExpanded || true)) {
+  if (slotIndex >= baseSlotsCount && bay && isExpanded) {
     const bayIndex = slotIndex - baseSlotsCount;
     let wx: number;
     let wz: number;
@@ -105,7 +105,7 @@ export function calculateRoomSlotPosition(
     };
   }
 
-  // Posisi slot standar di dalam ruangan (untuk slotIndex < baseSlotsCount)
+  // Posisi slot standar di dalam ruangan (untuk slotIndex < baseSlotsCount atau ruangan dengan slot kosong)
   let relX: number;
   let relY: number;
 
@@ -123,7 +123,11 @@ export function calculateRoomSlotPosition(
     relY = 3.5;
   } else if (normRoomId === "advertiser") {
     relX = 3.5 + (slotIndex % 3) * 3.0;
-    relY = 4.5;
+    relY = slotIndex >= 3 ? 6.5 : 4.5;
+  } else if (normRoomId === "riset") {
+    // Ruang riset: meja internal ke-4 (slotIndex 3) di sebelah timur METIS
+    relX = 7.5;
+    relY = 5.5;
   } else {
     // Ruang lainnya
     relX = Math.min(room.w - 1.5, Math.max(1.5, 2.5 + (slotIndex % 3) * 2.5));
@@ -148,6 +152,8 @@ export interface DynamicDeskResult {
   monMesh: THREE.Mesh;
   prepGlow?: THREE.Mesh;
   prepTag?: CSS2DObject;
+  slotPos: { rel: [number, number]; world: { x: number; y: number; z: number } };
+  setDeskState: (state: DeskState) => void;
   dispose: () => void;
 }
 
@@ -155,11 +161,12 @@ export interface DynamicDeskResult {
 export function createDeskMesh(
   room: RoomConfig,
   slotIndex: number,
-  deskState: DeskState = "kosong"
+  deskState: DeskState = "kosong",
+  isExpanded: boolean = false
 ): DynamicDeskResult {
   const group = new THREE.Group();
   const roomColorHex = new THREE.Color(room.color).getHex();
-  const slotPos = calculateRoomSlotPosition(room, slotIndex, true);
+  const slotPos = calculateRoomSlotPosition(room, slotIndex, isExpanded);
 
   const deskGeo = new THREE.BoxGeometry(1.8, 0.44, 0.7);
   const deskTopEdgeGeo = new THREE.EdgesGeometry(deskGeo);
@@ -221,6 +228,21 @@ export function createDeskMesh(
     group.add(prepTag);
   }
 
+  const setDeskState = (newState: DeskState) => {
+    if (newState === "terisi" || newState === "siap") {
+      deskMat.color.setHex(new THREE.Color(THEME.furniture.desk).getHex());
+      deskEdgeMat.color.setHex(roomColorHex);
+      deskEdgeMat.opacity = 0.5;
+      monMat.color.setHex(roomColorHex);
+      monMat.emissive.setHex(roomColorHex);
+      monMat.emissiveIntensity = 0.4;
+      if (prepGlow) prepGlow.visible = false;
+      if (prepTag && prepTag.element.parentNode) {
+        prepTag.element.parentNode.removeChild(prepTag.element);
+      }
+    }
+  };
+
   const dispose = () => {
     deskGeo.dispose();
     deskTopEdgeGeo.dispose();
@@ -244,11 +266,14 @@ export function createDeskMesh(
     monMesh,
     prepGlow,
     prepTag,
+    slotPos,
+    setDeskState,
     dispose,
   };
 }
 
 export interface DynamicAgentResult {
+  id: string;
   group: THREE.Group;
   bodyMesh: THREE.Mesh;
   headGroup: THREE.Group;
@@ -310,7 +335,10 @@ export function createAgentCharacter(config: {
     isInstance: true,
   });
 
+  voxelHuman.group.name = config.instanceId;
+
   return {
+    id: config.instanceId,
     group: voxelHuman.group,
     bodyMesh: voxelHuman.bodyMesh,
     headGroup: voxelHuman.headGroup,

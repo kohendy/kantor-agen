@@ -76,6 +76,10 @@ export class ChoreographyEngine {
     this.actors.delete(id);
   }
 
+  public getActorIds(): string[] {
+    return Array.from(this.actors.keys());
+  }
+
   public getActor(id: string): ActorRecord | undefined {
     return this.actors.get(id);
   }
@@ -284,9 +288,7 @@ export class ChoreographyEngine {
     for (const [name, actor] of this.actors.entries()) {
       const seatRel = seatByAgent[name];
       if (!seatRel) {
-        throw new Error(
-          `[choreography] Kursi rapat tidak ditemukan untuk agen "${name}" di seatByAgent`
-        );
+        continue;
       }
       const targetSeatWorld = {
         x: meetingRoomPos.x + seatRel[0] + OFFSET_X,
