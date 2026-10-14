@@ -50,6 +50,16 @@ export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
     ...configToWorld(11.5, 11.5), // world (+3.0, +6.0)
     neighbors: ["V2_M", "V2_S", "H2_M", "H2_E"],
   },
+  "I_V1_H3": {
+    id: "I_V1_H3",
+    ...configToWorld(5.5, 17.5), // world (-3.0, +12.0)
+    neighbors: ["V1_S", "H3_W", "H3_M"],
+  },
+  "I_V2_H3": {
+    id: "I_V2_H3",
+    ...configToWorld(11.5, 17.5), // world (+3.0, +12.0)
+    neighbors: ["V2_S", "H3_M", "H3_E"],
+  },
 
   // --- SEGMEN KORIDOR VERTIKAL (V1: x=5.5 -> world x=-3.0) ---
   "V1_N": {
@@ -65,7 +75,7 @@ export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
   "V1_S": {
     id: "V1_S",
     ...configToWorld(5.5, 14.5), // (-3.0, +9.0)
-    neighbors: ["I_V1_H2"],
+    neighbors: ["I_V1_H2", "I_V1_H3", "door_hr"],
   },
 
   // --- SEGMEN KORIDOR VERTIKAL (V2: x=11.5 -> world x=+3.0) ---
@@ -82,7 +92,7 @@ export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
   "V2_S": {
     id: "V2_S",
     ...configToWorld(11.5, 14.5), // (+3.0, +9.0)
-    neighbors: ["I_V2_H2"],
+    neighbors: ["I_V2_H2", "I_V2_H3", "door_operasional"],
   },
 
   // --- SEGMEN KORIDOR HORIZONTAL (H1: y=5.5 -> world z=0.0) ---
@@ -117,6 +127,92 @@ export const WALKWAY_GRAPH: Record<string, WaypointNode> = {
     id: "H2_E",
     ...configToWorld(14.5, 11.5), // (+6.0, +6.0)
     neighbors: ["I_V2_H2"],
+  },
+
+  // --- SEGMEN KORIDOR HORIZONTAL (H3: y=17.5 -> world z=+12.0) ---
+  "H3_W": {
+    id: "H3_W",
+    ...configToWorld(2.5, 17.5), // (-6.0, +12.0)
+    neighbors: ["I_V1_H3"],
+  },
+  "H3_M": {
+    id: "H3_M",
+    ...configToWorld(8.5, 17.5), // (0.0, +12.0)
+    neighbors: ["I_V1_H3", "I_V2_H3", "door_sosmed"],
+  },
+  "H3_E": {
+    id: "H3_E",
+    ...configToWorld(14.5, 17.5), // (+6.0, +12.0)
+    neighbors: ["I_V2_H3"],
+  },
+
+  // --- RUANG HR (x:0, y:12) - Kepala Departemen: HERA ---
+  "door_hr": {
+    id: "door_hr",
+    ...configToWorld(5.0, 14.5), // (-3.5, +9.0) - Pintu timur menghadap V1_S
+    roomId: "hr",
+    isDoor: true,
+    neighbors: ["V1_S", "aisle_hr"],
+  },
+  "aisle_hr": {
+    id: "aisle_hr",
+    ...configToWorld(3.2, 14.5), // (-5.3, +9.0)
+    roomId: "hr",
+    isAisle: true,
+    neighbors: ["door_hr", "desk_hr"],
+  },
+  "desk_hr": {
+    id: "desk_hr",
+    ...configToWorld(1.9, 14.5), // (-6.6, +9.0) - Meja resepsionis HERA
+    roomId: "hr",
+    isDesk: true,
+    neighbors: ["aisle_hr"],
+  },
+
+  // --- RUANG OPERASIONAL (x:12, y:12) - Kepala Departemen: HEPHAESTUS ---
+  "door_operasional": {
+    id: "door_operasional",
+    ...configToWorld(12.0, 14.5), // (+3.5, +9.0) - Pintu barat menghadap V2_S
+    roomId: "operasional",
+    isDoor: true,
+    neighbors: ["V2_S", "aisle_operasional"],
+  },
+  "aisle_operasional": {
+    id: "aisle_operasional",
+    ...configToWorld(12.8, 14.5), // (+4.3, +9.0)
+    roomId: "operasional",
+    isAisle: true,
+    neighbors: ["door_operasional", "desk_operasional"],
+  },
+  "desk_operasional": {
+    id: "desk_operasional",
+    ...configToWorld(14.5, 14.5), // (+6.0, +9.0) - Meja HEPHAESTUS
+    roomId: "operasional",
+    isDesk: true,
+    neighbors: ["aisle_operasional"],
+  },
+
+  // --- RUANG SOSIAL MEDIA (x:6, y:18) - Kepala Departemen: HERMES ---
+  "door_sosmed": {
+    id: "door_sosmed",
+    ...configToWorld(8.5, 18.0), // (0.0, +12.5) - Pintu utara menghadap H3_M
+    roomId: "sosmed",
+    isDoor: true,
+    neighbors: ["H3_M", "aisle_sosmed"],
+  },
+  "aisle_sosmed": {
+    id: "aisle_sosmed",
+    ...configToWorld(8.5, 19.3), // (0.0, +13.8)
+    roomId: "sosmed",
+    isAisle: true,
+    neighbors: ["door_sosmed", "desk_sosmed"],
+  },
+  "desk_sosmed": {
+    id: "desk_sosmed",
+    ...configToWorld(8.5, 20.7), // (0.0, +15.2) - Meja HERMES
+    roomId: "sosmed",
+    isDesk: true,
+    neighbors: ["aisle_sosmed"],
   },
 
   // --- RUANG MANAGER (x:6, y:12) ---
@@ -318,6 +414,9 @@ export const ROOM_NODE_MAP: Record<string, { doorId: string; deskId: string }> =
   ads: { doorId: "door_ads", deskId: "desk_ads" },
   creative: { doorId: "door_creative", deskId: "desk_creative" },
   meeting: { doorId: "door_meeting_south", deskId: "aisle_meeting_south" },
+  hr: { doorId: "door_hr", deskId: "desk_hr" },
+  operasional: { doorId: "door_operasional", deskId: "desk_operasional" },
+  sosmed: { doorId: "door_sosmed", deskId: "desk_sosmed" },
 };
 
 export const ROOM_AISLE_MAP: Record<string, { aisleId: string; doorId: string }> = {
@@ -327,6 +426,9 @@ export const ROOM_AISLE_MAP: Record<string, { aisleId: string; doorId: string }>
   lp: { aisleId: "aisle_lp", doorId: "door_lp" },
   ads: { aisleId: "aisle_ads", doorId: "door_ads" },
   creative: { aisleId: "aisle_creative", doorId: "door_creative" },
+  hr: { aisleId: "aisle_hr", doorId: "door_hr" },
+  operasional: { aisleId: "aisle_operasional", doorId: "door_operasional" },
+  sosmed: { aisleId: "aisle_sosmed", doorId: "door_sosmed" },
 };
 
 export const MEETING_AISLE_IDS = [
@@ -375,7 +477,11 @@ export function findNearestNode(x: number, z: number, allowedRoomId?: string): s
 }
 
 // Algoritma Dijkstra / BFS untuk mencari jalur terpendek
-export function findPathNodes(startNodeId: string, endNodeId: string): WaypointNode[] {
+export function findPathNodes(
+  startNodeId: string,
+  endNodeId: string,
+  allowedRoomIds: string[] = []
+): WaypointNode[] {
   if (startNodeId === endNodeId) {
     return [WALKWAY_GRAPH[startNodeId]].filter(Boolean);
   }
@@ -384,7 +490,11 @@ export function findPathNodes(startNodeId: string, endNodeId: string): WaypointN
   const prev: Record<string, string | null> = {};
   const unvisited = new Set<string>();
 
-  for (const id of Object.keys(WALKWAY_GRAPH)) {
+  for (const [id, node] of Object.entries(WALKWAY_GRAPH)) {
+    // Lewati node yang berada di dalam ruangan lain yang tidak diizinkan
+    if (node.roomId && !allowedRoomIds.includes(node.roomId)) {
+      continue;
+    }
     dist[id] = Infinity;
     prev[id] = null;
     unvisited.add(id);
@@ -438,24 +548,34 @@ export function findPathNodes(startNodeId: string, endNodeId: string): WaypointN
 // Fungsi publik utama findPath: menerima roomId atau titik koordinat
 export function findPath(
   from: string | { x: number; z: number },
-  to: string | { x: number; z: number }
+  to: string | { x: number; z: number },
+  customAllowedRoomIds?: string[]
 ): THREE.Vector3[] {
   let startId: string;
   let endId: string;
+  let fromRoom: string | undefined;
+  let toRoom: string | undefined;
 
   if (typeof from === "string") {
+    fromRoom = ROOM_NODE_MAP[from] ? from : WALKWAY_GRAPH[from]?.roomId;
     startId = ROOM_NODE_MAP[from]?.deskId ?? ROOM_NODE_MAP[from]?.doorId ?? from;
   } else {
-    startId = findNearestNode(from.x, from.z);
+    fromRoom = getRoomAtPosition(from.x, from.z) ?? undefined;
+    startId = findNearestNode(from.x, from.z, fromRoom);
   }
 
   if (typeof to === "string") {
+    toRoom = ROOM_NODE_MAP[to] ? to : WALKWAY_GRAPH[to]?.roomId;
     endId = ROOM_NODE_MAP[to]?.deskId ?? ROOM_NODE_MAP[to]?.doorId ?? to;
   } else {
-    endId = findNearestNode(to.x, to.z);
+    toRoom = getRoomAtPosition(to.x, to.z) ?? undefined;
+    endId = findNearestNode(to.x, to.z, toRoom);
   }
 
-  const nodes = findPathNodes(startId, endId);
+  const allowed =
+    customAllowedRoomIds ??
+    ([fromRoom, toRoom].filter(Boolean) as string[]);
+  const nodes = findPathNodes(startId, endId, allowed);
   return nodes.map((n) => new THREE.Vector3(n.x, 0, n.z));
 }
 
@@ -513,6 +633,9 @@ export const ROOM_BOUNDS_MAP: Record<
   ads: { minX: 6 + OFFSET_X + 0.08, maxX: 11 + OFFSET_X - 0.08, minZ: 6 + OFFSET_Z + 0.08, maxZ: 11 + OFFSET_Z - 0.08 },
   creative: { minX: 12 + OFFSET_X + 0.08, maxX: 17 + OFFSET_X - 0.08, minZ: 6 + OFFSET_Z + 0.08, maxZ: 11 + OFFSET_Z - 0.08 },
   manager: { minX: 6 + OFFSET_X + 0.08, maxX: 11 + OFFSET_X - 0.08, minZ: 12 + OFFSET_Z + 0.08, maxZ: 17 + OFFSET_Z - 0.08 },
+  hr: { minX: 0 + OFFSET_X + 0.08, maxX: 5 + OFFSET_X - 0.08, minZ: 12 + OFFSET_Z + 0.08, maxZ: 17 + OFFSET_Z - 0.08 },
+  operasional: { minX: 12 + OFFSET_X + 0.08, maxX: 17 + OFFSET_X - 0.08, minZ: 12 + OFFSET_Z + 0.08, maxZ: 17 + OFFSET_Z - 0.08 },
+  sosmed: { minX: 6 + OFFSET_X + 0.08, maxX: 11 + OFFSET_X - 0.08, minZ: 18 + OFFSET_Z + 0.08, maxZ: 23 + OFFSET_Z - 0.08 },
 };
 
 // Cek apakah segmen garis p1 -> p2 memotong interior ruangan tertentu (metode Liang-Barsky)
@@ -683,7 +806,8 @@ export function getMeetingPathForAgent(
   }
 
   // Dijkstra dari startGraphNode ke lorong meeting tujuan
-  const nodes = findPathNodes(startGraphNode, targetAisleId);
+  const allowed = ([currentRoom, "meeting"].filter(Boolean) as string[]);
+  const nodes = findPathNodes(startGraphNode, targetAisleId, allowed);
 
   // Lewati koridor dengan lane offset halus (±0.12) agar antar agen tidak bertumpuk
   const laneOffset = ((agentIndex % 3) - 1) * 0.12;
@@ -760,7 +884,8 @@ export function getReturnPathForAgent(
   }
 
   // Dijkstra dari startGraphNode ke lorong ruangan rumah tujuan
-  const nodes = findPathNodes(startGraphNode, homeNav.aisleId);
+  const allowed = ([currentRoom, homeRoomId].filter(Boolean) as string[]);
+  const nodes = findPathNodes(startGraphNode, homeNav.aisleId, allowed);
 
   // Lewati koridor dengan lane offset halus
   const laneOffset = ((agentIndex % 3) - 1) * 0.12;

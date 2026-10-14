@@ -34,6 +34,9 @@ const ROOM_BOUNDS = {
   ads: { minX: 6 - 8.5 + 0.1, maxX: 11 - 8.5 - 0.1, minZ: 6 - 5.5 + 0.1, maxZ: 11 - 5.5 - 0.1 },
   creative: { minX: 12 - 8.5 + 0.1, maxX: 17 - 8.5 - 0.1, minZ: 6 - 5.5 + 0.1, maxZ: 11 - 5.5 - 0.1 },
   manager: { minX: 6 - 8.5 + 0.1, maxX: 11 - 8.5 - 0.1, minZ: 12 - 5.5 + 0.1, maxZ: 17 - 5.5 - 0.1 },
+  hr: { minX: 0 - 8.5 + 0.1, maxX: 5 - 8.5 - 0.1, minZ: 12 - 5.5 + 0.1, maxZ: 17 - 5.5 - 0.1 },
+  operasional: { minX: 12 - 8.5 + 0.1, maxX: 17 - 8.5 - 0.1, minZ: 12 - 5.5 + 0.1, maxZ: 17 - 5.5 - 0.1 },
+  sosmed: { minX: 6 - 8.5 + 0.1, maxX: 11 - 8.5 - 0.1, minZ: 18 - 5.5 + 0.1, maxZ: 23 - 5.5 - 0.1 },
 };
 
 function isInsideRoom(x, z, roomId) {
@@ -54,7 +57,7 @@ function getUnallowedRoomViolation(x, z, allowedRooms) {
 
 async function run() {
   console.log("===============================================================");
-  console.log("=== STARTING FULL STAGE 3D V1a TEST SUITE (KASUS 1 - 11)   ===");
+  console.log("=== STARTING FULL STAGE 3D V1b TEST SUITE (KASUS 1 - 12)   ===");
   console.log("===============================================================");
 
   // 0a. Buat user E2E sementara lewat admin API
@@ -139,7 +142,7 @@ async function run() {
     await page.click('button[type="submit"]');
 
     await page.waitForURL((url) => url.pathname === "/", { timeout: 20000 });
-    await page.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "load" });
+    await page.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded" });
     await page.waitForSelector("canvas.stage-3d-canvas", { timeout: 15000 });
     await page.waitForTimeout(1500);
     console.log("   ✓ Dashboard & 3D Stage (V1a) berhasil dimuat.");
@@ -166,11 +169,11 @@ async function run() {
     // KASUS 1: TATA LETAK & RUANG MANAGER (1280px, 768px, 390px, Reset View, SVG Fallback)
     // =========================================================================
     console.log("\n--- KASUS 1: Tata Letak & Ruang Manager ---");
-    // Verifikasi total 16 agent di DOM tag 3D
+    // Verifikasi total 19 agent di DOM tag 3D
     const agentTagsCount = await page.locator(".agent-tag3d").count();
-    console.log(`   Jumlah agent tag di scene 3D: ${agentTagsCount} (harus 16)`);
-    if (agentTagsCount !== 16) {
-      throw new Error(`Jumlah agent tag tidak 16! Ditemukan: ${agentTagsCount}`);
+    console.log(`   Jumlah agent tag di scene 3D: ${agentTagsCount} (harus 19)`);
+    if (agentTagsCount !== 19) {
+      throw new Error(`Jumlah agent tag tidak 19! Ditemukan: ${agentTagsCount}`);
     }
 
     // Verifikasi ATLAS duduk di meja ruang Manager dan menghadap meja (+Z)
@@ -214,11 +217,11 @@ async function run() {
 
     // Full Frame Mode toggle test
     const fullFrameBtn = page.locator("button.stage-fullscreen-btn");
-    await fullFrameBtn.click();
+    await fullFrameBtn.click({ force: true });
     await page.waitForSelector(".dash-grid.is-full-frame", { timeout: 5000 });
     await page.waitForTimeout(500);
     await page.screenshot({ path: "verification_artifacts/layout_fullframe.png" });
-    await fullFrameBtn.click();
+    await fullFrameBtn.click({ force: true });
     await page.waitForTimeout(600);
 
     // Reset View Button test
@@ -229,20 +232,22 @@ async function run() {
     console.log("   Posisi kamera setelah reset:", resetState.cameraPos);
 
     // Fallback SVG Test
-    const svgContext = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      storageState: await context.storageState(),
-    });
-    const svgPage = await svgContext.newPage();
+    console.log("   Menguji Fallback SVG...");
+    const svgPage = await context.newPage();
+    svgPage.on("console", (m) => console.log("   [SVG Page Console]", m.text()));
+    svgPage.on("pageerror", (e) => console.error("   [SVG Page Error]", e));
+    await svgPage.setViewportSize({ width: 1280, height: 800 });
     await svgPage.addInitScript(() => {
       window.__FORCE_WEBGL_FALLBACK__ = true;
     });
-    await svgPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "load", timeout: 45000 });
-    await svgPage.waitForSelector("svg.stage", { timeout: 30000 });
+    console.log("   Navigasi ke svgPage...");
+    await svgPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded", timeout: 20000 });
+    console.log("   svgPage URL saat ini:", svgPage.url());
+    await svgPage.waitForSelector("svg.stage", { timeout: 40000 });
     const svgAgentCount = await svgPage.locator("svg.stage g#agents g").count();
     console.log(`   Fallback SVG render: ${svgAgentCount} karakter terdeteksi`);
     await svgPage.screenshot({ path: "verification_artifacts/layout_fallback_svg.png" });
-    await svgContext.close();
+    await svgPage.close();
 
     testReport.kasus1 = {
       agentCount: agentTagsCount,
@@ -483,7 +488,7 @@ async function run() {
       if (m.type() === "error") rmErrors.push(m.text());
     });
 
-    await rmPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "load", timeout: 60000 });
+    await rmPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded", timeout: 30000 });
     await rmPage.waitForSelector("canvas.stage-3d-canvas", { timeout: 60000 });
     await rmPage.waitForTimeout(1000);
 
@@ -1449,7 +1454,7 @@ async function run() {
       const names = [
         "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
         "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-        "THEIA", "LYRA", "IRIS", "ATLAS"
+        "THEIA", "LYRA", "IRIS", "ATLAS", "HERA", "HEPHAESTUS", "HERMES"
       ];
       const missing = [];
       for (const n of names) {
@@ -1457,12 +1462,144 @@ async function run() {
       }
       return { total: names.length, missing };
     });
-    console.log(`   Entri SEAT_BY_AGENT untuk semua agen: ${seatConfigCheck.missing.length === 0 ? "LENGKAP (16/16) ✓" : "KURANG: " + seatConfigCheck.missing.join(", ")}`);
+    console.log(`   Entri SEAT_BY_AGENT untuk semua agen: ${seatConfigCheck.missing.length === 0 ? "LENGKAP (19/19) ✓" : "KURANG: " + seatConfigCheck.missing.join(", ")}`);
     if (seatConfigCheck.missing.length > 0) {
       throw new Error(`Ada agen tanpa entri kursi di SEAT_BY_AGENT: ${seatConfigCheck.missing.join(", ")}`);
     }
     testReport.seat_config_check = seatConfigCheck;
     console.log("   ✓ PENGECEKAN KONFIGURASI KURSI LOLOS.");
+
+    // =========================================================================
+    // KASUS 12: SIMULASI PENAMBAHAN INSTANCE AGEN (7 LANGKAH SISI KLIEN V1b)
+    // =========================================================================
+    console.log("\n--- KASUS 12: Simulasi Instance Tambahan (7 Langkah, Meja Baru, Persetujuan CEO, dan Reset) ---");
+
+    const preDemoState = await page.evaluate(() => {
+      return {
+        sceneUuid: window.__STAGE_3D__.getSceneUuid(),
+        agentCount: document.querySelectorAll(".agent-tag3d").length,
+      };
+    });
+    console.log(`   Scene UUID awal: ${preDemoState.sceneUuid}`);
+    console.log(`   Jumlah agent tag awal: ${preDemoState.agentCount}`);
+
+    // 1. Mulai demo instance tanpa autoApprove (untuk memverifikasi kartu approval CEO)
+    console.log("   1. Memulai alur demo instance request (Step 1-3)...");
+    await page.evaluate(() => {
+      window.__STAGE_3D__.startInstanceDemo({ autoApprove: false });
+    });
+
+    // Tunggu sampai Step 3 (Kartu Approval CEO muncul di layar)
+    await page.waitForSelector(".ceo-approval-demo-card", { timeout: 10000 });
+    const demoStep3 = await page.evaluate(() => {
+      return window.__STAGE_3D__.getInstanceDemoState();
+    });
+    console.log(`   ✓ Langkah 3 tercapai: Step = ${demoStep3.step}, Kartu CEO Muncul = ${demoStep3.showApprovalCard}`);
+    if (demoStep3.step !== 3 || !demoStep3.showApprovalCard) {
+      throw new Error(`Demo gagal berhenti di Step 3 dengan kartu CEO! State: ${JSON.stringify(demoStep3)}`);
+    }
+
+    // Screenshot kartu approval CEO
+    await page.screenshot({ path: "verification_artifacts/instance_demo_ceo_card.png" });
+
+    // 2. Klik tombol persetujuan CEO
+    console.log("   2. Menyetujui permohonan via tombol CEO Approval...");
+    const approveBtn = page.locator(".ceo-approve-btn");
+    await approveBtn.click();
+
+    // Tunggu sampai Step 5 (Meja baru sedang disiapkan oleh HEPHAESTUS)
+    await page.waitForFunction(() => {
+      const state = window.__STAGE_3D__.getInstanceDemoState();
+      return state.step >= 5 && state.dynamicDesksCount >= 1;
+    }, { timeout: 10000 });
+    console.log("   ✓ Langkah 5 tercapai: Meja dinamis ditambahkan di Ruang Advertisers.");
+
+    // Tunggu sampai Step 6-7 (Agent dinamis di-spawn dan aktif)
+    await page.waitForFunction(() => {
+      const state = window.__STAGE_3D__.getInstanceDemoState();
+      return state.step >= 6 && state.dynamicAgentsCount >= 1;
+    }, { timeout: 10000 });
+
+    const activeDemoState = await page.evaluate(() => {
+      const state = window.__STAGE_3D__.getInstanceDemoState();
+      const instanceTag = document.querySelector(".agent-tag3d.is-instance");
+      const currentSceneUuid = window.__STAGE_3D__.getSceneUuid();
+      return {
+        ...state,
+        instanceTagFound: !!instanceTag,
+        instanceTagText: instanceTag ? instanceTag.textContent : null,
+        currentSceneUuid,
+      };
+    });
+
+    console.log(`   ✓ Langkah 6-7 tercapai: Agent ${activeDemoState.instanceTagText} aktif!`);
+    console.log(`   Dynamic desks count: ${activeDemoState.dynamicDesksCount}`);
+    console.log(`   Dynamic agents count: ${activeDemoState.dynamicAgentsCount}`);
+
+    // Pastikan Scene UUID TIDAK PERNAH BERUBAH (Scene tidak di-rebuild)
+    if (activeDemoState.currentSceneUuid !== preDemoState.sceneUuid) {
+      throw new Error("Scene Three.js di-rebuild saat penambahan dynamic instance! Scene UUID berubah!");
+    }
+    console.log("   ✓ Integritas Three.js terjaga: Scene UUID 100% IDENTIK (tanpa rebuild scene).");
+
+    // Screenshot saat instance aktif
+    await page.screenshot({ path: "verification_artifacts/instance_demo_active.png" });
+
+    // 3. Uji Klik pada Dynamic Agent Tag untuk membuka detail jobdesc
+    console.log("   3. Menguji klik seleksi pada agent instance...");
+    const instanceTagLocator = page.locator(".agent-tag3d.is-instance");
+    await instanceTagLocator.click({ force: true });
+    await page.waitForTimeout(400);
+
+    // 4. Uji Antrean (Queueing): trigger demo lagi saat sudah berjalan
+    console.log("   4. Menguji queueing permintaan demo...");
+    await page.evaluate(() => {
+      window.__STAGE_3D__.startInstanceDemo();
+    });
+
+    // 5. Uji Reset Demo Instance
+    console.log("   5. Menguji Reset Demo Instance (pembersihan memori & DOM)...");
+    await page.evaluate(() => {
+      window.__STAGE_3D__.resetInstanceDemo();
+    });
+    await page.waitForTimeout(500);
+
+    const postResetState = await page.evaluate(() => {
+      const state = window.__STAGE_3D__.getInstanceDemoState();
+      const currentSceneUuid = window.__STAGE_3D__.getSceneUuid();
+      const instanceTags = document.querySelectorAll(".agent-tag3d.is-instance").length;
+      const prepTags = document.querySelectorAll(".desk-prep-tag").length;
+      return {
+        ...state,
+        currentSceneUuid,
+        instanceTags,
+        prepTags,
+      };
+    });
+
+    console.log(`   Desks setelah reset: ${postResetState.dynamicDesksCount} (harus 0)`);
+    console.log(`   Agents setelah reset: ${postResetState.dynamicAgentsCount} (harus 0)`);
+    console.log(`   Instance tags di DOM: ${postResetState.instanceTags} (harus 0)`);
+
+    if (postResetState.dynamicDesksCount !== 0 || postResetState.dynamicAgentsCount !== 0 || postResetState.instanceTags !== 0) {
+      throw new Error(`Reset demo gagal membersihkan semua entitas dinamis! State: ${JSON.stringify(postResetState)}`);
+    }
+
+    if (postResetState.currentSceneUuid !== preDemoState.sceneUuid) {
+      throw new Error("Scene Three.js berubah setelah reset demo!");
+    }
+    console.log("   ✓ Reset demo berhasil: Memori & entitas dinamis dibersihkan, scene UUID tetap identik.");
+
+    testReport.kasus12 = {
+      preDemoState,
+      activeDemoState,
+      postResetState,
+      screenshots: [
+        "instance_demo_ceo_card.png",
+        "instance_demo_active.png",
+      ],
+    };
+    console.log("   ✓ KASUS 12 LOLOS SEMPURNA.");
 
     // =========================================================================
     // KASUS 11: VERIFIKASI AKHIR DATABASE & INTEGRITAS SISTEM
@@ -1482,12 +1619,12 @@ async function run() {
 
     const nonIdleList = (finalAgents || []).filter((a) => a.status !== "idle");
 
-    console.log(`   Jumlah agent di database: ${finalAgents?.length} (harus 16)`);
+    console.log(`   Jumlah agent di database: ${finalAgents?.length} (harus 19)`);
     console.log(`   Jumlah agent idle: ${(finalAgents?.length || 0) - nonIdleList.length}`);
     console.log(`   Jumlah approval pending tersisa: ${finalPendingApprovals}`);
 
-    if (finalAgents?.length !== 16) {
-      throw new Error(`Total agent di database bukan 16! Ditemukan: ${finalAgents?.length}`);
+    if (finalAgents?.length !== 19) {
+      throw new Error(`Total agent di database bukan 19! Ditemukan: ${finalAgents?.length}`);
     }
     if (nonIdleList.length > 0) {
       throw new Error(`Ada agent yang tidak idle di database: ${JSON.stringify(nonIdleList)}`);
@@ -1504,7 +1641,7 @@ async function run() {
     console.log("   ✓ KASUS 11 LOLOS SEMPURNA.");
 
     console.log("\n===============================================================");
-    console.log("=== SEMUA 11 KASUS PENGUJIAN V1a BERHASIL LOLOS LENGKAP!    ===");
+    console.log("=== SEMUA 12 KASUS PENGUJIAN V1b BERHASIL LOLOS LENGKAP!    ===");
     console.log("===============================================================\n");
     console.log(JSON.stringify(testReport, null, 2));
 
