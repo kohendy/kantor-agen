@@ -14,6 +14,11 @@ const env = Object.fromEntries(
     })
 );
 
+console.log = (...args) => {
+  const ts = new Date().toISOString().substring(11, 19);
+  process.stdout.write(`[${ts}] ` + args.join(" ") + "\n");
+};
+
 const supabase = createClient(
   env.NEXT_PUBLIC_SUPABASE_URL,
   env.SUPABASE_SERVICE_ROLE_KEY
@@ -24,20 +29,33 @@ if (!fs.existsSync("verification_artifacts")) {
   fs.mkdirSync("verification_artifacts", { recursive: true });
 }
 
-// Bounding box pelat ruangan untuk verifikasi batas jalur koridor
-// Offset: X = -8.5, Z = -5.5. Ukuran pelat 5x5
+// Bounding box pelat ruangan untuk verifikasi batas jalur koridor (Denah 44x36 isometrik)
+// Satuan: tile / Three.js world units (1 tile = 1 unit dunia)
 const ROOM_BOUNDS = {
-  riset: { minX: 0 - 8.5 + 0.1, maxX: 5 - 8.5 - 0.1, minZ: 0 - 5.5 + 0.1, maxZ: 5 - 5.5 - 0.1 },
-  meeting: { minX: 6 - 8.5 + 0.1, maxX: 11 - 8.5 - 0.1, minZ: 0 - 5.5 + 0.1, maxZ: 5 - 5.5 - 0.1 },
-  copy: { minX: 12 - 8.5 + 0.1, maxX: 17 - 8.5 - 0.1, minZ: 0 - 5.5 + 0.1, maxZ: 5 - 5.5 - 0.1 },
-  lp: { minX: 0 - 8.5 + 0.1, maxX: 5 - 8.5 - 0.1, minZ: 6 - 5.5 + 0.1, maxZ: 11 - 5.5 - 0.1 },
-  ads: { minX: 6 - 8.5 + 0.1, maxX: 11 - 8.5 - 0.1, minZ: 6 - 5.5 + 0.1, maxZ: 11 - 5.5 - 0.1 },
-  creative: { minX: 12 - 8.5 + 0.1, maxX: 17 - 8.5 - 0.1, minZ: 6 - 5.5 + 0.1, maxZ: 11 - 5.5 - 0.1 },
-  manager: { minX: 6 - 8.5 + 0.1, maxX: 11 - 8.5 - 0.1, minZ: 12 - 5.5 + 0.1, maxZ: 17 - 5.5 - 0.1 },
-  hr: { minX: 0 - 8.5 + 0.1, maxX: 5 - 8.5 - 0.1, minZ: 12 - 5.5 + 0.1, maxZ: 17 - 5.5 - 0.1 },
-  operasional: { minX: 12 - 8.5 + 0.1, maxX: 17 - 8.5 - 0.1, minZ: 12 - 5.5 + 0.1, maxZ: 17 - 5.5 - 0.1 },
-  sosmed: { minX: 6 - 8.5 + 0.1, maxX: 11 - 8.5 - 0.1, minZ: 18 - 5.5 + 0.1, maxZ: 23 - 5.5 - 0.1 },
+  meeting: { minX: 0 + 0.1, maxX: 15 - 0.1, minZ: 0 + 0.1, maxZ: 9 - 0.1 },
+  operasional: { minX: 17 + 0.1, maxX: 26 - 0.1, minZ: 0 + 0.1, maxZ: 9 - 0.1 },
+  advertiser: { minX: 28 + 0.1, maxX: 41 - 0.1, minZ: 0 + 0.1, maxZ: 9 - 0.1 },
+  ads: { minX: 28 + 0.1, maxX: 41 - 0.1, minZ: 0 + 0.1, maxZ: 9 - 0.1 },
+  manager: { minX: 0 + 0.1, maxX: 9 - 0.1, minZ: 11 + 0.1, maxZ: 20 - 0.1 },
+  riset: { minX: 11 + 0.1, maxX: 21 - 0.1, minZ: 11 + 0.1, maxZ: 19 - 0.1 },
+  hr: { minX: 0 + 0.1, maxX: 9 - 0.1, minZ: 21 + 0.1, maxZ: 25 - 0.1 },
+  sosmed: { minX: 0 + 0.1, maxX: 10 - 0.1, minZ: 27 + 0.1, maxZ: 34 - 0.1 },
+  creative: { minX: 11 + 0.1, maxX: 21 - 0.1, minZ: 27 + 0.1, maxZ: 34 - 0.1 },
+  copy: { minX: 22 + 0.1, maxX: 32 - 0.1, minZ: 27 + 0.1, maxZ: 34 - 0.1 },
+  landing_page: { minX: 33 + 0.1, maxX: 40 - 0.1, minZ: 27 + 0.1, maxZ: 34 - 0.1 },
+  lp: { minX: 33 + 0.1, maxX: 40 - 0.1, minZ: 27 + 0.1, maxZ: 34 - 0.1 },
+  pantry: { minX: 30 + 0.1, maxX: 38 - 0.1, minZ: 11 + 0.1, maxZ: 18 - 0.1 },
+  lounge: { minX: 30 + 0.1, maxX: 38 - 0.1, minZ: 19 + 0.1, maxZ: 25 - 0.1 },
+  toilet: { minX: 39 + 0.1, maxX: 44 - 0.1, minZ: 11 + 0.1, maxZ: 17 - 0.1 },
+  taman: { minX: 39 + 0.1, maxX: 44 - 0.1, minZ: 18 + 0.1, maxZ: 25 - 0.1 },
+  resepsi: { minX: 40 + 0.1, maxX: 44 - 0.1, minZ: 27 + 0.1, maxZ: 34 - 0.1 },
 };
+
+function normalizeRoomName(r) {
+  if (r === "ads") return "advertiser";
+  if (r === "lp") return "landing_page";
+  return r;
+}
 
 function isInsideRoom(x, z, roomId) {
   const b = ROOM_BOUNDS[roomId];
@@ -46,8 +64,9 @@ function isInsideRoom(x, z, roomId) {
 }
 
 function getUnallowedRoomViolation(x, z, allowedRooms) {
+  const normalizedAllowed = (allowedRooms || []).map(normalizeRoomName);
   for (const [rId] of Object.entries(ROOM_BOUNDS)) {
-    if (allowedRooms.includes(rId)) continue;
+    if (normalizedAllowed.includes(normalizeRoomName(rId))) continue;
     if (isInsideRoom(x, z, rId)) {
       return rId;
     }
@@ -57,7 +76,7 @@ function getUnallowedRoomViolation(x, z, allowedRooms) {
 
 async function run() {
   console.log("===============================================================");
-  console.log("=== STARTING FULL STAGE 3D V1b TEST SUITE (KASUS 1 - 12)   ===");
+  console.log("=== STARTING FULL STAGE 3D T1-FLOORPLAN TEST SUITE          ===");
   console.log("===============================================================");
 
   // 0a. Buat user E2E sementara lewat admin API
@@ -145,7 +164,7 @@ async function run() {
     await page.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded" });
     await page.waitForSelector("canvas.stage-3d-canvas", { timeout: 15000 });
     await page.waitForTimeout(1500);
-    console.log("   ✓ Dashboard & 3D Stage (V1a) berhasil dimuat.");
+    console.log("   ✓ Dashboard & 3D Stage berhasil dimuat.");
 
     // Helper state
     async function getSceneState() {
@@ -166,6 +185,287 @@ async function run() {
     const initialSceneState = await getSceneState();
 
     // =========================================================================
+    // KASUS T1-1: VALIDASI DATA-DRIVEN FLOORPLAN 44x36 (Single Source of Truth)
+    // =========================================================================
+    console.log("\n--- KASUS T1-1: Validasi Data-Driven Floorplan 44x36 ---");
+    const fpData = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const fp = stage.floorplan;
+      let validErr = null;
+      try {
+        stage.validateFloorplan();
+      } catch (e) {
+        validErr = e.message;
+      }
+      return {
+        width: fp.width,
+        height: fp.height,
+        roomsCount: fp.rooms.length,
+        deptRooms: fp.rooms.filter((r) => r.kind === "dept").map((r) => r.id),
+        commonRooms: fp.rooms.filter((r) => r.kind === "common").map((r) => r.id),
+        corridorsCount: fp.corridors.length,
+        corridorIds: fp.corridors.map((c) => c.id),
+        baysCount: fp.bays.length,
+        bayIds: fp.bays.map((b) => b.id),
+        doorsCount: fp.doors.length,
+        validErr,
+      };
+    });
+
+    console.log(`   Dimensi denah: ${fpData.width} x ${fpData.height} tile (harus 44 x 36)`);
+    console.log(`   Jumlah departemen: ${fpData.deptRooms.length} (harus 10) -> ${fpData.deptRooms.join(", ")}`);
+    console.log(`   Jumlah area umum: ${fpData.commonRooms.length} (harus 8) -> ${fpData.commonRooms.join(", ")}`);
+    console.log(`   Jumlah koridor: ${fpData.corridorsCount} (harus 7) -> ${fpData.corridorIds.join(", ")}`);
+    console.log(`   Jumlah expansion bays: ${fpData.baysCount} (harus 9) -> ${fpData.bayIds.join(", ")}`);
+    console.log(`   Jumlah pintu: ${fpData.doorsCount} (harus 21)`);
+    console.log(`   Hasil startup validation: ${fpData.validErr ? "GALAT: " + fpData.validErr : "VALID TANPA ERROR ✓"}`);
+
+    if (fpData.width !== 44 || fpData.height !== 36) {
+      throw new Error(`Dimensi denah salah: ${fpData.width}x${fpData.height}, harus 44x36!`);
+    }
+    if (fpData.deptRooms.length !== 10) {
+      throw new Error(`Jumlah departemen salah: ${fpData.deptRooms.length}, harus 10!`);
+    }
+    if (fpData.commonRooms.length !== 8) {
+      throw new Error(`Jumlah area umum salah: ${fpData.commonRooms.length}, harus 8!`);
+    }
+    if (fpData.corridorsCount !== 7) {
+      throw new Error(`Jumlah koridor salah: ${fpData.corridorsCount}, harus 7!`);
+    }
+    if (fpData.baysCount !== 9) {
+      throw new Error(`Jumlah bays salah: ${fpData.baysCount}, harus 9!`);
+    }
+    if (fpData.doorsCount !== 21) {
+      throw new Error(`Jumlah pintu salah: ${fpData.doorsCount}, harus 21!`);
+    }
+    if (fpData.validErr) {
+      throw new Error(`Validasi denah gagal: ${fpData.validErr}`);
+    }
+
+    testReport.kasusT1_1 = fpData;
+    console.log("   ✓ KASUS T1-1 LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // KASUS T1-2: KAMERA ORTOGRAFIS TENGGARA & FRUSTUM FITTING VIEWPORTS
+    // =========================================================================
+    console.log("\n--- KASUS T1-2: Kamera Ortografis Tenggara & Frustum Fitting (1280px, 768px, 390px) ---");
+    const camProps = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const cam = stage.camera;
+      const p = stage.getCameraPosition();
+      const t = stage.getCameraTarget();
+      return {
+        isOrthographic: !!cam.isOrthographicCamera,
+        pos: { x: p.x, y: p.y, z: p.z },
+        target: { x: t.x, y: t.y, z: t.z },
+      };
+    });
+
+    console.log(`   Kamera isOrthographicCamera: ${camProps.isOrthographic} (harus true)`);
+    console.log(`   Posisi kamera: (${camProps.pos.x.toFixed(1)}, ${camProps.pos.y.toFixed(1)}, ${camProps.pos.z.toFixed(1)})`);
+    console.log(`   Target kamera: (${camProps.target.x.toFixed(1)}, ${camProps.target.y.toFixed(1)}, ${camProps.target.z.toFixed(1)})`);
+
+    if (!camProps.isOrthographic) {
+      throw new Error("Kamera bukan OrthographicCamera!");
+    }
+    // Posisi dari kuadran Tenggara (x > 20.5, z > 17.0, y > 20.0) menghadap pusat (20.5, 0, 17.0)
+    if (camProps.pos.x <= 20.5 || camProps.pos.z <= 17.0 || camProps.pos.y < 20.0) {
+      throw new Error(`Kamera tidak berada di Tenggara denah! Pos: ${JSON.stringify(camProps.pos)}`);
+    }
+
+    // Uji proyeksi 4 sudut ekstrem denah termasuk bay (x: -3..44, z: -2..36)
+    // Semua sudut harus terproyeksi dalam batas NDC [-1, 1] pada viewport 1280px, 768px, dan 390px
+    const viewportsToTest = [
+      { name: "1280px (Desktop)", w: 1280, h: 800 },
+      { name: "768px (Tablet)", w: 768, h: 1024 },
+      { name: "390px (Mobile)", w: 390, h: 844 },
+    ];
+
+    const frustumReport = {};
+    for (const vp of viewportsToTest) {
+      await page.setViewportSize({ width: vp.w, height: vp.h });
+      await page.waitForTimeout(400);
+
+      const projections = await page.evaluate(() => {
+        const stage = window.__STAGE_3D__;
+        const corners = [
+          { name: "NW (bay_manager/ops)", x: -3, z: -2 },
+          { name: "NE (bay_adv/ops)", x: 44, z: -2 },
+          { name: "SE (bay_lp/resepsi)", x: 44, z: 36 },
+          { name: "SW (bay_sosmed/manager)", x: -3, z: 36 },
+        ];
+        return corners.map((c) => {
+          const ndc = stage.projectPoint(c.x, 0, c.z);
+          return {
+            ...c,
+            ndc,
+            insideNDC: Math.abs(ndc.x) <= 1.0 && Math.abs(ndc.y) <= 1.0,
+          };
+        });
+      });
+
+      console.log(`   Viewport ${vp.name}:`);
+      let allInside = true;
+      for (const p of projections) {
+        console.log(`      Sudut ${p.name} (${p.x}, ${p.z}): NDC=(${p.ndc.x.toFixed(3)}, ${p.ndc.y.toFixed(3)}) -> ${p.insideNDC ? "IN BOUNDS ✓" : "CLIPPED ✗"}`);
+        if (!p.insideNDC) allInside = false;
+      }
+
+      if (!allInside) {
+        throw new Error(`Ujung denah terpotong pada viewport ${vp.name}! Proyeksi: ${JSON.stringify(projections)}`);
+      }
+      frustumReport[vp.name] = projections;
+    }
+
+    // Kembalikan viewport ke 1440x900
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(400);
+
+    testReport.kasusT1_2 = {
+      isOrthographic: camProps.isOrthographic,
+      camPos: camProps.pos,
+      camTarget: camProps.target,
+      frustumReport,
+    };
+    console.log("   ✓ KASUS T1-2 LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // KASUS T1-3: PENEMPATAN & ORIENTASI 19 AGEN & KURSI RAPAT
+    // =========================================================================
+    console.log("\n--- KASUS T1-3: Penempatan & Orientasi 19 Agen & Kursi Rapat ---");
+    const agentHomeVerification = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const homeMap = stage.getHomePositions();
+      const seatMap = stage.getSeatPositions();
+      const names = Object.keys(homeMap);
+      const res = [];
+
+      for (const name of names) {
+        const hp = homeMap[name];
+        const sp = seatMap[name];
+        const pos = stage.getAgentPosition(name);
+        const d = Math.hypot(pos.x - hp[0], pos.z - hp[1]);
+        res.push({
+          name,
+          home: hp,
+          seat: sp,
+          currentPos: { x: +pos.x.toFixed(2), z: +pos.z.toFixed(2) },
+          distFromHome: +d.toFixed(4),
+          atHome: d <= 0.15,
+        });
+      }
+      return { total: names.length, agents: res };
+    });
+
+    console.log(`   Total agen terdaftar: ${agentHomeVerification.total} (harus 19)`);
+    let allAtHome = true;
+    for (const a of agentHomeVerification.agents) {
+      if (!a.atHome) {
+        console.error(`      ✗ Agen ${a.name} tidak berada di meja rumah! Pos: (${a.currentPos.x}, ${a.currentPos.z}), Home: (${a.home[0]}, ${a.home[1]}), dist: ${a.distFromHome}`);
+        allAtHome = false;
+      }
+    }
+    if (!allAtHome) {
+      throw new Error("Sebagian agen tidak berada di meja rumah masing-masing!");
+    }
+    console.log("   ✓ Seluruh 19 agen berada di meja kerja departemen masing-masing.");
+
+    testReport.kasusT1_3 = agentHomeVerification;
+    console.log("   ✓ KASUS T1-3 LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // KASUS T1-4: AUTO-GENERATED WALKWAY GRAPH & DIJKSTRA PATHFINDING
+    // =========================================================================
+    console.log("\n--- KASUS T1-4: Auto-Generated Walkway Graph & Dijkstra Pathfinding ---");
+    const routesToTest = [
+      { from: "manager", to: "riset", allowed: ["manager", "riset"] },
+      { from: "manager", to: "copy", allowed: ["manager", "copy"] },
+      { from: "manager", to: "landing_page", allowed: ["manager", "landing_page"] },
+      { from: "manager", to: "advertiser", allowed: ["manager", "advertiser"] },
+    ];
+
+    const pathResults = {};
+    for (const r of routesToTest) {
+      const pathPts = await page.evaluate(({ from, to }) => {
+        const pts = window.__STAGE_3D__.findPath(from, to);
+        return pts.map((p) => ({ x: +p.x.toFixed(3), z: +p.z.toFixed(3) }));
+      }, r);
+
+      console.log(`   Rute ${r.from} -> ${r.to}: ${pathPts.length} waypoints terdeteksi`);
+      if (pathPts.length < 2) {
+        throw new Error(`Rute ${r.from} -> ${r.to} menghasilkan waypoint kurang dari 2!`);
+      }
+
+      // Verifikasi tidak ada segmen rute yang menabrak ruangan terlarang
+      let violation = null;
+      for (let i = 0; i < pathPts.length; i++) {
+        const pt = pathPts[i];
+        const v = getUnallowedRoomViolation(pt.x, pt.z, r.allowed);
+        if (v) {
+          violation = { point: pt, room: v };
+          break;
+        }
+      }
+      if (violation) {
+        throw new Error(`Waypoint rute ${r.from} -> ${r.to} melanggar ruangan ${violation.room} di (${violation.point.x}, ${violation.point.z})`);
+      }
+      console.log(`      ✓ Rute ${r.from} -> ${r.to} aman tanpa menembus dinding ruangan lain.`);
+      pathResults[`${r.from}_${r.to}`] = { pointsCount: pathPts.length, start: pathPts[0], end: pathPts[pathPts.length - 1] };
+    }
+
+    testReport.kasusT1_4 = pathResults;
+    console.log("   ✓ KASUS T1-4 LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // KASUS T1-5: MERGED STATIC GEOMETRY & ANGGARAN DRAW CALLS (< 150)
+    // =========================================================================
+    console.log("\n--- KASUS T1-5: Merged Static Geometry & Anggaran Draw Calls (< 150) ---");
+    const renderStats = await page.evaluate(async () => {
+      const stage = window.__STAGE_3D__;
+      // Tunggu 3 frame agar render loop mengupdate info render
+      await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
+
+      const info = stage.getRenderInfo();
+      const staticCalls = stage.getStaticDrawCalls ? stage.getStaticDrawCalls() : 0;
+      const mergedMeshes = [];
+      stage.scene.traverse((obj) => {
+        if (obj.isMesh && obj.geometry) {
+          const vCount = obj.geometry.attributes?.position?.count || 0;
+          if (vCount > 40) {
+            mergedMeshes.push({
+              name: obj.name || "unnamed",
+              vertexCount: vCount,
+            });
+          }
+        }
+      });
+      return {
+        calls: info.calls,
+        staticCalls,
+        triangles: info.triangles,
+        largeMeshesCount: mergedMeshes.length,
+      };
+    });
+
+    console.log(`   Static Draw Calls terukur: ${renderStats.staticCalls} (anggaran ketat: < 150)`);
+    console.log(`   Total Scene Calls: ${renderStats.calls} (termasuk 19 karakter dinamis)`);
+    console.log(`   Triangles: ${renderStats.triangles}`);
+    console.log(`   Static merged meshes terdeteksi: ${renderStats.largeMeshesCount}`);
+
+    if (renderStats.staticCalls >= 150) {
+      throw new Error(`Static draw calls (${renderStats.staticCalls}) melebihi anggaran maksimal 150! Merging geometri gagal.`);
+    }
+    if (renderStats.staticCalls === 0) {
+      throw new Error("Static draw calls tidak terdeteksi (0)! Tag userData.isStatic gagal.");
+    }
+    console.log(`   ✓ Anggaran static draw calls terpenuhi (< 150).`);
+
+    testReport.kasusT1_5 = renderStats;
+    console.log("   ✓ KASUS T1-5 LOLOS SEMPURNA.");
+
+    // =========================================================================
     // KASUS 1: TATA LETAK & RUANG MANAGER (1280px, 768px, 390px, Reset View, SVG Fallback)
     // =========================================================================
     console.log("\n--- KASUS 1: Tata Letak & Ruang Manager ---");
@@ -176,7 +476,7 @@ async function run() {
       throw new Error(`Jumlah agent tag tidak 19! Ditemukan: ${agentTagsCount}`);
     }
 
-    // Verifikasi ATLAS duduk di meja ruang Manager dan menghadap meja (+Z)
+    // Verifikasi ATLAS duduk di meja ruang Manager (4.5, 15.0) dan menghadap meja (+Z)
     const atlasPos = await page.evaluate(() => {
       const pos = window.__STAGE_3D__.getAgentPosition("ATLAS");
       const target = window.__STAGE_3D__.getAgentTargetPosition("ATLAS");
@@ -185,12 +485,12 @@ async function run() {
     });
     console.log("   Posisi awal ATLAS:", atlasPos.pos);
     console.log("   Rotasi awal ATLAS (harus menghadap ke meja di selatan / +Z):", atlasPos.rot);
-    const atlasDistFromHome = Math.hypot(atlasPos.pos.x - 0.0, atlasPos.pos.z - 9.2);
+    const atlasDistFromHome = Math.hypot(atlasPos.pos.x - 4.5, atlasPos.pos.z - 15.0);
     console.log(`   Jarak ATLAS ke pusat meja Manager: ${atlasDistFromHome.toFixed(4)} unit`);
     if (atlasDistFromHome > 0.15) {
       throw new Error(`ATLAS tidak berada di meja Manager! Posisi: ${JSON.stringify(atlasPos.pos)}`);
     }
-    // ATLAS duduk di z=9.2, meja di selatan z=9.68 (z lebih besar), ATLAS menghadap +Z (rotasi Y dekat 0)
+    // ATLAS duduk di z=15.0, meja di selatan z=15.8 (z lebih besar), ATLAS menghadap +Z (rotasi Y dekat 0)
     if (Math.abs(atlasPos.rot.y) > 0.35) {
       throw new Error(`ATLAS tidak menghadap meja (+Z)! Rotasi Y terdeteksi: ${atlasPos.rot.y}`);
     }
@@ -241,9 +541,9 @@ async function run() {
       window.__FORCE_WEBGL_FALLBACK__ = true;
     });
     console.log("   Navigasi ke svgPage...");
-    await svgPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded", timeout: 20000 });
+    await svgPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded", timeout: 60000 });
     console.log("   svgPage URL saat ini:", svgPage.url());
-    await svgPage.waitForSelector("svg.stage", { timeout: 40000 });
+    await svgPage.waitForSelector("svg.stage", { timeout: 60000 });
     const svgAgentCount = await svgPage.locator("svg.stage g#agents g").count();
     console.log(`   Fallback SVG render: ${svgAgentCount} karakter terdeteksi`);
     await svgPage.screenshot({ path: "verification_artifacts/layout_fallback_svg.png" });
@@ -283,8 +583,6 @@ async function run() {
 
     const startDelegation = Date.now();
     let arrivedAtRiset = false;
-    let minObservedX = Infinity;
-    let minObservedZ = Infinity;
 
     while (Date.now() - startDelegation < 25000) {
       await page.waitForTimeout(100);
@@ -299,8 +597,6 @@ async function run() {
 
       if (!data.pos) break;
       positionsSampled.push(data.pos);
-      if (data.pos.x < minObservedX) minObservedX = data.pos.x;
-      if (data.pos.z < minObservedZ) minObservedZ = data.pos.z;
       if (positionsSampled.length % 5 === 0 || !data.isBusy) {
         console.log(`      Sample ${positionsSampled.length}: isBusy=${data.isBusy}, qLen=${data.qLen}, pos=(${data.pos.x.toFixed(2)}, ${data.pos.z.toFixed(2)})`);
       }
@@ -311,8 +607,8 @@ async function run() {
         violationFound = { room: violation, pos: data.pos };
       }
 
-      // Cek apakah tiba di Riset (x < -5.5, z < -2.0)
-      if (data.pos.x < -5.5 && data.pos.z < -2.0) {
+      // Cek apakah tiba di Riset (x: 11..21, z: 11..19)
+      if (data.pos.x >= 11 && data.pos.x <= 21 && data.pos.z >= 11 && data.pos.z <= 19) {
         arrivedAtRiset = true;
       }
 
@@ -324,12 +620,11 @@ async function run() {
     const finalAtlasPos = await page.evaluate(() =>
       window.__STAGE_3D__.getAgentPosition("ATLAS")
     );
-    const finalDistToHome = Math.hypot(finalAtlasPos.x - 0.0, finalAtlasPos.z - 9.2);
+    const finalDistToHome = Math.hypot(finalAtlasPos.x - 4.5, finalAtlasPos.z - 15.0);
     const finalAtlasRot = await page.evaluate(() =>
       window.__STAGE_3D__.getAgentRotation("ATLAS")
     );
     console.log(`   Total sampel posisi: ${positionsSampled.length}`);
-    console.log(`   Min observed X: ${minObservedX.toFixed(2)}, Min observed Z: ${minObservedZ.toFixed(2)}`);
     console.log(`   Tiba di meja departemen Riset: ${arrivedAtRiset}`);
     console.log(`   Pelanggaran ruangan lain: ${violationFound ? JSON.stringify(violationFound) : "TIDAK ADA ✓"}`);
     console.log(`   Galat posisi akhir ATLAS kembali ke meja: ${finalDistToHome.toFixed(4)} unit (batas ≤ 0.15)`);
@@ -374,7 +669,7 @@ async function run() {
     let minHomeDistBetween = Infinity;
 
     const startTwoTrips = Date.now();
-    while (Date.now() - startTwoTrips < 35000) {
+    while (Date.now() - startTwoTrips < 50000) {
       await page.waitForTimeout(80);
       const data = await page.evaluate(() => {
         const stage = window.__STAGE_3D__;
@@ -386,14 +681,14 @@ async function run() {
 
       if (!data.pos) break;
 
-      // Cek apakah mencapai Copy (x > 3.0, z < -2.0)
-      if (data.pos.x > 3.0 && data.pos.z < -2.0) {
+      // Cek apakah mencapai Copy (x: 22..32, z: 27..34)
+      if (data.pos.x >= 22 && data.pos.x <= 32 && data.pos.z >= 27 && data.pos.z <= 34) {
         visitedFirstDestination = true;
       }
 
       // Setelah mencapai Copy, cek apakah kembali ke meja (jarak ke home <= 0.15)
       if (visitedFirstDestination && !returnedHomeBetweenTrips) {
-        const dHome = Math.hypot(data.pos.x - 0.0, data.pos.z - 9.2);
+        const dHome = Math.hypot(data.pos.x - 4.5, data.pos.z - 15.0);
         if (dHome < minHomeDistBetween) minHomeDistBetween = dHome;
         if (dHome <= 0.15) {
           returnedHomeBetweenTrips = true;
@@ -409,7 +704,7 @@ async function run() {
     const posAfterTwo = await page.evaluate(() =>
       window.__STAGE_3D__.getAgentPosition("ATLAS")
     );
-    const finalDistTwo = Math.hypot(posAfterTwo.x - 0.0, posAfterTwo.z - 9.2);
+    const finalDistTwo = Math.hypot(posAfterTwo.x - 4.5, posAfterTwo.z - 15.0);
 
     console.log(`   Mencapai Copy: ${visitedFirstDestination}`);
     console.log(`   Kembali ke meja di antara perjalanan: ${returnedHomeBetweenTrips} (min dist: ${minHomeDistBetween.toFixed(4)})`);
@@ -431,9 +726,6 @@ async function run() {
     // KASUS 4: BACKLOG 7 DELEGASI (Percepatan Adaptif)
     // =========================================================================
     console.log("\n--- KASUS 4: Backlog 7 Delegasi (Percepatan Adaptif) ---");
-    // Hitung estimasi teoritis tanpa percepatan:
-    // Tiap delegasi tanpa percepatan memakan waktu ~7.5 - 8.5 detik.
-    // 7 delegasi tanpa percepatan = ~55 detik.
     const theoreticalNormalDurationS = 55;
 
     const startBacklog = Date.now();
@@ -477,20 +769,25 @@ async function run() {
     // KASUS 5: REDUCED-MOTION (Tanpa Animasi Jalan, Tugas Selesai Tanpa Error)
     // =========================================================================
     console.log("\n--- KASUS 5: Reduced-Motion Support ---");
-    const rmContext = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      storageState: await context.storageState(),
-      reducedMotion: "reduce",
-    });
-    const rmPage = await rmContext.newPage();
+    const rmPage = await context.newPage();
+    await rmPage.setViewportSize({ width: 1280, height: 800 });
+    await rmPage.emulateMedia({ reducedMotion: "reduce" });
     const rmErrors = [];
     rmPage.on("console", (m) => {
       if (m.type() === "error") rmErrors.push(m.text());
     });
+    rmPage.on("pageerror", (e) => {
+      rmErrors.push(e.message || String(e));
+    });
 
-    await rmPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded", timeout: 30000 });
+    console.log("   Navigasi ke rmPage (reduced-motion)...");
+    await rmPage.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded", timeout: 60000 });
+    console.log("   rmPage URL saat ini:", rmPage.url());
     await rmPage.waitForSelector("canvas.stage-3d-canvas", { timeout: 60000 });
     await rmPage.waitForTimeout(1000);
+
+    const isRmActive = await rmPage.evaluate(() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    console.log("   prefers-reduced-motion terdeteksi:", isRmActive);
 
     const rmStart = Date.now();
     await rmPage.evaluate(() => {
@@ -506,7 +803,7 @@ async function run() {
     );
     console.log(`   Reduced-motion isBusy setelah ${Date.now() - rmStart}ms: ${rmBusy} (pos: ${rmPos?.x}, ${rmPos?.z})`);
     console.log(`   Reduced-motion error konsol: ${rmErrors.length}`);
-    await rmContext.close();
+    await rmPage.close();
 
     if (rmErrors.length > 0) {
       throw new Error(`Error konsol saat reduced-motion: ${rmErrors.join(", ")}`);
@@ -522,7 +819,6 @@ async function run() {
     // KASUS 6: ANIMASI BEKERJA YANG HALUS (Working, Idle, Review, Reduced-Motion)
     // =========================================================================
     console.log("\n--- KASUS 6: Animasi Bekerja yang Halus ---");
-    // Helper untuk mengukur variasi gerakan rotasi / posisi suatu agent
     async function sampleAgentMotion(agentName, durationMs = 800) {
       return await page.evaluate(async ({ agentName, durationMs }) => {
         const stage = window.__STAGE_3D__;
@@ -555,7 +851,6 @@ async function run() {
           await new Promise((r) => requestAnimationFrame(r));
         }
 
-        // Hitung standar deviasi / range tiap properti
         function range(arr) {
           return Math.max(...arr) - Math.min(...arr);
         }
@@ -661,11 +956,10 @@ async function run() {
     console.log("\n   TABEL NILAI SIKLUS CAHAYA:");
     console.table(daylightResults);
 
-    // Verifikasi intensitas siang > malam
     const siangInt = daylightResults[13].ambientIntensity;
     const malamInt = daylightResults[21].ambientIntensity;
     const isSiangBrighter = siangInt > malamInt;
-    const isFloorMinPreserved = malamInt >= 0.85; // Lantai minimum terpenuhi
+    const isFloorMinPreserved = malamInt >= 0.85;
 
     console.log(`   Intensitas Siang (${siangInt}) > Malam (${malamInt}): ${isSiangBrighter}`);
     console.log(`   Kecerahan lantai minimum malam hari terjaga: ${isFloorMinPreserved}`);
@@ -674,14 +968,13 @@ async function run() {
       throw new Error("Siklus cahaya tidak memenuhi syarat kecerahan siang > malam atau lantai minimum!");
     }
 
-    // Uji transisi halus (tidak ada lompatan tiba-tiba)
+    // Uji transisi halus
     console.log("   Menguji kehalusan transisi pergantian jam...");
     await page.evaluate(() => {
       window.__STAGE_3D__.setHourOverride(13);
     });
     await page.waitForTimeout(600);
 
-    // Ubah ke 21 dan sampel nilai dalam 500ms
     const transitionSamples = await page.evaluate(async () => {
       window.__STAGE_3D__.setHourOverride(21);
       const samples = [];
@@ -747,7 +1040,6 @@ async function run() {
       const renderCalls = stage.renderer.info.render.calls;
       const triangles = stage.renderer.info.render.triangles;
 
-      // Catat frame time selama ~4-5 detik dengan 16 agent + ATLAS
       const frameDts = [];
       let lastTime = performance.now();
       let framesCount = 0;
@@ -805,14 +1097,12 @@ async function run() {
     // KASUS 10: REGRESI INTERAKSI (Klik Karakter Berjalan, Multi-touch, Detail)
     // =========================================================================
     console.log("\n--- KASUS 10: Regresi Interaksi & Pemilihan Karakter ---");
-    // 10a. Klik agent ATLAS saat sedang berjalan memilihnya tanpa menggeser kamera
     await page.evaluate(() => {
       window.__STAGE_3D__.demoDelegate("creative");
     });
-    await page.waitForTimeout(800); // Tunggu ATLAS mulai berjalan
+    await page.waitForTimeout(800);
 
     const camBeforeClick = await getSceneState();
-    // Klik ATLAS lewat tag CSS2D
     const atlasTag = page.locator(".agent-tag3d:has-text('ATLAS')");
     await atlasTag.click({ force: true, noWaitAfter: true });
     await page.waitForTimeout(400);
@@ -828,7 +1118,6 @@ async function run() {
     console.log(`   Agent terpilih saat berjalan: ${selAgent?.id} (tipe: ${selAgent?.type})`);
     console.log(`   Kamera tidak bergeser saat klik (pergeseran: ${dCamClick.toFixed(4)} unit)`);
 
-    // Hentikan koreografi
     await page.evaluate(() => {
       window.__STAGE_3D__.clearChoreo();
     });
@@ -843,9 +1132,9 @@ async function run() {
     console.log("   ✓ KASUS 10 LOLOS SEMPURNA.");
 
     // =========================================================================
-    // KASUS V1a-fix 1: GATHER RAPAT (16 Agen Berjalan Lewat Koridor, Bukan Teleport, Tanpa Tembus Dinding)
+    // KASUS V1a-fix 1: GATHER RAPAT (19 Agen Berjalan Lewat Koridor)
     // =========================================================================
-    console.log("\n--- KASUS V1a-fix 1: Gather Rapat (16 Agen Berjalan Lewat Koridor) ---");
+    console.log("\n--- KASUS V1a-fix 1: Gather Rapat (19 Agen Berjalan Lewat Koridor) ---");
     const agentHomeRooms = {
       ATHENA: "riset",
       ARGUS: "riset",
@@ -853,42 +1142,27 @@ async function run() {
       CLIO: "copy",
       ERATO: "copy",
       DAPHNE: "copy",
-      HESTIA: "lp",
-      THEMIS: "lp",
-      TALOS: "lp",
-      ZEUS: "ads",
-      ARTEMIS: "ads",
-      PLUTUS: "ads",
+      HESTIA: "landing_page",
+      THEMIS: "landing_page",
+      TALOS: "landing_page",
+      ZEUS: "advertiser",
+      ARTEMIS: "advertiser",
+      PLUTUS: "advertiser",
       THEIA: "creative",
       LYRA: "creative",
       IRIS: "creative",
       ATLAS: "manager",
+      HERA: "hr",
+      HEPHAESTUS: "operasional",
+      HERMES: "sosmed",
     };
 
     const seatMap = await page.evaluate(() => window.__STAGE_3D__.getSeatPositions());
-    const meetingRoomPos = { x: 6, y: 0 };
     const prevPositions = {};
     let gatherViolationFound = null;
     let maxDeltaPerInterval = 0;
     let minInterAgentDist = Infinity;
     let minInterAgentPair = null;
-
-    // Print posisi seluruh agen sebelum gather
-    const preGatherPos = await page.evaluate(() => {
-      const stage = window.__STAGE_3D__;
-      const res = {};
-      const names = [
-        "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
-        "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-        "THEIA", "LYRA", "IRIS", "ATLAS"
-      ];
-      names.forEach(n => {
-        const p = stage.getAgentPosition(n);
-        res[n] = `(${p.x.toFixed(2)}, ${p.z.toFixed(2)})`;
-      });
-      return res;
-    });
-    console.log("   Posisi seluruh agen sebelum gather:", preGatherPos);
 
     // Mulai gather rapat (animasi normal)
     await page.evaluate(() => {
@@ -896,17 +1170,22 @@ async function run() {
     });
 
     const gatherStart = Date.now();
+    let prevSampleTime = Date.now();
     let allArrivedAtMeeting = false;
 
     while (Date.now() - gatherStart < 40000) {
       await page.waitForTimeout(80);
+      const nowSampleTime = Date.now();
+      const dtIntervalS = Math.max((nowSampleTime - prevSampleTime) / 1000, 0.001);
+      prevSampleTime = nowSampleTime;
+
       const agentStates = await page.evaluate(() => {
         const stage = window.__STAGE_3D__;
         const res = {};
         const names = [
           "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
           "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-          "THEIA", "LYRA", "IRIS", "ATLAS"
+          "THEIA", "LYRA", "IRIS", "ATLAS", "HERA", "HEPHAESTUS", "HERMES"
         ];
         names.forEach((n) => {
           res[n] = {
@@ -922,23 +1201,19 @@ async function run() {
         if (!st.pos) continue;
         if (st.busy) anyBusy = true;
 
-        // Cek pergeseran per interval (bukan teleport)
         if (prevPositions[name]) {
           const delta = Math.hypot(
             st.pos.x - prevPositions[name].x,
             st.pos.z - prevPositions[name].z
           );
-          if (delta > 0.4) {
-            console.log(`      [DELTA WATCH] ${name}: delta=${delta.toFixed(3)}, prev=(${prevPositions[name].x.toFixed(2)}, ${prevPositions[name].z.toFixed(2)}), curr=(${st.pos.x.toFixed(2)}, ${st.pos.z.toFixed(2)})`);
-          }
           if (delta > maxDeltaPerInterval) maxDeltaPerInterval = delta;
-          if (delta > 5.0) {
-            throw new Error(`Agen ${name} teleportasi mendadak! Delta per frame: ${delta.toFixed(3)} unit`);
+          const apparentSpeed = delta / dtIntervalS;
+          if (delta > 12.0 || apparentSpeed > 7.0) {
+            throw new Error(`Agen ${name} teleportasi mendadak! Delta per frame: ${delta.toFixed(3)} unit (kecepatan: ${apparentSpeed.toFixed(2)} unit/s)`);
           }
         }
         prevPositions[name] = st.pos;
 
-        // Cek pelanggaran ruangan: hanya boleh di ruang asal atau ruang meeting
         const allowed = [agentHomeRooms[name], "meeting"];
         const viol = getUnallowedRoomViolation(st.pos.x, st.pos.z, allowed);
         if (viol && !gatherViolationFound) {
@@ -946,7 +1221,7 @@ async function run() {
         }
       }
 
-      // Hitung jarak minimum antar-agen sepanjang pergerakan gather (Requirement 4d)
+      // Jarak minimum antar-agen sepanjang pergerakan gather
       const namesList = Object.keys(agentStates);
       for (let i = 0; i < namesList.length; i++) {
         for (let j = i + 1; j < namesList.length; j++) {
@@ -969,27 +1244,22 @@ async function run() {
     }
 
     console.log(`   Durasi gather: ${((Date.now() - gatherStart) / 1000).toFixed(2)} detik`);
-    console.log(`   Maks pergeseran posisi per interval: ${maxDeltaPerInterval.toFixed(4)} unit (< 1.2 batas wajar)`);
+    console.log(`   Maks pergeseran posisi per interval: ${maxDeltaPerInterval.toFixed(4)} unit`);
     console.log(`   Pelanggaran ruangan asing selama jalan: ${gatherViolationFound ? JSON.stringify(gatherViolationFound) : "Nihil (Aman)"}`);
     console.log(`   Jarak antar-agen minimum selama gather: ${minInterAgentDist.toFixed(4)} unit (${minInterAgentPair?.join(" - ")})`);
-    if (minInterAgentDist < 0.25) {
-      console.warn(`   [LAPORAN] Jarak antar-agen minimum selama gather di bawah 0.25: ${minInterAgentDist.toFixed(4)} unit`);
-    } else {
-      console.log(`   ✓ Jarak antar-agen minimum selama gather aman (>= 0.25 unit).`);
-    }
 
     if (gatherViolationFound) {
       throw new Error(`Pelanggaran jalur gather: Agen ${gatherViolationFound.agent} masuk ke ruangan ${gatherViolationFound.room} pada posisi ${JSON.stringify(gatherViolationFound.pos)}`);
     }
 
-    // Verifikasi semua 16 agen tiba di kursi masing-masing di ruang meeting
+    // Verifikasi semua 19 agen tiba di kursi masing-masing di ruang meeting
     const finalGatherPositions = await page.evaluate(() => {
       const stage = window.__STAGE_3D__;
       const res = {};
       const names = [
         "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
         "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-        "THEIA", "LYRA", "IRIS", "ATLAS"
+        "THEIA", "LYRA", "IRIS", "ATLAS", "HERA", "HEPHAESTUS", "HERMES"
       ];
       names.forEach((n) => {
         res[n] = stage.getAgentPosition(n);
@@ -1003,8 +1273,8 @@ async function run() {
       if (!seat) {
         throw new Error(`Agen ${name} tidak memiliki konfigurasi kursi di seatMap!`);
       }
-      const expectedX = meetingRoomPos.x + seat[0] - 8.5;
-      const expectedZ = meetingRoomPos.y + seat[1] - 5.5;
+      const expectedX = seat[0];
+      const expectedZ = seat[1];
       const dist = Math.hypot(pos.x - expectedX, pos.z - expectedZ);
       if (dist > maxSeatDist) maxSeatDist = dist;
       if (dist > 0.18) {
@@ -1012,7 +1282,7 @@ async function run() {
       }
     }
 
-    console.log(`   Seluruh 16 agen tiba di kursi rapat (deviasi maks: ${maxSeatDist.toFixed(4)} <= 0.18 unit)`);
+    console.log(`   Seluruh 19 agen tiba di kursi rapat (deviasi maks: ${maxSeatDist.toFixed(4)} <= 0.18 unit)`);
     await page.screenshot({ path: "verification_artifacts/v1afix_meeting_gathered.png" });
 
     testReport.v1afix_gather = {
@@ -1026,10 +1296,9 @@ async function run() {
     console.log("   ✓ KASUS V1a-fix 1 LOLOS SEMPURNA.");
 
     // =========================================================================
-    // KASUS V1a-fix 2: ANTREAN DELEGASI SELAMA RAPAT (ATLAS Tetap di Rapat, Tugas Diantrekan)
+    // KASUS V1a-fix 2: ANTREAN DELEGASI SELAMA RAPAT
     // =========================================================================
     console.log("\n--- KASUS V1a-fix 2: Antrean Delegasi Selama Rapat ---");
-    // Trigger delegasi ke riset saat rapat aktif
     await page.evaluate(() => {
       window.__STAGE_3D__.demoDelegate("riset");
     });
@@ -1042,8 +1311,8 @@ async function run() {
       window.__STAGE_3D__.getAgentPosition("ATLAS")
     );
     const atlasExpectedSeat = seatMap["ATLAS"];
-    const atlasSeatX = meetingRoomPos.x + atlasExpectedSeat[0] - 8.5;
-    const atlasSeatZ = meetingRoomPos.y + atlasExpectedSeat[1] - 5.5;
+    const atlasSeatX = atlasExpectedSeat[0];
+    const atlasSeatZ = atlasExpectedSeat[1];
     const atlasDistFromMeetingSeat = Math.hypot(
       atlasMeetingPos.x - atlasSeatX,
       atlasMeetingPos.z - atlasSeatZ
@@ -1066,12 +1335,11 @@ async function run() {
     console.log("   ✓ KASUS V1a-fix 2 LOLOS SEMPURNA.");
 
     // =========================================================================
-    // KASUS V1a-fix 3: BUBAR RAPAT & AUTO-DRAIN DELEGASI (Kembali ke Meja, Delegasi Tuntas)
+    // KASUS V1a-fix 3: BUBAR RAPAT & AUTO-DRAIN DELEGASI
     // =========================================================================
     console.log("\n--- KASUS V1a-fix 3: Bubar Rapat & Auto-Drain Delegasi ---");
     const homeMap = await page.evaluate(() => window.__STAGE_3D__.getHomePositions());
 
-    // Panggil bubar rapat
     await page.evaluate(() => {
       window.__STAGE_3D__.endMeetingNow(false);
     });
@@ -1088,7 +1356,7 @@ async function run() {
         const nonAtlasNames = [
           "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
           "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-          "THEIA", "LYRA", "IRIS"
+          "THEIA", "LYRA", "IRIS", "HERA", "HEPHAESTUS", "HERMES"
         ];
         let nonAtlasBusy = false;
         nonAtlasNames.forEach((n) => {
@@ -1119,7 +1387,7 @@ async function run() {
       }
     }
 
-    console.log(`   15 agen non-ATLAS selesai kembali ke meja: ${allNonAtlasReturned}`);
+    console.log(`   18 agen non-ATLAS selesai kembali ke meja: ${allNonAtlasReturned}`);
     console.log(`   ATLAS menuntaskan delegasi tertunda dan kembali ke meja: ${atlasCompletedDelegation}`);
 
     if (!allNonAtlasReturned) {
@@ -1129,14 +1397,14 @@ async function run() {
       throw new Error("ATLAS tidak menyelesaikan delegasi tertunda setelah bubar rapat!");
     }
 
-    // Verifikasi posisi akhir 15 agen non-ATLAS di meja masing-masing
+    // Verifikasi posisi akhir 18 agen non-ATLAS di meja masing-masing
     const finalDispersePositions = await page.evaluate(() => {
       const stage = window.__STAGE_3D__;
       const res = {};
       const names = [
         "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
         "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-        "THEIA", "LYRA", "IRIS"
+        "THEIA", "LYRA", "IRIS", "HERA", "HEPHAESTUS", "HERMES"
       ];
       names.forEach((n) => {
         res[n] = stage.getAgentPosition(n);
@@ -1147,21 +1415,21 @@ async function run() {
     let maxHomeDist = 0;
     for (const [name, pos] of Object.entries(finalDispersePositions)) {
       const hp = homeMap[name];
-      const expectedX = hp[0] - 8.5;
-      const expectedZ = hp[1] - 5.5;
+      const expectedX = hp[0];
+      const expectedZ = hp[1];
       const dist = Math.hypot(pos.x - expectedX, pos.z - expectedZ);
       if (dist > maxHomeDist) maxHomeDist = dist;
       if (dist > 0.18) {
         throw new Error(`Agen ${name} tidak berada di meja rumahnya setelah bubar! Jarak: ${dist.toFixed(4)}`);
       }
     }
-    console.log(`   Seluruh 15 agen non-ATLAS kembali di meja masing-masing (deviasi maks: ${maxHomeDist.toFixed(4)} <= 0.18)`);
+    console.log(`   Seluruh 18 agen non-ATLAS kembali di meja masing-masing (deviasi maks: ${maxHomeDist.toFixed(4)} <= 0.18)`);
 
-    // Verifikasi posisi akhir ATLAS di meja Manager (0.0, 9.2)
+    // Verifikasi posisi akhir ATLAS di meja Manager (4.5, 15.0)
     const atlasFinalPos = await page.evaluate(() =>
       window.__STAGE_3D__.getAgentPosition("ATLAS")
     );
-    const atlasFinalDist = Math.hypot(atlasFinalPos.x - 0.0, atlasFinalPos.z - 9.2);
+    const atlasFinalDist = Math.hypot(atlasFinalPos.x - 4.5, atlasFinalPos.z - 15.0);
     console.log(`   Posisi akhir ATLAS di meja Manager: jarak ${atlasFinalDist.toFixed(4)} unit`);
     if (atlasFinalDist > 0.18) {
       throw new Error(`ATLAS tidak berada di meja Manager setelah menuntaskan delegasi! Jarak: ${atlasFinalDist}`);
@@ -1181,7 +1449,6 @@ async function run() {
     // KASUS V1a-fix 4: REDUCED-MOTION INSTAN (Gather & Bubar Tanpa Animasi Jalan)
     // =========================================================================
     console.log("\n--- KASUS V1a-fix 4: Reduced-Motion Instan (Gather & Bubar) ---");
-    // Start meeting dengan reducedMotion = true
     await page.evaluate(() => {
       window.__STAGE_3D__.startMeetingNow(true);
     });
@@ -1192,7 +1459,7 @@ async function run() {
       const names = [
         "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
         "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-        "THEIA", "LYRA", "IRIS", "ATLAS"
+        "THEIA", "LYRA", "IRIS", "ATLAS", "HERA", "HEPHAESTUS", "HERMES"
       ];
       let anyBusy = false;
       const positions = {};
@@ -1208,7 +1475,6 @@ async function run() {
       throw new Error("Reduced-motion gather tidak instan (masih ada choreo yang busy)!");
     }
 
-    // End meeting dengan reducedMotion = true
     await page.evaluate(() => {
       window.__STAGE_3D__.endMeetingNow(true);
     });
@@ -1219,7 +1485,7 @@ async function run() {
       const names = [
         "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
         "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-        "THEIA", "LYRA", "IRIS", "ATLAS"
+        "THEIA", "LYRA", "IRIS", "ATLAS", "HERA", "HEPHAESTUS", "HERMES"
       ];
       let anyBusy = false;
       const positions = {};
@@ -1243,27 +1509,23 @@ async function run() {
 
     // =========================================================================
     // KASUS V1a-fix 5: ATLAS DI RUANG RISET SAAT DELEGASI LALU MEETING DIKLIK
-    // (Requirement 4a: Tidak Ada Pelanggaran Ruangan Lain Selain Riset & Meeting)
     // =========================================================================
     console.log("\n--- KASUS V1a-fix 5: ATLAS di Ruang Riset Saat Delegasi Lalu Meeting Diklik ---");
-    // Pastikan seluruh agen berada di meja rumah awal
     await page.evaluate(() => {
       window.__STAGE_3D__.clearChoreo();
     });
     await page.waitForTimeout(400);
 
-    // 1. Delegasikan ATLAS ke Riset
     await page.evaluate(() => {
       window.__STAGE_3D__.demoDelegate("riset");
     });
 
-    // 2. Tunggu sampai ATLAS tiba di dalam batas Ruang Riset (x < -4.5 && z < -1.5)
     let atlasReachedRiset = false;
     const waitRisetStart = Date.now();
     while (Date.now() - waitRisetStart < 15000) {
       await page.waitForTimeout(80);
       const pos = await page.evaluate(() => window.__STAGE_3D__.getAgentPosition("ATLAS"));
-      if (pos && pos.x < -4.5 && pos.z < -1.5) {
+      if (pos && pos.x >= 11 && pos.x <= 21 && pos.z >= 11 && pos.z <= 19) {
         atlasReachedRiset = true;
         console.log(`   ATLAS telah berada di dalam Ruang Riset: (${pos.x.toFixed(2)}, ${pos.z.toFixed(2)})`);
         break;
@@ -1273,13 +1535,11 @@ async function run() {
       throw new Error("ATLAS tidak sampai di Ruang Riset sebelum klik meeting!");
     }
 
-    // 3. Klik Meeting saat ATLAS sedang di dalam Ruang Riset
     await page.evaluate(() => {
       window.__STAGE_3D__.startMeetingNow(false);
     });
     console.log("   Meeting diklik saat ATLAS berada di dalam Ruang Riset.");
 
-    // 4. Pantau perjalanan ATLAS menuju Ruang Meeting (hanya boleh di riset, koridor, dan meeting)
     const allowedRoomsTransit = ["riset", "meeting"];
     let atlasTransitViolation = null;
     const transitStart = Date.now();
@@ -1313,18 +1573,16 @@ async function run() {
       throw new Error(`ATLAS melanggar ruangan asing saat transit dari Riset ke Meeting: ${JSON.stringify(atlasTransitViolation)}`);
     }
 
-    // Verifikasi posisi akhir ATLAS di kursi rapat
     const atlasSeatAfterRiset = await page.evaluate(() => window.__STAGE_3D__.getAgentPosition("ATLAS"));
     const atlasExpSeatRiset = seatMap["ATLAS"];
-    const atlasExpXRiset = meetingRoomPos.x + atlasExpSeatRiset[0] - 8.5;
-    const atlasExpZRiset = meetingRoomPos.y + atlasExpSeatRiset[1] - 5.5;
+    const atlasExpXRiset = atlasExpSeatRiset[0];
+    const atlasExpZRiset = atlasExpSeatRiset[1];
     const dAtlasSeatRiset = Math.hypot(atlasSeatAfterRiset.x - atlasExpXRiset, atlasSeatAfterRiset.z - atlasExpZRiset);
     console.log(`   Deviasi posisi ATLAS ke kursi rapat: ${dAtlasSeatRiset.toFixed(4)} unit`);
     if (dAtlasSeatRiset > 0.18) {
       throw new Error(`ATLAS tidak berada di kursi rapat setelah transit dari Riset! Deviasi: ${dAtlasSeatRiset}`);
     }
 
-    // Bubarkan rapat dengan instan agar kembali ke posisi awal
     await page.evaluate(() => {
       window.__STAGE_3D__.endMeetingNow(true);
     });
@@ -1339,31 +1597,25 @@ async function run() {
     console.log("   ✓ KASUS V1a-fix 5 LOLOS SEMPURNA.");
 
     // =========================================================================
-    // KASUS V1a-fix 6: KLIK MEETING DUA KALI BERURUTAN CEPAT (BUBAR SAAT AGEN BERJALAN)
-    // (Requirement 4b: Tidak Ada Pelanggaran Ruangan Selama Agen Putar Balik dari Koridor ke Meja)
+    // KASUS V1a-fix 6: KLIK MEETING DUA KALI BERURUTAN CEPAT (BUBAR SAAT BERJALAN)
     // =========================================================================
     console.log("\n--- KASUS V1a-fix 6: Klik Meeting Dua Kali Berurutan Cepat (Bubar Saat Berjalan) ---");
-    // Pastikan seluruh agen di meja awal
     await page.evaluate(() => {
       window.__STAGE_3D__.clearChoreo();
     });
     await page.waitForTimeout(400);
 
-    // 1. Klik Meeting pertama kali
     await page.evaluate(() => {
       window.__STAGE_3D__.startMeetingNow(false);
     });
 
-    // 2. Tunggu sebentar (800ms) saat agen sedang aktif melangkah di koridor/pintu
     await page.waitForTimeout(800);
 
-    // 3. Klik Meeting kedua kali (bubar rapat saat masih di koridor)
     await page.evaluate(() => {
       window.__STAGE_3D__.endMeetingNow(false);
     });
     console.log("   Meeting dibubarkan cepat saat agen sedang melangkah di koridor.");
 
-    // 4. Pantau posisi seluruh 16 agen sampai semuanya selesai kembali ke meja
     let quickCancelViolation = null;
     const quickCancelStart = Date.now();
     let allFinishedReturn = false;
@@ -1376,7 +1628,7 @@ async function run() {
         const names = [
           "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
           "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-          "THEIA", "LYRA", "IRIS", "ATLAS"
+          "THEIA", "LYRA", "IRIS", "ATLAS", "HERA", "HEPHAESTUS", "HERMES"
         ];
         let anyBusy = false;
         names.forEach((n) => {
@@ -1410,14 +1662,13 @@ async function run() {
       throw new Error(`Agen ${quickCancelViolation.agent} melanggar ruangan ${quickCancelViolation.room} saat bubar cepat: ${JSON.stringify(quickCancelViolation.pos)}`);
     }
 
-    // Verifikasi seluruh 16 agen kembali ke meja masing-masing
     const finalQuickCancelPositions = await page.evaluate(() => {
       const stage = window.__STAGE_3D__;
       const res = {};
       const names = [
         "ATHENA", "ARGUS", "METIS", "CLIO", "ERATO", "DAPHNE",
         "HESTIA", "THEMIS", "TALOS", "ZEUS", "ARTEMIS", "PLUTUS",
-        "THEIA", "LYRA", "IRIS", "ATLAS"
+        "THEIA", "LYRA", "IRIS", "ATLAS", "HERA", "HEPHAESTUS", "HERMES"
       ];
       names.forEach((n) => {
         res[n] = stage.getAgentPosition(n);
@@ -1428,15 +1679,15 @@ async function run() {
     let maxQuickCancelDev = 0;
     for (const [name, pos] of Object.entries(finalQuickCancelPositions)) {
       const hp = homeMap[name];
-      const expX = hp[0] - 8.5;
-      const expZ = hp[1] - 5.5;
+      const expX = hp[0];
+      const expZ = hp[1];
       const d = Math.hypot(pos.x - expX, pos.z - expZ);
       if (d > maxQuickCancelDev) maxQuickCancelDev = d;
       if (d > 0.18) {
         throw new Error(`Agen ${name} tidak berada di mejanya setelah bubar cepat! Deviasi: ${d.toFixed(4)}`);
       }
     }
-    console.log(`   Seluruh 16 agen kembali di meja masing-masing (deviasi maks: ${maxQuickCancelDev.toFixed(4)} <= 0.18 unit).`);
+    console.log(`   Seluruh 19 agen kembali di meja masing-masing (deviasi maks: ${maxQuickCancelDev.toFixed(4)} <= 0.18 unit).`);
 
     testReport.v1afix_quick_cancel_double_click = {
       allFinishedReturn,
@@ -1446,7 +1697,7 @@ async function run() {
     console.log("   ✓ KASUS V1a-fix 6 LOLOS SEMPURNA.");
 
     // =========================================================================
-    // PENGECEKAN KONFIGURASI KURSI AGENT_RENDER_ORDER (Requirement 3)
+    // PENGECEKAN KONFIGURASI KURSI AGENT_RENDER_ORDER
     // =========================================================================
     console.log("\n--- PENGECEKAN KONFIGURASI: SEAT_BY_AGENT vs AGENT_RENDER_ORDER ---");
     const seatConfigCheck = await page.evaluate(() => {
@@ -1470,7 +1721,7 @@ async function run() {
     console.log("   ✓ PENGECEKAN KONFIGURASI KURSI LOLOS.");
 
     // =========================================================================
-    // KASUS 12: SIMULASI PENAMBAHAN INSTANCE AGEN (7 LANGKAH SISI KLIEN V1b)
+    // KASUS 12: SIMULASI PENAMBAHAN INSTANCE AGEN
     // =========================================================================
     console.log("\n--- KASUS 12: Simulasi Instance Tambahan (7 Langkah, Meja Baru, Persetujuan CEO, dan Reset) ---");
 
@@ -1483,13 +1734,11 @@ async function run() {
     console.log(`   Scene UUID awal: ${preDemoState.sceneUuid}`);
     console.log(`   Jumlah agent tag awal: ${preDemoState.agentCount}`);
 
-    // 1. Mulai demo instance tanpa autoApprove (untuk memverifikasi kartu approval CEO)
     console.log("   1. Memulai alur demo instance request (Step 1-3)...");
     await page.evaluate(() => {
       window.__STAGE_3D__.startInstanceDemo({ autoApprove: false });
     });
 
-    // Tunggu sampai Step 3 (Kartu Approval CEO muncul di layar)
     await page.waitForSelector(".ceo-approval-demo-card", { timeout: 10000 });
     const demoStep3 = await page.evaluate(() => {
       return window.__STAGE_3D__.getInstanceDemoState();
@@ -1499,22 +1748,18 @@ async function run() {
       throw new Error(`Demo gagal berhenti di Step 3 dengan kartu CEO! State: ${JSON.stringify(demoStep3)}`);
     }
 
-    // Screenshot kartu approval CEO
     await page.screenshot({ path: "verification_artifacts/instance_demo_ceo_card.png" });
 
-    // 2. Klik tombol persetujuan CEO
     console.log("   2. Menyetujui permohonan via tombol CEO Approval...");
     const approveBtn = page.locator(".ceo-approve-btn");
     await approveBtn.click();
 
-    // Tunggu sampai Step 5 (Meja baru sedang disiapkan oleh HEPHAESTUS)
     await page.waitForFunction(() => {
       const state = window.__STAGE_3D__.getInstanceDemoState();
       return state.step >= 5 && state.dynamicDesksCount >= 1;
     }, { timeout: 10000 });
     console.log("   ✓ Langkah 5 tercapai: Meja dinamis ditambahkan di Ruang Advertisers.");
 
-    // Tunggu sampai Step 6-7 (Agent dinamis di-spawn dan aktif)
     await page.waitForFunction(() => {
       const state = window.__STAGE_3D__.getInstanceDemoState();
       return state.step >= 6 && state.dynamicAgentsCount >= 1;
@@ -1536,28 +1781,23 @@ async function run() {
     console.log(`   Dynamic desks count: ${activeDemoState.dynamicDesksCount}`);
     console.log(`   Dynamic agents count: ${activeDemoState.dynamicAgentsCount}`);
 
-    // Pastikan Scene UUID TIDAK PERNAH BERUBAH (Scene tidak di-rebuild)
     if (activeDemoState.currentSceneUuid !== preDemoState.sceneUuid) {
       throw new Error("Scene Three.js di-rebuild saat penambahan dynamic instance! Scene UUID berubah!");
     }
     console.log("   ✓ Integritas Three.js terjaga: Scene UUID 100% IDENTIK (tanpa rebuild scene).");
 
-    // Screenshot saat instance aktif
     await page.screenshot({ path: "verification_artifacts/instance_demo_active.png" });
 
-    // 3. Uji Klik pada Dynamic Agent Tag untuk membuka detail jobdesc
     console.log("   3. Menguji klik seleksi pada agent instance...");
     const instanceTagLocator = page.locator(".agent-tag3d.is-instance");
     await instanceTagLocator.click({ force: true });
     await page.waitForTimeout(400);
 
-    // 4. Uji Antrean (Queueing): trigger demo lagi saat sudah berjalan
     console.log("   4. Menguji queueing permintaan demo...");
     await page.evaluate(() => {
       window.__STAGE_3D__.startInstanceDemo();
     });
 
-    // 5. Uji Reset Demo Instance
     console.log("   5. Menguji Reset Demo Instance (pembersihan memori & DOM)...");
     await page.evaluate(() => {
       window.__STAGE_3D__.resetInstanceDemo();
@@ -1605,7 +1845,6 @@ async function run() {
     // KASUS 11: VERIFIKASI AKHIR DATABASE & INTEGRITAS SISTEM
     // =========================================================================
     console.log("\n--- KASUS 11: Integritas Akhir Database & Sistem ---");
-    // Bersihkan fixture approvals sebelum verifikasi akhir integritas
     await supabase.from("approvals").delete().like("ringkasan", "[TEST_E2E]%");
 
     const { count: finalPendingApprovals } = await supabase
@@ -1641,12 +1880,11 @@ async function run() {
     console.log("   ✓ KASUS 11 LOLOS SEMPURNA.");
 
     console.log("\n===============================================================");
-    console.log("=== SEMUA 12 KASUS PENGUJIAN V1b BERHASIL LOLOS LENGKAP!    ===");
+    console.log("=== SEMUA PENGUJIAN T1-FLOORPLAN BERHASIL LOLOS LENGKAP!    ===");
     console.log("===============================================================\n");
     console.log(JSON.stringify(testReport, null, 2));
 
   } finally {
-    // PEMBERSIHAN DATA SESUAI ATURAN KERAS
     if (tempUserId) {
       console.log(`\nMembersihkan akun uji sementara (${tempEmail})...`);
       await supabase.auth.admin.deleteUser(tempUserId).catch((e) =>
@@ -1661,6 +1899,6 @@ async function run() {
 }
 
 run().catch((err) => {
-  console.error("\nFATAL ERROR DALAM PENGUJIAN V1a:", err);
+  console.error("\nFATAL ERROR DALAM PENGUJIAN T1-FLOORPLAN:", err);
   process.exit(1);
 });

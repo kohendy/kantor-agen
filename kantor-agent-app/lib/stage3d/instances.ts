@@ -5,12 +5,9 @@
 import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import {
-  ROOMS,
-  SLOTS,
   RoomConfig,
-  colorOfAgent,
 } from "@/lib/officeConfig";
-import { OFFSET_X, OFFSET_Z } from "./walkways";
+import { FLOORPLAN } from "./floorplan";
 import type { AgentStatus } from "@/lib/types";
 
 export type DeskState = "kosong" | "disiapkan" | "terisi";
@@ -20,7 +17,7 @@ export interface RoomSlot {
   roomId: string;
   slotIndex: number;
   position: { x: number; y: number; z: number }; // Posisi dunia Three.js
-  relPosition: [number, number]; // [rx, ry] relatif terhadap pelat ruangan (0..5)
+  relPosition: [number, number]; // [rx, ry] relatif terhadap pelat ruangan
   deskState: DeskState;
   instanceId: string | null;
 }
@@ -45,115 +42,72 @@ export interface ExpansionState {
 }
 
 export const ROOM_EXPANSION_SIDES: Record<string, ExpansionSide> = {
-  riset: "west",
-  copy: "east",
-  lp: "west",
-  ads: "compact", // Advertiser di tengah grid, tidak punya sisi bebas: memadatkan tata letak
-  creative: "east",
-  manager: "south",
+  advertiser: "east",
+  ads: "east",
+  operasional: "north",
+  manager: "west",
+  riset: "south",
   hr: "west",
-  operasional: "east",
   sosmed: "south",
+  creative: "south",
+  copy: "south",
+  landing_page: "south",
+  lp: "south",
   meeting: "compact",
 };
 
-// Hitung koordinat slot meja dalam ruangan secara dinamis
+// Hitung koordinat slot meja dalam ruangan secara dinamis memakai Bay dari Floorplan
 export function calculateRoomSlotPosition(
   room: RoomConfig,
   slotIndex: number,
   isExpanded: boolean = false
 ): { rel: [number, number]; world: { x: number; y: number; z: number } } {
+  const normRoomId = room.id === "ads" ? "advertiser" : room.id === "lp" ? "landing_page" : room.id;
+  const bay = FLOORPLAN.bays.find((b) => b.roomId === normRoomId);
+
+  // Jika slot tambahan (slotIndex >= 3) dan bay tersedia: tempatkan di zona bay
+  if (slotIndex >= 3 && bay && isExpanded) {
+    const wx = +(bay.x + bay.w / 2).toFixed(3);
+    const wy = 0;
+    const wz = +(bay.z + bay.d / 2).toFixed(3);
+    return {
+      rel: [wx - room.x, wz - room.y],
+      world: { x: wx, y: wy, z: wz },
+    };
+  }
+
+  // Posisi slot standar di dalam ruangan
   let relX: number;
   let relY: number;
 
-  const side = ROOM_EXPANSION_SIDES[room.id] ?? "west";
-
   if (room.id === "hr") {
-    if (slotIndex === 0) {
-      relX = 1.9;
-      relY = 2.5;
-    } else if (slotIndex === 1) {
-      relX = 3.4;
-      relY = 2.0;
-    } else {
-      // Slot ekspansi ke arah barat
-      relX = -1.0;
-      relY = 2.5;
-    }
-  } else if (room.id === "operasional") {
-    if (slotIndex === 0) {
-      relX = 2.5;
-      relY = 2.5;
-    } else if (slotIndex === 1) {
-      relX = 3.6;
-      relY = 3.6;
-    } else {
-      // Slot ekspansi ke arah timur
-      relX = 6.0;
-      relY = 2.5;
-    }
-  } else if (room.id === "sosmed") {
-    if (slotIndex === 0) {
-      relX = 2.5;
-      relY = 2.7;
-    } else if (slotIndex === 1) {
-      relX = 1.3;
-      relY = 1.8;
-    } else {
-      // Slot ekspansi ke arah selatan
-      relX = 2.5;
-      relY = 6.0;
-    }
-  } else if (room.id === "ads") {
-    // Ruang Advertiser: jika diperluas secara compact, meja disusun 2 baris rapat
-    if (isExpanded) {
-      const compactSlots: [number, number][] = [
-        [1.3, 1.6],
-        [3.6, 1.6],
-        [1.3, 3.6],
-        [3.6, 3.6],
-      ];
-      const s = compactSlots[slotIndex % compactSlots.length];
-      relX = s[0];
-      relY = s[1];
-    } else {
-      const s = SLOTS[slotIndex % SLOTS.length];
-      relX = s[0];
-      relY = s[1];
-    }
+    relX = slotIndex === 0 ? 4.5 : 2.5;
+    relY = 2.0;
+  } else if (normRoomId === "operasional") {
+    relX = slotIndex === 0 ? 4.5 : 2.5;
+    relY = 4.5;
+  } else if (normRoomId === "manager") {
+    relX = 4.5;
+    relY = 4.0;
+  } else if (normRoomId === "advertiser") {
+    relX = 3.5 + (slotIndex % 3) * 3.0;
+    relY = 4.5;
   } else {
-    // Ruangan standar (Riset, Copy, LP, Creative)
-    if (slotIndex < 3) {
-      const s = SLOTS[slotIndex];
-      relX = s[0];
-      relY = s[1];
-    } else {
-      // Slot ke-4 (slot perluasan 2 unit ke sisi bebas)
-      if (side === "west") {
-        relX = -1.0;
-        relY = 2.5;
-      } else if (side === "east") {
-        relX = 6.0;
-        relY = 2.5;
-      } else if (side === "south") {
-        relX = 2.5;
-        relY = 6.0;
-      } else {
-        relX = 2.5;
-        relY = -1.0;
-      }
-    }
+    // Ruang lainnya
+    relX = Math.min(room.w - 1.5, Math.max(1.5, 2.5 + (slotIndex % 3) * 2.5));
+    relY = Math.min(room.d - 1.5, Math.max(1.5, 3.5));
   }
 
-  const worldX = +(room.x + relX + OFFSET_X).toFixed(3);
+  const worldX = +(room.x + relX).toFixed(3);
   const worldY = 0;
-  const worldZ = +(room.y + relY + OFFSET_Z).toFixed(3);
+  const worldZ = +(room.y + relY).toFixed(3);
 
   return {
     rel: [relX, relY],
     world: { x: worldX, y: worldY, z: worldZ },
   };
 }
+
 
 export interface DynamicDeskResult {
   group: THREE.Group;
@@ -191,7 +145,7 @@ export function createDeskMesh(
   });
 
   const deskMesh = new THREE.Mesh(deskGeo, deskMat);
-  deskMesh.position.set(slotPos.world.x + 0.1, 0.22, slotPos.world.z - 0.85);
+  deskMesh.position.set(slotPos.world.x, 0.22, slotPos.world.z + 0.8);
   group.add(deskMesh);
 
   const edges = new THREE.LineSegments(deskTopEdgeGeo, deskEdgeMat);
@@ -206,7 +160,7 @@ export function createDeskMesh(
     emissiveIntensity: deskState === "disiapkan" ? 0.7 : 0.4,
   });
   const monMesh = new THREE.Mesh(monGeo, monMat);
-  monMesh.position.set(slotPos.world.x + 0.1, 0.56, slotPos.world.z - 0.93);
+  monMesh.position.set(slotPos.world.x, 0.56, slotPos.world.z + 0.9);
   group.add(monMesh);
 
   let prepGlow: THREE.Mesh | undefined;
@@ -231,7 +185,7 @@ export function createDeskMesh(
     tagDiv.className = "desk-prep-tag";
     tagDiv.textContent = "MEJA DISIAPKAN";
     prepTag = new CSS2DObject(tagDiv);
-    prepTag.position.set(slotPos.world.x, 0.95, slotPos.world.z - 0.85);
+    prepTag.position.set(slotPos.world.x, 0.95, slotPos.world.z + 0.8);
     group.add(prepTag);
   }
 

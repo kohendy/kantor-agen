@@ -1,14 +1,18 @@
-// Konfigurasi statis: tampilan, ruangan, jobdesc, tool, dan deskripsi agent.
-// Ini sengaja tidak diambil dari database - sesuai prototipe, teks jobdesc/tool/desc
-// tetap jadi konfigurasi statis di kode. Yang dinamis dari Supabase hanya status,
-// peran singkat, dan ruangan (dipakai untuk validasi/fallback), serta Mission Log.
+// lib/officeConfig.ts
+// Konfigurasi statis diturunkan dari Floorplan (sumber kebenaran tunggal).
+// Menampung metadata ruangan, jobdesc, tool, deskripsi agent, serta posisi meja dan kursi rapat.
+
+import { FLOORPLAN } from './stage3d/floorplan';
 
 export interface RoomConfig {
   id: string;
   name: string;
   color: string;
   x: number;
-  y: number;
+  y: number; // Disinkronkan dengan z floorplan untuk kompatibilitas SVG/Stage
+  z: number;
+  w: number;
+  d: number;
   meeting?: boolean;
   desc: string;
   agents: string[];
@@ -21,110 +25,79 @@ export interface AgentConfig {
   desc: string;
 }
 
-// Nama agent baru: disimpan sebagai konstanta agar mudah diubah kemudian
 export const MANAGER_AGENT_NAME = "ATLAS";
 export const MANAGER_ROOM_ID = "manager";
 
-export const ROOMS: RoomConfig[] = [
-  {
-    id: "riset",
-    name: "RISET",
-    color: "#f5a623",
-    x: 0,
-    y: 0,
-    desc: "Mencari tahu siapa audiensnya, apa yang dipakai kompetitor, dan apa yang diminta calon pembeli.",
-    agents: ["ATHENA", "ARGUS", "METIS"],
-  },
-  {
-    id: "copy",
-    name: "COPY",
-    color: "#ff4fa3",
-    x: 12,
-    y: 0,
-    desc: "Menulis hook, skrip video, dan naskah landing page. Setiap klaim lewat review sebelum dipakai.",
-    agents: ["CLIO", "ERATO", "DAPHNE"],
-  },
-  {
-    id: "lp",
-    name: "LANDING PAGE",
-    color: "#2ee6a8",
-    x: 0,
-    y: 6,
-    desc: "Menyusun, memeriksa, dan mempercepat halaman tujuan iklan.",
-    agents: ["HESTIA", "THEMIS", "TALOS"],
-  },
-  {
-    id: "ads",
-    name: "ADVERTISER",
-    color: "#29c7ff",
-    x: 6,
-    y: 6,
-    desc: "Mengatur ad set, anggaran, dan laporan performa harian.",
-    agents: ["ZEUS", "ARTEMIS", "PLUTUS"],
-  },
-  {
-    id: "creative",
-    name: "CREATIVE",
-    color: "#a78bfa",
-    x: 12,
-    y: 6,
-    desc: "Mengubah hook dan skrip menjadi video UGC dan creative statis siap tayang.",
-    agents: ["THEIA", "LYRA", "IRIS"],
-  },
-  {
-    id: "meeting",
-    name: "MEETING H+1",
-    color: "#b7f34a",
-    x: 6,
-    y: 0,
-    meeting: true,
+// Deskripsi statis per ruangan
+const ROOM_DESCRIPTIONS: Record<string, { desc: string; agents: string[] }> = {
+  meeting: {
     desc: "Ruang rapat harian. Semua agent berkumpul untuk membahas laporan hari sebelumnya.",
     agents: [],
   },
-  {
-    id: MANAGER_ROOM_ID,
-    name: "MANAGER",
-    color: "#f07167", // Koral elegan
-    x: 6,
-    y: 12,
-    desc: "Pusat komando dan orkestrasi kantor: menerima brief CEO, merencanakan workflow, dan mendelegasikan tugas ke kepala departemen.",
-    agents: [MANAGER_AGENT_NAME],
-  },
-  {
-    id: "hr",
-    name: "HR",
-    color: "#e879f9", // Magenta cerah
-    x: 0,
-    y: 12,
-    desc: "Menangani rekrutmen, penempatan agent, dan permintaan kapasitas tambahan tim.",
-    agents: ["HERA"],
-  },
-  {
-    id: "operasional",
-    name: "OPERASIONAL",
-    color: "#94a3b8", // Slate netral terang
-    x: 12,
-    y: 12,
+  operasional: {
     desc: "Menyiapkan meja, peralatan kerja, dan memperluas ruangan untuk penambahan agent baru.",
     agents: ["HEPHAESTUS"],
   },
-  {
-    id: "sosmed",
-    name: "SOSIAL MEDIA",
-    color: "#fb923c", // Oranye hangat cerah
-    x: 6,
-    y: 18,
+  advertiser: {
+    desc: "Mengatur ad set, anggaran, dan laporan performa harian.",
+    agents: ["ZEUS", "ARTEMIS", "PLUTUS"],
+  },
+  manager: {
+    desc: "Pusat komando dan orkestrasi kantor: menerima brief CEO, merencanakan workflow, dan mendelegasikan tugas ke kepala departemen.",
+    agents: [MANAGER_AGENT_NAME],
+  },
+  riset: {
+    desc: "Mencari tahu siapa audiensnya, apa yang dipakai kompetitor, dan apa yang diminta calon pembeli.",
+    agents: ["ATHENA", "ARGUS", "METIS"],
+  },
+  hr: {
+    desc: "Menangani rekrutmen, penempatan agent, dan permintaan kapasitas tambahan tim.",
+    agents: ["HERA"],
+  },
+  sosmed: {
     desc: "Merencanakan dan mengelola kalender konten media sosial untuk Instagram dan Threads.",
     agents: ["HERMES"],
   },
-];
+  creative: {
+    desc: "Mengubah hook dan skrip menjadi video UGC dan creative statis siap tayang.",
+    agents: ["THEIA", "LYRA", "IRIS"],
+  },
+  copy: {
+    desc: "Menulis hook, skrip video, dan naskah landing page. Setiap klaim lewat review sebelum dipakai.",
+    agents: ["CLIO", "ERATO", "DAPHNE"],
+  },
+  landing_page: {
+    desc: "Menyusun, memeriksa, dan mempercepat halaman tujuan iklan.",
+    agents: ["HESTIA", "THEMIS", "TALOS"],
+  },
+};
+
+// Bangun ROOMS dari FLOORPLAN (hanya departemen yang ada di ROOM_DESCRIPTIONS)
+export const ROOMS: RoomConfig[] = FLOORPLAN.rooms
+  .filter((r) => r.id in ROOM_DESCRIPTIONS)
+  .map((r) => {
+    const meta = ROOM_DESCRIPTIONS[r.id];
+    return {
+      id: r.id,
+      name: r.label.toUpperCase(),
+      color: r.color,
+      x: r.x,
+      y: r.z, // y = z untuk 2D projection
+      z: r.z,
+      w: r.w,
+      d: r.d,
+      meeting: r.meeting,
+      desc: meta.desc,
+      agents: meta.agents,
+    };
+  });
 
 export const AGENTS: Record<string, AgentConfig> = {
   [MANAGER_AGENT_NAME]: {
     role: "Manajer Kantor",
     lead: true,
     tools: ["database"],
-    desc: "Menerima brief CEO dan mendelegasikan ke departemen. Logika perencanaan dan orkestrasi otomatis (rencana) sedang dikembangkan.",
+    desc: "Menerima brief CEO dan mendelegasikan ke departemen. Logika perencanaan dan orkestrasi otomatis sedang dikembangkan.",
   },
   HERA: {
     role: "Kepala HR",
@@ -142,7 +115,7 @@ export const AGENTS: Record<string, AgentConfig> = {
     role: "Perencana Konten Sosial Media",
     lead: true,
     tools: ["panduan gaya", "database"],
-    desc: "Merencanakan kalender konten Instagram dan Threads; logika otomatis sedang dikembangkan, hasil akan melewati persetujuan.",
+    desc: "Merencanakan kalender konten Instagram dan Threads; hasil akan melewati persetujuan.",
   },
   ATHENA: {
     role: "Koordinator Riset",
@@ -169,7 +142,7 @@ export const AGENTS: Record<string, AgentConfig> = {
   ERATO: {
     role: "Penulis Landing Page",
     tools: ["pengolah kata", "database"],
-    desc: "Menulis headline, manfaat, dan FAQ halaman penjualan. Klaim yang berisiko ditandai untuk review manusia.",
+    desc: "Menulis headline, manfaat, dan FAQ halaman penjualan. Klaim berisiko ditandai untuk review manusia.",
   },
   DAPHNE: {
     role: "Hook dan Skrip",
@@ -196,23 +169,23 @@ export const AGENTS: Record<string, AgentConfig> = {
     role: "Kepala Iklan",
     lead: true,
     tools: ["database"],
-    desc: "Menetapkan rencana uji, target biaya, dan prioritas ad set. Menyaring usulan dari Artemis dan Plutus, menyelesaikan bentrokan, lalu mengajukan yang layak ke manusia. Tidak mengubah akun iklan sendiri.",
+    desc: "Menetapkan rencana uji, target biaya, dan prioritas ad set. Tidak mengubah akun iklan sendiri.",
   },
   ARTEMIS: {
     role: "Pengelola Kampanye dan Uji",
     tools: ["Meta Ads lewat Pipeboard (rencana)"],
-    desc: "Membuat campaign, ad set, dan varian iklan uji sesuai rencana Zeus (selalu dibuat nonaktif), membandingkan hasil uji, menganalisis performa, dan mengganti materi iklan lalu menganalisisnya ulang. Tidak mengubah budget atau menjeda iklan.",
+    desc: "Membuat campaign, ad set, dan varian iklan uji sesuai rencana Zeus. Tidak mengubah budget langsung.",
   },
   PLUTUS: {
     role: "Anggaran dan Laporan",
     tools: ["Meta Ads lewat Pipeboard (rencana)", "database"],
-    desc: "Mengawasi biaya dan sisa anggaran, mengusulkan jeda untuk iklan boros dan kenaikan budget untuk yang terbukti dalam plafon, serta mengirim laporan harian. Tidak membuat atau mengubah materi iklan.",
+    desc: "Mengawasi biaya dan sisa anggaran, mengusulkan jeda iklan boros, dan mengirim laporan harian.",
   },
   THEIA: {
     role: "Direktur Creative",
     lead: true,
     tools: ["papan brief", "database"],
-    desc: "Memilih angle yang diproduksi, menjaga arah visual, dan menyetujui creative sebelum masuk ke tim iklan.",
+    desc: "Memilih angle yang diproduksi, menjaga arah visual, dan menyetujui creative.",
   },
   LYRA: {
     role: "Video UGC",
@@ -226,94 +199,117 @@ export const AGENTS: Record<string, AgentConfig> = {
   },
 };
 
-export const SLOTS: [number, number][] = [
-  [1.3, 2.0],
-  [3.4, 1.5],
-  [2.6, 3.9],
-];
+// Posisi meja rumah (Home Desks) 19 agent
+// Koordinat absolut dunia (x, z) di dalam ruangan masing-masing
+function computeHomePositions(): Record<string, [number, number]> {
+  return {
+    // MANAGER (0, 11, 9, 9): ATLAS duduk di x=4.5, z=15.0 menghadap meja di selatan (z=15.5)
+    [MANAGER_AGENT_NAME]: [4.5, 15.0],
 
-// Posisi duduk di ruang meeting, relatif terhadap sudut ruangan (0..5, 0..5).
-// Pemetaan eksplisit berdasarkan nama agen (SEAT_BY_AGENT) memastikan
-// penambahan ruang atau agen baru (seperti HR/Ops di V1b) tidak menggeser kursi rapat.
+    // HR (0, 21, 9, 4): HERA
+    HERA: [4.5, 23.0],
+
+    // OPERASIONAL (17, 0, 9, 9): HEPHAESTUS
+    HEPHAESTUS: [21.5, 4.5],
+
+    // SOSMED (0, 27, 10, 7): HERMES
+    HERMES: [5.0, 30.5],
+
+    // RISET (11, 11, 10, 8): ATHENA, ARGUS, METIS
+    ATHENA: [14.0, 14.0],
+    ARGUS: [18.0, 14.0],
+    METIS: [16.0, 16.5],
+
+    // ADVERTISER (28, 0, 13, 9): ZEUS, ARTEMIS, PLUTUS
+    ZEUS: [31.5, 4.5],
+    ARTEMIS: [34.5, 4.5],
+    PLUTUS: [37.5, 4.5],
+
+    // CREATIVE (11, 27, 10, 7): THEIA, LYRA, IRIS
+    THEIA: [13.5, 30.5],
+    LYRA: [16.0, 30.5],
+    IRIS: [18.5, 30.5],
+
+    // COPY (22, 27, 10, 7): CLIO, ERATO, DAPHNE
+    CLIO: [24.5, 30.5],
+    ERATO: [27.0, 30.5],
+    DAPHNE: [29.5, 30.5],
+
+    // LANDING PAGE (33, 27, 7, 7): HESTIA, THEMIS, TALOS
+    HESTIA: [35.0, 29.5],
+    THEMIS: [37.0, 31.5],
+    TALOS: [35.0, 31.5],
+  };
+}
+
+export const HOME_POSITIONS = computeHomePositions();
+
+// Kursi Meeting (19 kursi) mengelilingi meja panjang di dalam Ruang Meeting (0, 0, 15, 9).
+// Koordinat absolut dunia (x, z). Meja berada di tengah (x: 3.5..11.5, z: 3.5..5.5).
 export const SEAT_BY_AGENT: Record<string, [number, number]> = {
-  // Pimpinan rapat (Manager ATLAS) di kepala meja, menghadap ke ruang
-  [MANAGER_AGENT_NAME]: [2.5, 1.4],
-  // Baris utara meja
-  ATHENA: [1.3, 1.4],
-  CLIO: [3.7, 1.4],
-  ARGUS: [1.0, 0.7],
-  METIS: [2.0, 0.7],
-  ERATO: [3.0, 0.7],
-  DAPHNE: [4.0, 0.7],
-  // Sisi barat (kiri meja)
-  HESTIA: [0.6, 2.3],
-  THEMIS: [0.6, 3.1],
-  HERMES: [0.6, 3.9],
-  // Sisi timur (kanan meja)
-  ZEUS: [4.4, 2.3],
-  THEIA: [4.4, 3.1],
-  // Sisi selatan meja
-  TALOS: [1.2, 3.9],
-  ARTEMIS: [2.0, 3.9],
-  PLUTUS: [3.0, 3.9],
-  LYRA: [3.8, 3.9],
-  HERA: [1.5, 4.5],
-  IRIS: [2.5, 4.5],
-  HEPHAESTUS: [3.5, 4.5],
+  // Pimpinan rapat (Manager ATLAS) di kepala barat meja
+  [MANAGER_AGENT_NAME]: [2.5, 4.5],
+
+  // Baris utara meja (z = 2.6)
+  ATHENA: [4.0, 2.6],
+  ARGUS: [5.0, 2.6],
+  METIS: [6.0, 2.6],
+  CLIO: [7.0, 2.6],
+  ERATO: [8.0, 2.6],
+  DAPHNE: [9.0, 2.6],
+  HESTIA: [10.0, 2.6],
+  THEMIS: [11.0, 2.6],
+
+  // Baris selatan meja (z = 6.4)
+  TALOS: [4.0, 6.4],
+  ZEUS: [5.0, 6.4],
+  ARTEMIS: [6.0, 6.4],
+  PLUTUS: [7.0, 6.4],
+  THEIA: [8.0, 6.4],
+  LYRA: [9.0, 6.4],
+  IRIS: [10.0, 6.4],
+  HERA: [11.0, 6.4],
+
+  // Kepala timur meja (x = 12.5)
+  HEPHAESTUS: [12.5, 3.9],
+  HERMES: [12.5, 5.1],
 };
 
-// Titik berdiri overflow deterministik di sepanjang dinding ruang Meeting
-// untuk agent instance dinamis tambahan
+// Titik overflow deterministik di sepanjang dinding ruang Meeting (0, 0, 15, 9)
 export const OVERFLOW_MEETING_SEATS: [number, number][] = [
-  [0.5, 0.8],
-  [0.5, 1.6],
-  [4.5, 0.8],
-  [4.5, 1.6],
-  [1.5, 0.5],
-  [3.5, 0.5],
-  [0.5, 4.6],
-  [4.5, 4.6],
+  [1.5, 1.5],
+  [13.5, 1.5],
+  [1.5, 7.5],
+  [13.5, 7.5],
+  [7.5, 1.5],
+  [7.5, 7.5],
+  [4.5, 1.5],
+  [10.5, 1.5],
 ];
 
 export function getOverflowSeat(index: number): [number, number] {
   return OVERFLOW_MEETING_SEATS[index % OVERFLOW_MEETING_SEATS.length];
 }
 
-// Posisi "rumah" tiap agent di ruangannya, dihitung sekali dari konfigurasi statis
-// (sama seperti HOME yang dibangun saat render SVG pada prototipe).
-function computeHomePositions(): Record<string, [number, number]> {
-  const home: Record<string, [number, number]> = {};
-  const sortedRooms = ROOMS.slice().sort((a, b) => a.x + a.y - (b.x + b.y));
-  sortedRooms.forEach((room) => {
-    room.agents.forEach((name, i) => {
-      const slot =
-        room.id === MANAGER_ROOM_ID
-          ? [2.5, 2.7]
-          : room.id === "hr"
-          ? [1.9, 2.5]
-          : room.id === "operasional"
-          ? [2.5, 2.5]
-          : room.id === "sosmed"
-          ? [2.5, 2.7]
-          : SLOTS[i];
-      home[name] = [room.x + slot[0], room.y + slot[1]];
-    });
-  });
-  return home;
-}
-
-export const HOME_POSITIONS = computeHomePositions();
-
 export const AGENT_RENDER_ORDER = Object.keys(AGENTS).sort(
   (a, b) =>
     HOME_POSITIONS[a][0] + HOME_POSITIONS[a][1] - (HOME_POSITIONS[b][0] + HOME_POSITIONS[b][1])
 );
 
-// Validasi ketat: setiap nama di AGENT_RENDER_ORDER wajib memiliki entri kursi di SEAT_BY_AGENT
+// Validasi startup: seluruh 19 agent wajib punya kursi rapat di SEAT_BY_AGENT
 for (const name of AGENT_RENDER_ORDER) {
   if (!SEAT_BY_AGENT[name]) {
     throw new Error(
       `[officeConfig] Konfigurasi kursi rapat hilang: agen "${name}" tidak memiliki entri di SEAT_BY_AGENT!`
+    );
+  }
+}
+
+// Validasi startup: seluruh 19 agent wajib punya posisi rumah di HOME_POSITIONS
+for (const name of AGENT_RENDER_ORDER) {
+  if (!HOME_POSITIONS[name]) {
+    throw new Error(
+      `[officeConfig] Konfigurasi meja rumah hilang: agen "${name}" tidak memiliki entri di HOME_POSITIONS!`
     );
   }
 }
@@ -334,3 +330,10 @@ export const STATUS_LABEL: Record<string, string> = {
   review: "Menunggu review",
   idle: "Idle",
 };
+
+export const SLOTS: [number, number][] = [
+  [1.3, 2.0],
+  [3.4, 1.5],
+  [2.6, 3.9],
+];
+

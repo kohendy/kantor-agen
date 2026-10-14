@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
   CSS2DRenderer,
@@ -19,11 +20,14 @@ import {
   colorOfAgent,
   roomOfAgent,
 } from "@/lib/officeConfig";
+import {
+  FLOORPLAN,
+  WallSide,
+  validateFloorplan,
+} from "@/lib/stage3d/floorplan";
 import type { AgentRow, EventRow, AgentStatus } from "@/lib/types";
 import { OfficeStage as OfficeStageSVG } from "./OfficeStage";
 import {
-  OFFSET_X,
-  OFFSET_Z,
   createWalkwayVisuals,
   getMeetingPathForAgent,
   findPath,
@@ -77,10 +81,49 @@ interface Room3DRecord {
   labelDiv: HTMLDivElement;
 }
 
-// Framing kamera 4 baris ruangan (Row 0, 1, 2, 3)
-// Row 0 z=-3, Row 1 z=3, Row 2 z=9, Row 3 z=15 -> Pusat z = 5.5, Pusat x = 0.0
-const INIT_CAM_POS = new THREE.Vector3(16.5, 24.0, 26.5);
-const INIT_CAM_TARGET = new THREE.Vector3(0, 0, 5.5);
+// Framing kamera ortografis isometrik dari Tenggara (Southeast)
+// Sudut Barat Laut (Meeting di 0,0) di pojok atas layar, Pintu Utama di tenggara menghadap kamera
+// Pusat denah 44x36 (termasuk bay x: -3..44, z: -2..36): (20.5, 0, 17.0)
+const INIT_CAM_TARGET = new THREE.Vector3(20.5, 0, 17.0);
+const INIT_CAM_POS = new THREE.Vector3(20.5 + 45.0, 38.0, 17.0 + 45.0);
+
+function updateCameraFrustum(cam: THREE.OrthographicCamera, w: number, h: number) {
+  const aspect = w / h;
+  const margin = 1.08;
+  const boundHalfW = 30.052 * margin; // ~32.45
+  const boundHalfH = 18.0 * margin;   // ~19.44
+  const halfH = Math.max(boundHalfH, boundHalfW / aspect);
+  const halfW = halfH * aspect;
+  cam.left = -halfW;
+  cam.right = halfW;
+  cam.top = halfH;
+  cam.bottom = -halfH;
+  cam.near = -200;
+  cam.far = 500;
+  cam.updateProjectionMatrix();
+}
+
+function createHatchedTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#141726";
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.strokeStyle = "rgba(245, 166, 35, 0.35)"; // garis arsiran amber halus
+  ctx.lineWidth = 10;
+  for (let d = -128; d <= 256; d += 24) {
+    ctx.beginPath();
+    ctx.moveTo(d, 0);
+    ctx.lineTo(d + 128, 128);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 2);
+  return tex;
+}
 
 function pill(status: string) {
   const cls = status === "working" ? "w" : status === "review" ? "r" : "";
@@ -167,7 +210,7 @@ export function OfficeStage3D({
   const infoContainerRef = useRef<HTMLDivElement>(null);
 
   const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cssRendererRef = useRef<CSS2DRenderer | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
@@ -348,11 +391,11 @@ export function OfficeStage3D({
         2200
       );
 
-      const adsRoom = ROOMS.find((r) => r.id === "ads")!;
+      const adsRoom = ROOMS.find((r) => r.id === "ads" || r.id === "advertiser")!;
       // Buat meja dinamis dengan status "disiapkan"
       const deskRes = createDeskMesh(adsRoom, 3, "disiapkan");
       dynamicDesksRef.current.push(deskRes);
-      const adsRec = roomRecordsRef.current["ads"];
+      const adsRec = roomRecordsRef.current["advertiser"] || roomRecordsRef.current["ads"];
       if (adsRec) {
         adsRec.group.add(deskRes.group);
       }
@@ -434,10 +477,12 @@ export function OfficeStage3D({
     }, 2000);
   }, []);
 
+  const startInstanceDemoRef = useRef<(opts?: { autoApprove?: boolean }) => void>(() => {});
+
   const startInstanceDemo = useCallback(
     (opts?: { autoApprove?: boolean }) => {
       if (isInstanceDemoRunningRef.current) {
-        demoQueueRef.current.push(() => startInstanceDemo(opts));
+        demoQueueRef.current.push(() => startInstanceDemoRef.current(opts));
         setDemoStatusMessage(
           "Permintaan diantrekan (Antrean #" + demoQueueRef.current.length + ")"
         );
@@ -492,6 +537,9 @@ export function OfficeStage3D({
     },
     [handleApproveCeo, handleResetInstanceDemo]
   );
+  useEffect(() => {
+    startInstanceDemoRef.current = startInstanceDemo;
+  }, [startInstanceDemo]);
 
   // Update agent status & material when agents prop changes (WITHOUT rebuilding scene)
   useEffect(() => {
@@ -635,10 +683,13 @@ export function OfficeStage3D({
     const height = container.clientHeight || 500;
     renderer.setSize(width, height, false);
 
+    validateFloorplan(FLOORPLAN);
+
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 220);
+    const camera = new THREE.OrthographicCamera(-20, 20, 20, -20, -200, 500);
+    updateCameraFrustum(camera, width, height);
     camera.position.copy(INIT_CAM_POS);
     camera.lookAt(INIT_CAM_TARGET);
     cameraRef.current = camera;
@@ -667,11 +718,11 @@ export function OfficeStage3D({
     controls.minPolarAngle = 0.12;
     controls.listenToKeyEvents(window);
 
-    // Pan clamping agar 4 baris ruangan tidak pernah hilang
+    // Pan clamping agar denah tidak hilang
     controls.addEventListener("change", () => {
-      controls.target.x = Math.max(-14, Math.min(14, controls.target.x));
+      controls.target.x = Math.max(-5, Math.min(45, controls.target.x));
       controls.target.y = Math.max(-2, Math.min(6, controls.target.y));
-      controls.target.z = Math.max(-8, Math.min(22, controls.target.z));
+      controls.target.z = Math.max(-5, Math.min(40, controls.target.z));
     });
 
     // Lighting (diinisialisasi dengan DaylightController)
@@ -682,39 +733,217 @@ export function OfficeStage3D({
     scene.add(ambientLight);
 
     const dirLight1 = new THREE.DirectionalLight(0xe8f0ff, 1.6);
-    dirLight1.position.set(16, 26, 20);
+    dirLight1.position.set(45, 35, 42);
     scene.add(dirLight1);
 
     const dirLight2 = new THREE.DirectionalLight(0xa78bfa, 0.8);
-    dirLight2.position.set(-16, 18, -16);
+    dirLight2.position.set(-5, 25, -8);
     scene.add(dirLight2);
 
     const meetingPoint = new THREE.PointLight(0xb7f34a, 0.9, 14);
-    meetingPoint.position.set(OFFSET_X + 8.5, 2.5, OFFSET_Z + 2.5);
+    meetingPoint.position.set(7.5, 2.5, 4.5);
     scene.add(meetingPoint);
 
     // Visual koridor halus di sela pelat
     const walkwayVisuals = createWalkwayVisuals();
+    walkwayVisuals.group.traverse((c) => {
+      if ((c as THREE.Mesh).isMesh || (c as THREE.LineSegments).isLineSegments) {
+        c.userData.isStatic = true;
+      }
+    });
     scene.add(walkwayVisuals.group);
 
     // Track raycast hit targets
     const raycastHitMeshes: THREE.Mesh[] = [];
     raycastHitMeshesRef.current = raycastHitMeshes;
 
+    // Merged Static Geometry: High Walls, Low Cutaway Walls, Door Sills, Corridors, Bays
+    const WALL_THICKNESS = 0.16;
+    const WALL_HIGH = 2.4;
+    const WALL_LOW = 0.65;
+    const SILL_HEIGHT = 0.04;
+
+    const highWallGeos: THREE.BufferGeometry[] = [];
+    const lowWallGeos: THREE.BufferGeometry[] = [];
+    const sillGeos: THREE.BufferGeometry[] = [];
+    const corridorGeos: THREE.BufferGeometry[] = [];
+    const bayGeos: THREE.BufferGeometry[] = [];
+
+    // Corridors
+    FLOORPLAN.corridors.forEach((c) => {
+      const geo = new THREE.BoxGeometry(c.w, 0.06, c.d);
+      geo.translate(c.x + c.w / 2, -0.035, c.z + c.d / 2);
+      corridorGeos.push(geo);
+    });
+
+    // Open common areas (atrium, atrium_selatan, taman_kecil)
+    FLOORPLAN.rooms
+      .filter((r) => r.kind === "common" && r.doors.length === 0)
+      .forEach((cr) => {
+        const geo = new THREE.BoxGeometry(cr.w, 0.06, cr.d);
+        geo.translate(cr.x + cr.w / 2, -0.035, cr.z + cr.d / 2);
+        corridorGeos.push(geo);
+      });
+
+    // Bays (hatched floor)
+    FLOORPLAN.bays.forEach((b) => {
+      const geo = new THREE.BoxGeometry(b.w, 0.06, b.d);
+      geo.translate(b.x + b.w / 2, -0.035, b.z + b.d / 2);
+      bayGeos.push(geo);
+    });
+
+    // Walls & door sills for enclosed rooms
+    const enclosedRooms = FLOORPLAN.rooms.filter(
+      (r) => r.kind === "dept" || r.doors.length > 0
+    );
+
+    enclosedRooms.forEach((r) => {
+      const sides: WallSide[] = ["N", "W", "S", "E"];
+      sides.forEach((side) => {
+        const isHigh = side === "N" || side === "W";
+        const wallH = isHigh ? WALL_HIGH : WALL_LOW;
+        const targetGeos = isHigh ? highWallGeos : lowWallGeos;
+        const sideDoors = r.doors
+          .filter((d) => d.side === side)
+          .sort((a, b) => a.offset - b.offset);
+
+        if (side === "N" || side === "S") {
+          const zCoord = side === "N" ? r.z : r.z + r.d;
+          let curX = 0;
+          for (const door of sideDoors) {
+            if (door.offset > curX) {
+              const segW = door.offset - curX;
+              const geo = new THREE.BoxGeometry(segW, wallH, WALL_THICKNESS);
+              geo.translate(r.x + curX + segW / 2, wallH / 2, zCoord);
+              targetGeos.push(geo);
+            }
+            const sillGeo = new THREE.BoxGeometry(door.width, SILL_HEIGHT, WALL_THICKNESS);
+            sillGeo.translate(r.x + door.offset + door.width / 2, SILL_HEIGHT / 2, zCoord);
+            sillGeos.push(sillGeo);
+            curX = door.offset + door.width;
+          }
+          if (curX < r.w) {
+            const segW = r.w - curX;
+            const geo = new THREE.BoxGeometry(segW, wallH, WALL_THICKNESS);
+            geo.translate(r.x + curX + segW / 2, wallH / 2, zCoord);
+            targetGeos.push(geo);
+          }
+        } else {
+          const xCoord = side === "W" ? r.x : r.x + r.w;
+          let curZ = 0;
+          for (const door of sideDoors) {
+            if (door.offset > curZ) {
+              const segD = door.offset - curZ;
+              const geo = new THREE.BoxGeometry(WALL_THICKNESS, wallH, segD);
+              geo.translate(xCoord, wallH / 2, r.z + curZ + segD / 2);
+              targetGeos.push(geo);
+            }
+            const sillGeo = new THREE.BoxGeometry(WALL_THICKNESS, SILL_HEIGHT, door.width);
+            sillGeo.translate(xCoord, SILL_HEIGHT / 2, r.z + door.offset + door.width / 2);
+            sillGeos.push(sillGeo);
+            curZ = door.offset + door.width;
+          }
+          if (curZ < r.d) {
+            const segD = r.d - curZ;
+            const geo = new THREE.BoxGeometry(WALL_THICKNESS, wallH, segD);
+            geo.translate(xCoord, wallH / 2, r.z + curZ + segD / 2);
+            targetGeos.push(geo);
+          }
+        }
+      });
+    });
+
+    const highWallMat = new THREE.MeshStandardMaterial({
+      color: 0x181a2e,
+      roughness: 0.5,
+      metalness: 0.2,
+    });
+    const lowWallMat = new THREE.MeshStandardMaterial({
+      color: 0x222642,
+      roughness: 0.5,
+      metalness: 0.2,
+    });
+    const sillMat = new THREE.MeshStandardMaterial({
+      color: 0x3d4368,
+      roughness: 0.4,
+      metalness: 0.3,
+    });
+    const corridorMat = new THREE.MeshStandardMaterial({
+      color: 0x101322,
+      roughness: 0.4,
+      metalness: 0.15,
+    });
+    const hatchedTex = createHatchedTexture();
+    const bayMat = new THREE.MeshStandardMaterial({
+      map: hatchedTex,
+      roughness: 0.45,
+      metalness: 0.2,
+    });
+
+    let highWallMesh: THREE.Mesh | null = null;
+    let lowWallMesh: THREE.Mesh | null = null;
+    let sillMesh: THREE.Mesh | null = null;
+    let corridorMesh: THREE.Mesh | null = null;
+    let bayMesh: THREE.Mesh | null = null;
+
+    if (highWallGeos.length > 0) {
+      const merged = BufferGeometryUtils.mergeGeometries(highWallGeos, false);
+      if (merged) {
+        highWallMesh = new THREE.Mesh(merged, highWallMat);
+        highWallMesh.name = "highWalls";
+        highWallMesh.userData.isStatic = true;
+        scene.add(highWallMesh);
+      }
+    }
+    if (lowWallGeos.length > 0) {
+      const merged = BufferGeometryUtils.mergeGeometries(lowWallGeos, false);
+      if (merged) {
+        lowWallMesh = new THREE.Mesh(merged, lowWallMat);
+        lowWallMesh.name = "lowWalls";
+        lowWallMesh.userData.isStatic = true;
+        scene.add(lowWallMesh);
+      }
+    }
+    if (sillGeos.length > 0) {
+      const merged = BufferGeometryUtils.mergeGeometries(sillGeos, false);
+      if (merged) {
+        sillMesh = new THREE.Mesh(merged, sillMat);
+        sillMesh.name = "doorSills";
+        sillMesh.userData.isStatic = true;
+        scene.add(sillMesh);
+      }
+    }
+    if (corridorGeos.length > 0) {
+      const merged = BufferGeometryUtils.mergeGeometries(corridorGeos, false);
+      if (merged) {
+        corridorMesh = new THREE.Mesh(merged, corridorMat);
+        corridorMesh.name = "corridors";
+        corridorMesh.userData.isStatic = true;
+        scene.add(corridorMesh);
+      }
+    }
+    if (bayGeos.length > 0) {
+      const merged = BufferGeometryUtils.mergeGeometries(bayGeos, false);
+      if (merged) {
+        bayMesh = new THREE.Mesh(merged, bayMat);
+        bayMesh.name = "expansionBays";
+        bayMesh.userData.isStatic = true;
+        scene.add(bayMesh);
+      }
+    }
+
     // Build Rooms
     const roomRecords: Record<string, Room3DRecord> = {};
     const floorMaterials: THREE.MeshStandardMaterial[] = [];
-    const floorBoxGeo = new THREE.BoxGeometry(5.0, 0.08, 5.0);
-    const floorEdgesGeo = new THREE.EdgesGeometry(floorBoxGeo);
 
     ROOMS.forEach((room) => {
       const roomGroup = new THREE.Group();
-      const cx = room.x + 2.5 + OFFSET_X;
-      const cz = room.y + 2.5 + OFFSET_Z;
-
+      const cx = room.x + room.w / 2;
+      const cz = room.z + room.d / 2;
       const roomColorHex = new THREE.Color(room.color).getHex();
 
       // Thin glass floor plate
+      const floorBoxGeo = new THREE.BoxGeometry(room.w, 0.08, room.d);
       const floorMat = new THREE.MeshStandardMaterial({
         color: roomColorHex,
         transparent: true,
@@ -726,9 +955,12 @@ export function OfficeStage3D({
 
       const floorMesh = new THREE.Mesh(floorBoxGeo, floorMat);
       floorMesh.position.set(cx, -0.04, cz);
+      floorMesh.name = `floor_${room.id}`;
+      floorMesh.userData.isStatic = true;
       roomGroup.add(floorMesh);
 
       // Glowing edges
+      const floorEdgesGeo = new THREE.EdgesGeometry(floorBoxGeo);
       const edgeMat = new THREE.LineBasicMaterial({
         color: roomColorHex,
         transparent: true,
@@ -736,37 +968,23 @@ export function OfficeStage3D({
       });
       const edgeLines = new THREE.LineSegments(floorEdgesGeo, edgeMat);
       edgeLines.position.set(cx, -0.04, cz);
+      edgeLines.name = `floorEdges_${room.id}`;
+      edgeLines.userData.isStatic = true;
       roomGroup.add(edgeLines);
-
-      // Subtle inner grid lines
-      const gridPoints: THREE.Vector3[] = [];
-      for (let i = 1; i < 5; i++) {
-        const offset = i - 2.5;
-        gridPoints.push(new THREE.Vector3(cx - 2.5, 0.005, cz + offset));
-        gridPoints.push(new THREE.Vector3(cx + 2.5, 0.005, cz + offset));
-        gridPoints.push(new THREE.Vector3(cx + offset, 0.005, cz - 2.5));
-        gridPoints.push(new THREE.Vector3(cx + offset, 0.005, cz + 2.5));
-      }
-      const gridGeo = new THREE.BufferGeometry().setFromPoints(gridPoints);
-      const gridMat = new THREE.LineBasicMaterial({
-        color: roomColorHex,
-        transparent: true,
-        opacity: 0.18,
-      });
-      const gridSegments = new THREE.LineSegments(gridGeo, gridMat);
-      roomGroup.add(gridSegments);
 
       // Desks / Furniture
       if (room.meeting) {
-        // Meeting Conference Table
-        const tableGeo = new THREE.BoxGeometry(2.6, 0.42, 1.2);
+        // Meeting Conference Table (8.0 x 0.42 x 1.6) at (7.5, 0.21, 4.5)
+        const tableGeo = new THREE.BoxGeometry(8.0, 0.42, 1.6);
         const tableMat = new THREE.MeshStandardMaterial({
           color: 0x14122e,
           roughness: 0.3,
           metalness: 0.4,
         });
         const tableMesh = new THREE.Mesh(tableGeo, tableMat);
-        tableMesh.position.set(room.x + 2.5 + OFFSET_X, 0.21, room.y + 2.6 + OFFSET_Z);
+        tableMesh.position.set(7.5, 0.21, 4.5);
+        tableMesh.name = "meetingTable";
+        tableMesh.userData.isStatic = true;
         roomGroup.add(tableMesh);
 
         const tableEdgeGeo = new THREE.EdgesGeometry(tableGeo);
@@ -777,10 +995,12 @@ export function OfficeStage3D({
         });
         const tableEdges = new THREE.LineSegments(tableEdgeGeo, tableEdgeMat);
         tableEdges.position.copy(tableMesh.position);
+        tableEdges.name = "meetingTableEdges";
+        tableEdges.userData.isStatic = true;
         roomGroup.add(tableEdges);
 
-        // Whiteboard / Screen at back
-        const screenGeo = new THREE.BoxGeometry(3.4, 0.95, 0.06);
+        // Whiteboard / Screen at back (North wall)
+        const screenGeo = new THREE.BoxGeometry(5.0, 1.2, 0.06);
         const screenCanvas = document.createElement("canvas");
         screenCanvas.width = 512;
         screenCanvas.height = 144;
@@ -801,43 +1021,59 @@ export function OfficeStage3D({
         const screenTex = new THREE.CanvasTexture(screenCanvas);
         const screenMat = new THREE.MeshBasicMaterial({ map: screenTex });
         const screenMesh = new THREE.Mesh(screenGeo, screenMat);
-        screenMesh.position.set(room.x + 2.5 + OFFSET_X, 0.88, room.y + 0.15 + OFFSET_Z);
+        screenMesh.position.set(7.5, 1.2, 0.22);
+        screenMesh.name = "meetingScreen";
+        screenMesh.userData.isStatic = true;
         roomGroup.add(screenMesh);
+
+        // 19 meeting chair seats (merged geometry)
+        const chairMat = new THREE.MeshStandardMaterial({
+          color: 0x120f26,
+          roughness: 0.5,
+        });
+        const chairGeos: THREE.BufferGeometry[] = [];
+        Object.values(SEAT_BY_AGENT).forEach(([sx, sz]) => {
+          const cg = new THREE.BoxGeometry(0.44, 0.08, 0.44);
+          cg.translate(sx, 0.04, sz);
+          chairGeos.push(cg);
+        });
+        const mergedChairs = BufferGeometryUtils.mergeGeometries(chairGeos, false);
+        if (mergedChairs) {
+          const chairsMesh = new THREE.Mesh(mergedChairs, chairMat);
+          chairsMesh.name = "meetingChairs";
+          chairsMesh.userData.isStatic = true;
+          roomGroup.add(chairsMesh);
+        }
       } else if (room.id === MANAGER_ROOM_ID) {
-        // RUANG MANAGER: Meja eksekutif bentuk L di selatan ATLAS, laptop/monitor, kursi di utara, nampan inbox
-        // Meja Utama Eksekutif (di selatan ATLAS, cz + 0.68)
-        const mgrDeskGeo = new THREE.BoxGeometry(2.1, 0.44, 0.72);
+        // Executive L-Desk at (4.5, 0.22, 15.8)
+        const mgrDeskGeo = new THREE.BoxGeometry(2.2, 0.44, 0.72);
         const mgrDeskMat = new THREE.MeshStandardMaterial({
           color: 0x18142a,
           roughness: 0.35,
           metalness: 0.4,
         });
         const mgrDeskMesh = new THREE.Mesh(mgrDeskGeo, mgrDeskMat);
-        mgrDeskMesh.position.set(cx, 0.22, cz + 0.68);
+        mgrDeskMesh.position.set(4.5, 0.22, 15.8);
+        mgrDeskMesh.name = "mgrDesk";
+        mgrDeskMesh.userData.isStatic = true;
         roomGroup.add(mgrDeskMesh);
 
-        const mgrDeskEdgeGeo = new THREE.EdgesGeometry(mgrDeskGeo);
-        const mgrDeskEdgeMat = new THREE.LineBasicMaterial({
-          color: roomColorHex,
-          transparent: true,
-          opacity: 0.75,
-        });
-        const mgrDeskEdges = new THREE.LineSegments(mgrDeskEdgeGeo, mgrDeskEdgeMat);
+        const mgrDeskEdges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(mgrDeskGeo),
+          new THREE.LineBasicMaterial({ color: roomColorHex, transparent: true, opacity: 0.75 })
+        );
         mgrDeskEdges.position.copy(mgrDeskMesh.position);
+        mgrDeskEdges.name = "mgrDeskEdges";
+        mgrDeskEdges.userData.isStatic = true;
         roomGroup.add(mgrDeskEdges);
 
-        // Sayap Meja Bentuk L (sisi barat meja)
         const mgrReturnGeo = new THREE.BoxGeometry(0.65, 0.44, 0.65);
         const mgrReturnMesh = new THREE.Mesh(mgrReturnGeo, mgrDeskMat);
-        mgrReturnMesh.position.set(cx - 0.75, 0.22, cz + 0.35);
+        mgrReturnMesh.position.set(3.75, 0.22, 15.45);
+        mgrReturnMesh.name = "mgrReturn";
+        mgrReturnMesh.userData.isStatic = true;
         roomGroup.add(mgrReturnMesh);
 
-        const mgrReturnEdgeGeo = new THREE.EdgesGeometry(mgrReturnGeo);
-        const mgrReturnEdges = new THREE.LineSegments(mgrReturnEdgeGeo, mgrDeskEdgeMat);
-        mgrReturnEdges.position.copy(mgrReturnMesh.position);
-        roomGroup.add(mgrReturnEdges);
-
-        // Monitor / Laptop Manager di atas meja, di depan ATLAS
         const monGeo = new THREE.BoxGeometry(0.85, 0.42, 0.05);
         const monMat = new THREE.MeshStandardMaterial({
           color: roomColorHex,
@@ -845,26 +1081,26 @@ export function OfficeStage3D({
           emissiveIntensity: 0.5,
         });
         const monMesh = new THREE.Mesh(monGeo, monMat);
-        monMesh.position.set(cx, 0.65, cz + 0.88);
+        monMesh.position.set(4.5, 0.65, 15.95);
+        monMesh.name = "mgrMon";
+        monMesh.userData.isStatic = true;
         roomGroup.add(monMesh);
 
-        // Kursi Eksekutif Manager (di utara / di belakang ATLAS)
         const chairSeatGeo = new THREE.BoxGeometry(0.55, 0.08, 0.50);
         const chairBackGeo = new THREE.BoxGeometry(0.55, 0.56, 0.08);
-        const chairMat = new THREE.MeshStandardMaterial({
-          color: 0x100e22,
-          roughness: 0.5,
-          metalness: 0.2,
-        });
+        const chairMat = new THREE.MeshStandardMaterial({ color: 0x100e22, roughness: 0.5 });
         const chairSeat = new THREE.Mesh(chairSeatGeo, chairMat);
-        chairSeat.position.set(cx, 0.24, cz + 0.16);
+        chairSeat.position.set(4.5, 0.24, 14.4);
+        chairSeat.name = "mgrChairSeat";
+        chairSeat.userData.isStatic = true;
         roomGroup.add(chairSeat);
 
         const chairBack = new THREE.Mesh(chairBackGeo, chairMat);
-        chairBack.position.set(cx, 0.54, cz - 0.10);
+        chairBack.position.set(4.5, 0.54, 14.15);
+        chairBack.name = "mgrChairBack";
+        chairBack.userData.isStatic = true;
         roomGroup.add(chairBack);
 
-        // Nampan "Inbox Brief" di atas meja (sisi timur meja)
         const trayGeo = new THREE.BoxGeometry(0.36, 0.06, 0.26);
         const trayMat = new THREE.MeshStandardMaterial({
           color: 0x221a28,
@@ -873,194 +1109,121 @@ export function OfficeStage3D({
           roughness: 0.35,
         });
         inboxTrayMatRef.current = trayMat;
-
         const trayMesh = new THREE.Mesh(trayGeo, trayMat);
-        trayMesh.position.set(cx + 0.70, 0.47, cz + 0.68);
+        trayMesh.position.set(5.2, 0.47, 15.8);
+        trayMesh.name = "mgrTray";
+        trayMesh.userData.isStatic = true;
         roomGroup.add(trayMesh);
 
-        // Lembaran dokumen di dalam nampan
         const papersGeo = new THREE.BoxGeometry(0.28, 0.02, 0.20);
-        const papersMat = new THREE.MeshStandardMaterial({
-          color: 0xf5f5ff,
-          roughness: 0.6,
-        });
+        const papersMat = new THREE.MeshStandardMaterial({ color: 0xf5f5ff, roughness: 0.6 });
         const papersMesh = new THREE.Mesh(papersGeo, papersMat);
-        papersMesh.position.set(cx + 0.70, 0.51, cz + 0.68);
+        papersMesh.position.set(5.2, 0.51, 15.8);
+        papersMesh.name = "mgrPapers";
+        papersMesh.userData.isStatic = true;
         roomGroup.add(papersMesh);
       } else if (room.id === "hr") {
-        // RUANG HR (HERA): Meja Resepsi Lengkung, Portal Rekrutmen, Sofa/Lounge
-        // Meja Resepsi Utama di depan HERA (HERA di cx - 0.6 = -6.6, cz = 9.0; meja di z = 8.15)
-        const hrDeskGeo = new THREE.BoxGeometry(1.9, 0.48, 0.7);
+        // HR Desk at (4.5, 0.24, 23.8)
+        const hrDeskGeo = new THREE.BoxGeometry(2.0, 0.48, 0.7);
         const hrDeskMat = new THREE.MeshStandardMaterial({
           color: 0x18142a,
           roughness: 0.35,
           metalness: 0.35,
         });
         const hrDeskMesh = new THREE.Mesh(hrDeskGeo, hrDeskMat);
-        hrDeskMesh.position.set(cx - 0.6, 0.24, cz - 0.85);
+        hrDeskMesh.position.set(4.5, 0.24, 23.8);
+        hrDeskMesh.name = "hrDesk";
+        hrDeskMesh.userData.isStatic = true;
         roomGroup.add(hrDeskMesh);
 
-        const hrDeskEdgeGeo = new THREE.EdgesGeometry(hrDeskGeo);
-        const hrDeskEdgeMat = new THREE.LineBasicMaterial({
-          color: roomColorHex,
-          transparent: true,
-          opacity: 0.8,
-        });
-        const hrDeskEdges = new THREE.LineSegments(hrDeskEdgeGeo, hrDeskEdgeMat);
+        const hrDeskEdges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(hrDeskGeo),
+          new THREE.LineBasicMaterial({ color: roomColorHex, transparent: true, opacity: 0.8 })
+        );
         hrDeskEdges.position.copy(hrDeskMesh.position);
+        hrDeskEdges.name = "hrDeskEdges";
+        hrDeskEdges.userData.isStatic = true;
         roomGroup.add(hrDeskEdges);
 
-        // Sayap L Resepsi (sisi barat meja)
-        const hrWingGeo = new THREE.BoxGeometry(0.65, 0.48, 0.65);
-        const hrWingMesh = new THREE.Mesh(hrWingGeo, hrDeskMat);
-        hrWingMesh.position.set(cx - 1.25, 0.24, cz - 0.55);
-        roomGroup.add(hrWingMesh);
-
-        const hrWingEdges = new THREE.LineSegments(
-          new THREE.EdgesGeometry(hrWingGeo),
-          hrDeskEdgeMat
+        const hrChair = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.08, 0.45),
+          new THREE.MeshStandardMaterial({ color: 0x120f24, roughness: 0.5 })
         );
-        hrWingEdges.position.copy(hrWingMesh.position);
-        roomGroup.add(hrWingEdges);
+        hrChair.position.set(4.5, 0.24, 22.4);
+        hrChair.name = "hrChair";
+        hrChair.userData.isStatic = true;
+        roomGroup.add(hrChair);
 
-        // Strip Neon Magenta di depan counter resepsi
-        const hrStripGeo = new THREE.BoxGeometry(1.92, 0.04, 0.04);
-        const hrStripMat = new THREE.MeshBasicMaterial({ color: roomColorHex });
-        const hrStripMesh = new THREE.Mesh(hrStripGeo, hrStripMat);
-        hrStripMesh.position.set(cx - 0.6, 0.46, cz - 1.22);
-        roomGroup.add(hrStripMesh);
-
-        // Terminal Onboarding / Monitor di meja HERA
-        const hrMonGeo = new THREE.BoxGeometry(0.44, 0.28, 0.04);
-        const hrMonMat = new THREE.MeshStandardMaterial({
-          color: roomColorHex,
-          emissive: roomColorHex,
-          emissiveIntensity: 0.5,
-        });
-        const hrMonMesh = new THREE.Mesh(hrMonGeo, hrMonMat);
-        hrMonMesh.position.set(cx - 0.6, 0.62, cz - 0.95);
-        roomGroup.add(hrMonMesh);
-
-        // Kursi Resepsionis HERA di utara meja
-        const hrChairGeo = new THREE.BoxGeometry(0.5, 0.08, 0.45);
-        const hrChairMat = new THREE.MeshStandardMaterial({
-          color: 0x120f24,
-          roughness: 0.5,
-        });
-        const hrChairMesh = new THREE.Mesh(hrChairGeo, hrChairMat);
-        hrChairMesh.position.set(cx - 0.6, 0.24, cz + 0.15);
-        roomGroup.add(hrChairMesh);
-
-        // PORTAL REKRUTMEN HR (Holographic Gateway di utara ruangan)
-        const portalPillarGeo = new THREE.BoxGeometry(0.12, 1.7, 0.12);
-        const portalPillarMat = new THREE.MeshStandardMaterial({
-          color: 0x221a36,
-          roughness: 0.3,
-          metalness: 0.7,
-        });
-        const pLeft = new THREE.Mesh(portalPillarGeo, portalPillarMat);
-        pLeft.position.set(cx + 1.2 - 0.75, 0.85, cz - 2.25);
-        roomGroup.add(pLeft);
-
-        const pRight = new THREE.Mesh(portalPillarGeo, portalPillarMat);
-        pRight.position.set(cx + 1.2 + 0.75, 0.85, cz - 2.25);
-        roomGroup.add(pRight);
-
-        const pTop = new THREE.Mesh(
-          new THREE.BoxGeometry(1.65, 0.14, 0.14),
-          portalPillarMat
+        const hrMon = new THREE.Mesh(
+          new THREE.BoxGeometry(0.44, 0.28, 0.04),
+          new THREE.MeshStandardMaterial({
+            color: roomColorHex,
+            emissive: roomColorHex,
+            emissiveIntensity: 0.5,
+          })
         );
-        pTop.position.set(cx + 1.2, 1.72, cz - 2.25);
-        roomGroup.add(pTop);
+        hrMon.position.set(4.5, 0.62, 23.9);
+        hrMon.name = "hrMon";
+        hrMon.userData.isStatic = true;
+        roomGroup.add(hrMon);
 
-        // Field Energi Portal
-        const pFieldGeo = new THREE.BoxGeometry(1.38, 1.55, 0.04);
-        const pFieldMat = new THREE.MeshStandardMaterial({
-          color: roomColorHex,
-          emissive: roomColorHex,
-          emissiveIntensity: 0.65,
-          transparent: true,
-          opacity: 0.45,
-          roughness: 0.1,
-        });
-        const pFieldMesh = new THREE.Mesh(pFieldGeo, pFieldMat);
-        pFieldMesh.position.set(cx + 1.2, 0.85, cz - 2.25);
-        roomGroup.add(pFieldMesh);
-
-        // Papan Nama Portal
-        const pCanvas = document.createElement("canvas");
-        pCanvas.width = 512;
-        pCanvas.height = 128;
-        const pctx = pCanvas.getContext("2d");
-        if (pctx) {
-          pctx.fillStyle = "#120a24";
-          pctx.fillRect(0, 0, 512, 128);
-          pctx.strokeStyle = room.color;
-          pctx.lineWidth = 6;
-          pctx.strokeRect(4, 4, 504, 120);
-          pctx.fillStyle = room.color;
-          pctx.font = "bold 36px 'Chakra Petch', sans-serif";
-          pctx.fillText("PORTAL INSTANSI HR", 28, 56);
-          pctx.fillStyle = "rgba(232, 121, 249, 0.75)";
-          pctx.font = "24px 'Chakra Petch', sans-serif";
-          pctx.fillText("Rekrutmen & Penempatan", 28, 98);
-        }
-        const pSignTex = new THREE.CanvasTexture(pCanvas);
-        const pSignMesh = new THREE.Mesh(
-          new THREE.BoxGeometry(1.6, 0.42, 0.05),
-          new THREE.MeshBasicMaterial({ map: pSignTex })
+        // Portal Onboarding at (7.0, 0.85, 21.3)
+        const pField = new THREE.Mesh(
+          new THREE.BoxGeometry(1.6, 1.6, 0.05),
+          new THREE.MeshStandardMaterial({
+            color: roomColorHex,
+            emissive: roomColorHex,
+            emissiveIntensity: 0.65,
+            transparent: true,
+            opacity: 0.45,
+          })
         );
-        pSignMesh.position.set(cx + 1.2, 2.05, cz - 2.25);
-        roomGroup.add(pSignMesh);
+        pField.position.set(7.0, 0.85, 21.3);
+        pField.name = "hrPortal";
+        pField.userData.isStatic = true;
+        roomGroup.add(pField);
 
-        // Lounge Sofa di sisi barat daya
-        const sofaGeo = new THREE.BoxGeometry(1.4, 0.28, 0.6);
-        const sofaMat = new THREE.MeshStandardMaterial({
-          color: 0x1e1838,
-          roughness: 0.5,
-        });
-        const sofaMesh = new THREE.Mesh(sofaGeo, sofaMat);
-        sofaMesh.position.set(cx - 1.2, 0.14, cz + 1.4);
-        roomGroup.add(sofaMesh);
-
-        const sofaBackGeo = new THREE.BoxGeometry(1.4, 0.35, 0.12);
-        const sofaBack = new THREE.Mesh(sofaBackGeo, sofaMat);
-        sofaBack.position.set(cx - 1.2, 0.4, cz + 1.7);
-        roomGroup.add(sofaBack);
-
-        // Meja kopi
-        const coffeeTable = new THREE.Mesh(
-          new THREE.BoxGeometry(0.6, 0.18, 0.5),
-          hrDeskMat
+        // Lounge Sofa at (2.0, 0.14, 23.8)
+        const sofa = new THREE.Mesh(
+          new THREE.BoxGeometry(1.4, 0.28, 0.6),
+          new THREE.MeshStandardMaterial({ color: 0x1e1838, roughness: 0.5 })
         );
-        coffeeTable.position.set(cx - 1.2, 0.09, cz + 0.6);
-        roomGroup.add(coffeeTable);
+        sofa.position.set(2.0, 0.14, 23.8);
+        sofa.name = "hrSofa";
+        sofa.userData.isStatic = true;
+        roomGroup.add(sofa);
       } else if (room.id === "operasional") {
-        // RUANG OPERASIONAL (HEPHAESTUS): Meja Kerja Industri, Meja Blueprint Drafting, Troli Peralatan, Rak Server
-        // Meja Kerja HEPHAESTUS (HEPHAESTUS di cx, cz = 6.0, 9.0; meja di cz - 0.85 = 8.15)
-        const opsDeskGeo = new THREE.BoxGeometry(1.9, 0.44, 0.75);
+        // Industrial Desk at (21.5, 0.22, 5.3)
+        const opsDeskGeo = new THREE.BoxGeometry(2.0, 0.44, 0.75);
         const opsDeskMat = new THREE.MeshStandardMaterial({
           color: 0x161a24,
           roughness: 0.4,
           metalness: 0.5,
         });
         const opsDeskMesh = new THREE.Mesh(opsDeskGeo, opsDeskMat);
-        opsDeskMesh.position.set(cx, 0.22, cz - 0.85);
+        opsDeskMesh.position.set(21.5, 0.22, 5.3);
+        opsDeskMesh.name = "opsDesk";
+        opsDeskMesh.userData.isStatic = true;
         roomGroup.add(opsDeskMesh);
 
-        const opsDeskEdgeMat = new THREE.LineBasicMaterial({
-          color: roomColorHex,
-          transparent: true,
-          opacity: 0.8,
-        });
         const opsDeskEdges = new THREE.LineSegments(
           new THREE.EdgesGeometry(opsDeskGeo),
-          opsDeskEdgeMat
+          new THREE.LineBasicMaterial({ color: roomColorHex, transparent: true, opacity: 0.8 })
         );
         opsDeskEdges.position.copy(opsDeskMesh.position);
+        opsDeskEdges.name = "opsDeskEdges";
+        opsDeskEdges.userData.isStatic = true;
         roomGroup.add(opsDeskEdges);
 
-        // Dual Monitor Teknis
+        const opsChair = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.08, 0.45),
+          new THREE.MeshStandardMaterial({ color: 0x10141e, roughness: 0.6 })
+        );
+        opsChair.position.set(21.5, 0.24, 3.9);
+        opsChair.name = "opsChair";
+        opsChair.userData.isStatic = true;
+        roomGroup.add(opsChair);
+
         const mon1 = new THREE.Mesh(
           new THREE.BoxGeometry(0.42, 0.25, 0.04),
           new THREE.MeshStandardMaterial({
@@ -1069,7 +1232,9 @@ export function OfficeStage3D({
             emissiveIntensity: 0.45,
           })
         );
-        mon1.position.set(cx - 0.26, 0.58, cz - 0.92);
+        mon1.position.set(21.2, 0.58, 5.4);
+        mon1.name = "opsMon1";
+        mon1.userData.isStatic = true;
         roomGroup.add(mon1);
 
         const mon2 = new THREE.Mesh(
@@ -1080,136 +1245,42 @@ export function OfficeStage3D({
             emissiveIntensity: 0.45,
           })
         );
-        mon2.position.set(cx + 0.26, 0.58, cz - 0.92);
+        mon2.position.set(21.8, 0.58, 5.4);
+        mon2.name = "opsMon2";
+        mon2.userData.isStatic = true;
         roomGroup.add(mon2);
 
-        // Kursi HEPHAESTUS di utara meja
-        const opsChairMesh = new THREE.Mesh(
-          new THREE.BoxGeometry(0.5, 0.08, 0.45),
-          new THREE.MeshStandardMaterial({ color: 0x10141e, roughness: 0.6 })
-        );
-        opsChairMesh.position.set(cx, 0.24, cz + 0.15);
-        roomGroup.add(opsChairMesh);
-
-        // MEJA BLUEPRINT / DRAFTING TABLE (di barat meja, cx - 1.3, cz + 1.0)
-        const bpBaseMesh = new THREE.Mesh(
+        // Blueprint table at (19.2, 0.23, 5.3)
+        const bpBase = new THREE.Mesh(
           new THREE.BoxGeometry(1.3, 0.46, 0.85),
-          new THREE.MeshStandardMaterial({
-            color: 0x121722,
-            roughness: 0.4,
-            metalness: 0.4,
-          })
+          new THREE.MeshStandardMaterial({ color: 0x121722, roughness: 0.4, metalness: 0.4 })
         );
-        bpBaseMesh.position.set(cx - 1.3, 0.23, cz + 1.0);
-        roomGroup.add(bpBaseMesh);
+        bpBase.position.set(19.2, 0.23, 5.3);
+        bpBase.name = "opsBpBase";
+        bpBase.userData.isStatic = true;
+        roomGroup.add(bpBase);
 
-        // Papan Blueprint miring di atas meja
-        const bpCanvas = document.createElement("canvas");
-        bpCanvas.width = 512;
-        bpCanvas.height = 256;
-        const bpctx = bpCanvas.getContext("2d");
-        if (bpctx) {
-          bpctx.fillStyle = "#0c1527";
-          bpctx.fillRect(0, 0, 512, 256);
-          bpctx.strokeStyle = "#38bdf8";
-          bpctx.lineWidth = 4;
-          bpctx.strokeRect(6, 6, 500, 244);
-          // Grid
-          bpctx.strokeStyle = "rgba(56, 189, 248, 0.25)";
-          bpctx.lineWidth = 1;
-          for (let gx = 20; gx < 500; gx += 20) {
-            bpctx.beginPath();
-            bpctx.moveTo(gx, 10);
-            bpctx.lineTo(gx, 246);
-            bpctx.stroke();
-          }
-          for (let gy = 20; gy < 246; gy += 20) {
-            bpctx.beginPath();
-            bpctx.moveTo(10, gy);
-            bpctx.lineTo(502, gy);
-            bpctx.stroke();
-          }
-          bpctx.fillStyle = "#38bdf8";
-          bpctx.font = "bold 26px 'Chakra Petch', sans-serif";
-          bpctx.fillText("BLUEPRINT FASILITAS & MEJA V1b", 24, 46);
-          bpctx.fillStyle = "rgba(148, 163, 184, 0.8)";
-          bpctx.font = "18px 'Chakra Petch', sans-serif";
-          bpctx.fillText("Rencana Perluasan & Penambahan Meja", 24, 80);
-          // Gambar denah kotak meja
-          bpctx.strokeStyle = "#f5a623";
-          bpctx.lineWidth = 3;
-          bpctx.strokeRect(40, 110, 120, 60);
-          bpctx.strokeRect(180, 110, 120, 60);
-          bpctx.strokeRect(320, 110, 120, 60);
-        }
-        const bpTex = new THREE.CanvasTexture(bpCanvas);
-        const bpTopMesh = new THREE.Mesh(
-          new THREE.BoxGeometry(1.28, 0.04, 0.82),
-          new THREE.MeshStandardMaterial({ map: bpTex, roughness: 0.3 })
+        // Trolley at (23.8, 0.3, 5.3)
+        const trolley = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7, 0.6, 0.5),
+          new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4, metalness: 0.6 })
         );
-        bpTopMesh.rotation.x = -0.28;
-        bpTopMesh.position.set(cx - 1.3, 0.52, cz + 1.0);
-        roomGroup.add(bpTopMesh);
+        trolley.position.set(23.8, 0.3, 5.3);
+        trolley.name = "opsTrolley";
+        trolley.userData.isStatic = true;
+        roomGroup.add(trolley);
 
-        // TROLI PERALATAN (di timur meja, cx + 1.3, cz + 1.0)
-        const trolleyGroup = new THREE.Group();
-        trolleyGroup.position.set(cx + 1.3, 0, cz + 1.0);
-
-        const tShelvesGeo = new THREE.BoxGeometry(0.72, 0.03, 0.52);
-        const tShelvesMat = new THREE.MeshStandardMaterial({
-          color: 0x334155,
-          roughness: 0.3,
-          metalness: 0.7,
-        });
-        [0.12, 0.34, 0.56].forEach((y) => {
-          const s = new THREE.Mesh(tShelvesGeo, tShelvesMat);
-          s.position.set(0, y, 0);
-          trolleyGroup.add(s);
-        });
-
-        const tPoleGeo = new THREE.BoxGeometry(0.04, 0.58, 0.04);
-        [
-          [-0.34, -0.24],
-          [0.34, -0.24],
-          [-0.34, 0.24],
-          [0.34, 0.24],
-        ].forEach(([px, pz]) => {
-          const p = new THREE.Mesh(tPoleGeo, tShelvesMat);
-          p.position.set(px, 0.34, pz);
-          trolleyGroup.add(p);
-        });
-
-        // Kotak perkakas di rak atas troli
-        const toolboxMesh = new THREE.Mesh(
-          new THREE.BoxGeometry(0.36, 0.14, 0.22),
-          new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.4 })
-        );
-        toolboxMesh.position.set(0, 0.65, 0);
-        trolleyGroup.add(toolboxMesh);
-        roomGroup.add(trolleyGroup);
-
-        // RAK SERVER / KABINET FASILITAS (dinding utara, cx + 1.4, cz - 2.1)
-        const rackMesh = new THREE.Mesh(
+        // Server rack at (24.5, 0.8, 0.5)
+        const rack = new THREE.Mesh(
           new THREE.BoxGeometry(0.85, 1.6, 0.45),
-          new THREE.MeshStandardMaterial({
-            color: 0x0f172a,
-            roughness: 0.4,
-            metalness: 0.6,
-          })
+          new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4, metalness: 0.6 })
         );
-        rackMesh.position.set(cx + 1.4, 0.8, cz - 2.1);
-        roomGroup.add(rackMesh);
-
-        // Strip LED Server
-        const ledStrip = new THREE.Mesh(
-          new THREE.BoxGeometry(0.04, 1.4, 0.02),
-          new THREE.MeshBasicMaterial({ color: 0x2ee6a8 })
-        );
-        ledStrip.position.set(cx + 1.65, 0.8, cz - 1.86);
-        roomGroup.add(ledStrip);
+        rack.position.set(24.5, 0.8, 0.5);
+        rack.name = "opsRack";
+        rack.userData.isStatic = true;
+        roomGroup.add(rack);
       } else if (room.id === "sosmed") {
-        // RUANG SOSIAL MEDIA (HERMES): Meja Konten Kreatif, Dinding Kalender Konten, Tripod & Ring Light
-        // Meja Kerja HERMES (HERMES di cx, cz = 0.0, 15.2; meja di cz - 0.75 = 14.45)
+        // Creative Desk at (5.0, 0.22, 31.3)
         const sosDeskGeo = new THREE.BoxGeometry(1.85, 0.44, 0.72);
         const sosDeskMat = new THREE.MeshStandardMaterial({
           color: 0x1c172e,
@@ -1217,21 +1288,29 @@ export function OfficeStage3D({
           metalness: 0.3,
         });
         const sosDeskMesh = new THREE.Mesh(sosDeskGeo, sosDeskMat);
-        sosDeskMesh.position.set(cx, 0.22, cz - 0.75);
+        sosDeskMesh.position.set(5.0, 0.22, 31.3);
+        sosDeskMesh.name = "sosDesk";
+        sosDeskMesh.userData.isStatic = true;
         roomGroup.add(sosDeskMesh);
 
         const sosDeskEdges = new THREE.LineSegments(
           new THREE.EdgesGeometry(sosDeskGeo),
-          new THREE.LineBasicMaterial({
-            color: roomColorHex,
-            transparent: true,
-            opacity: 0.75,
-          })
+          new THREE.LineBasicMaterial({ color: roomColorHex, transparent: true, opacity: 0.75 })
         );
         sosDeskEdges.position.copy(sosDeskMesh.position);
+        sosDeskEdges.name = "sosDeskEdges";
+        sosDeskEdges.userData.isStatic = true;
         roomGroup.add(sosDeskEdges);
 
-        // Ultrawide Curved Monitor
+        const sosChair = new THREE.Mesh(
+          new THREE.BoxGeometry(0.5, 0.08, 0.45),
+          new THREE.MeshStandardMaterial({ color: 0x141026, roughness: 0.5 })
+        );
+        sosChair.position.set(5.0, 0.24, 29.9);
+        sosChair.name = "sosChair";
+        sosChair.userData.isStatic = true;
+        roomGroup.add(sosChair);
+
         const ultrawideMon = new THREE.Mesh(
           new THREE.BoxGeometry(0.78, 0.34, 0.04),
           new THREE.MeshStandardMaterial({
@@ -1240,121 +1319,31 @@ export function OfficeStage3D({
             emissiveIntensity: 0.55,
           })
         );
-        ultrawideMon.position.set(cx, 0.62, cz - 0.82);
+        ultrawideMon.position.set(5.0, 0.62, 31.4);
+        ultrawideMon.name = "sosMon";
+        ultrawideMon.userData.isStatic = true;
         roomGroup.add(ultrawideMon);
 
-        // Dudukan Smartphone Vertikal di meja
-        const phoneStand = new THREE.Mesh(
-          new THREE.BoxGeometry(0.08, 0.16, 0.04),
-          new THREE.MeshStandardMaterial({
-            color: 0x38bdf8,
-            emissive: 0x38bdf8,
-            emissiveIntensity: 0.4,
-          })
-        );
-        phoneStand.position.set(cx + 0.52, 0.52, cz - 0.75);
-        roomGroup.add(phoneStand);
-
-        // Kursi HERMES di utara meja
-        const sosChairMesh = new THREE.Mesh(
-          new THREE.BoxGeometry(0.5, 0.08, 0.45),
-          new THREE.MeshStandardMaterial({ color: 0x141026, roughness: 0.5 })
-        );
-        sosChairMesh.position.set(cx, 0.24, cz + 0.25);
-        roomGroup.add(sosChairMesh);
-
-        // DINDING KALENDER KONTEN (di dinding selatan, cx, cz + 2.35 = 17.35)
-        const calCanvas = document.createElement("canvas");
-        calCanvas.width = 1024;
-        calCanvas.height = 384;
-        const cctx = calCanvas.getContext("2d");
-        if (cctx) {
-          cctx.fillStyle = "#0c0a1f";
-          cctx.fillRect(0, 0, 1024, 384);
-          cctx.strokeStyle = room.color;
-          cctx.lineWidth = 8;
-          cctx.strokeRect(6, 6, 1012, 372);
-
-          cctx.fillStyle = room.color;
-          cctx.font = "bold 44px 'Chakra Petch', sans-serif";
-          cctx.fillText("KALENDER KONTEN \u00b7 IG & THREADS", 32, 64);
-
-          // Kolom Hari
-          const days = [
-            "SENIN",
-            "SELASA",
-            "RABU",
-            "KAMIS",
-            "JUMAT",
-            "SABTU",
-            "MINGGU",
-          ];
-          const colW = 132;
-          days.forEach((day, idx) => {
-            const x = 36 + idx * colW;
-            cctx.strokeStyle = "rgba(251, 146, 60, 0.3)";
-            cctx.lineWidth = 1;
-            cctx.strokeRect(x, 90, colW - 8, 260);
-
-            cctx.fillStyle = "rgba(251, 146, 60, 0.9)";
-            cctx.font = "bold 20px 'Chakra Petch', sans-serif";
-            cctx.fillText(day, x + 10, 120);
-
-            // Kartu Konten
-            const badgeColors = ["#fb923c", "#a78bfa", "#2ee6a8", "#f43f5e"];
-            const badgeTitles = [
-              "Reels #1",
-              "Carousel",
-              "Story UGC",
-              "Threads Hook",
-            ];
-            const bgCol = badgeColors[idx % badgeColors.length];
-            cctx.fillStyle = bgCol;
-            cctx.fillRect(x + 8, 140 + (idx % 2) * 60, colW - 24, 46);
-
-            cctx.fillStyle = "#0b0a1a";
-            cctx.font = "bold 16px 'Chakra Petch', sans-serif";
-            cctx.fillText(
-              badgeTitles[idx % badgeTitles.length],
-              x + 14,
-              168 + (idx % 2) * 60
-            );
-          });
-        }
-        const calTex = new THREE.CanvasTexture(calCanvas);
-        const calWallMesh = new THREE.Mesh(
-          new THREE.BoxGeometry(3.6, 1.35, 0.06),
-          new THREE.MeshBasicMaterial({ map: calTex })
-        );
-        calWallMesh.position.set(cx, 1.15, cz + 2.35);
-        roomGroup.add(calWallMesh);
-
-        // TRIPOD & RING LIGHT (di sisi barat meja, cx - 1.5, cz + 0.4)
-        const tripodMesh = new THREE.Mesh(
+        // Tripod & Ring light at (2.5, 0.55, 30.5)
+        const tripod = new THREE.Mesh(
           new THREE.CylinderGeometry(0.02, 0.02, 1.1, 8),
-          new THREE.MeshStandardMaterial({
-            color: 0x334155,
-            metalness: 0.8,
-            roughness: 0.2,
-          })
+          new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8, roughness: 0.2 })
         );
-        tripodMesh.position.set(cx - 1.5, 0.55, cz + 0.4);
-        roomGroup.add(tripodMesh);
+        tripod.position.set(2.5, 0.55, 30.5);
+        tripod.name = "sosTripod";
+        tripod.userData.isStatic = true;
+        roomGroup.add(tripod);
 
-        const ringLightMesh = new THREE.Mesh(
+        const ringLight = new THREE.Mesh(
           new THREE.TorusGeometry(0.18, 0.025, 8, 24),
-          new THREE.MeshStandardMaterial({
-            color: 0xfff5e6,
-            emissive: 0xfff5e6,
-            emissiveIntensity: 1.2,
-          })
+          new THREE.MeshStandardMaterial({ color: 0xfff5e6, emissive: 0xfff5e6, emissiveIntensity: 1.2 })
         );
-        ringLightMesh.position.set(cx - 1.5, 1.15, cz + 0.4);
-        roomGroup.add(ringLightMesh);
+        ringLight.position.set(2.5, 1.15, 30.5);
+        ringLight.name = "sosRingLight";
+        ringLight.userData.isStatic = true;
+        roomGroup.add(ringLight);
       } else {
-        // Regular room desks for agents (Riset, Copy, LP, Ads, Creative)
-        const deskGeo = new THREE.BoxGeometry(1.8, 0.44, 0.7);
-        const deskTopEdgeGeo = new THREE.EdgesGeometry(deskGeo);
+        // Regular room desks for agents (Riset, Advertiser, Creative, Copy, Landing Page)
         const deskMat = new THREE.MeshStandardMaterial({
           color: 0x14122e,
           roughness: 0.4,
@@ -1365,41 +1354,89 @@ export function OfficeStage3D({
           transparent: true,
           opacity: 0.5,
         });
-
-        const slots = [
-          [1.3, 2.0],
-          [3.4, 1.5],
-          [2.6, 3.9],
-        ];
-        slots.forEach((slot) => {
-          const sx = room.x + slot[0];
-          const sy = room.y + slot[1];
-          const dx = sx + 0.1 + OFFSET_X;
-          const dz = sy - 0.85 + OFFSET_Z;
-
-          const deskMesh = new THREE.Mesh(deskGeo, deskMat);
-          deskMesh.position.set(dx, 0.22, dz);
-          roomGroup.add(deskMesh);
-
-          const deskEdges = new THREE.LineSegments(deskTopEdgeGeo, deskEdgeMat);
-          deskEdges.position.copy(deskMesh.position);
-          roomGroup.add(deskEdges);
-
-          // Small monitor
-          const monGeo = new THREE.BoxGeometry(0.38, 0.24, 0.04);
-          const monMat = new THREE.MeshStandardMaterial({
-            color: roomColorHex,
-            emissive: roomColorHex,
-            emissiveIntensity: 0.4,
-          });
-          const monMesh = new THREE.Mesh(monGeo, monMat);
-          monMesh.position.set(dx, 0.56, dz - 0.08);
-          roomGroup.add(monMesh);
+        const chairMat = new THREE.MeshStandardMaterial({
+          color: 0x100e22,
+          roughness: 0.6,
         });
+        const monMat = new THREE.MeshStandardMaterial({
+          color: roomColorHex,
+          emissive: roomColorHex,
+          emissiveIntensity: 0.4,
+        });
+
+        const deskGeos: THREE.BufferGeometry[] = [];
+        const deskEdgeGeos: THREE.BufferGeometry[] = [];
+        const monGeos: THREE.BufferGeometry[] = [];
+        const chairGeos: THREE.BufferGeometry[] = [];
+
+        room.agents.forEach((agentName) => {
+          const hp = HOME_POSITIONS[agentName];
+          if (!hp) return;
+          const dx = hp[0];
+          const dz = hp[1] + 0.8;
+
+          const dg = new THREE.BoxGeometry(1.6, 0.44, 0.7);
+          dg.translate(dx, 0.22, dz);
+          deskGeos.push(dg);
+
+          const baseDesk = new THREE.BoxGeometry(1.6, 0.44, 0.7);
+          const eg = new THREE.EdgesGeometry(baseDesk);
+          eg.translate(dx, 0.22, dz);
+          deskEdgeGeos.push(eg);
+          baseDesk.dispose();
+
+          const mg = new THREE.BoxGeometry(0.38, 0.24, 0.04);
+          mg.translate(dx, 0.56, dz - 0.08);
+          monGeos.push(mg);
+
+          const cg = new THREE.BoxGeometry(0.44, 0.08, 0.44);
+          cg.translate(dx, 0.24, hp[1] - 0.4);
+          chairGeos.push(cg);
+        });
+
+        if (deskGeos.length > 0) {
+          const mergedDesks = BufferGeometryUtils.mergeGeometries(deskGeos, false);
+          if (mergedDesks) {
+            const m = new THREE.Mesh(mergedDesks, deskMat);
+            m.name = `desks_${room.id}`;
+            m.userData.isStatic = true;
+            roomGroup.add(m);
+          }
+        }
+
+        if (deskEdgeGeos.length > 0) {
+          const mergedDeskEdges = BufferGeometryUtils.mergeGeometries(deskEdgeGeos, false);
+          if (mergedDeskEdges) {
+            const m = new THREE.LineSegments(mergedDeskEdges, deskEdgeMat);
+            m.name = `deskEdges_${room.id}`;
+            m.userData.isStatic = true;
+            roomGroup.add(m);
+          }
+        }
+
+        if (monGeos.length > 0) {
+          const mergedMons = BufferGeometryUtils.mergeGeometries(monGeos, false);
+          if (mergedMons) {
+            const m = new THREE.Mesh(mergedMons, monMat);
+            m.name = `monitors_${room.id}`;
+            m.userData.isStatic = true;
+            roomGroup.add(m);
+          }
+        }
+
+        if (chairGeos.length > 0) {
+          const mergedChairs = BufferGeometryUtils.mergeGeometries(chairGeos, false);
+          if (mergedChairs) {
+            const m = new THREE.Mesh(mergedChairs, chairMat);
+            m.name = `chairs_${room.id}`;
+            m.userData.isStatic = true;
+            roomGroup.add(m);
+          }
+        }
       }
 
       // Invisible Hitbox for clicking the room floor
-      const hitGeo = new THREE.BoxGeometry(5.0, 0.3, 5.0);
+      const hitGeo = new THREE.BoxGeometry(room.w, 0.3, room.d);
       const hitMat = new THREE.MeshBasicMaterial({ visible: false });
       const hitMesh = new THREE.Mesh(hitGeo, hitMat);
       hitMesh.position.set(cx, 0.15, cz);
@@ -1427,12 +1464,12 @@ export function OfficeStage3D({
       });
 
       const labelObj = new CSS2DObject(labelDiv);
-      labelObj.position.set(cx, 1.6, cz - 2.2);
+      labelObj.position.set(cx, 1.6, room.z + 1.2);
       roomGroup.add(labelObj);
 
       scene.add(roomGroup);
 
-      roomRecords[room.id] = {
+      const record: Room3DRecord = {
         group: roomGroup,
         floorMesh,
         floorMat,
@@ -1442,7 +1479,92 @@ export function OfficeStage3D({
         labelObj,
         labelDiv,
       };
+      roomRecords[room.id] = record;
+      if (room.id === "advertiser") roomRecords["ads"] = record;
+      if (room.id === "landing_page") roomRecords["lp"] = record;
     });
+
+    // Enclosed Common Rooms (pantry, lounge, toilet, taman, resepsi)
+    FLOORPLAN.rooms
+      .filter((r) => r.kind === "common" && r.doors.length > 0)
+      .forEach((cRoom) => {
+        const roomGroup = new THREE.Group();
+        const cx = cRoom.x + cRoom.w / 2;
+        const cz = cRoom.z + cRoom.d / 2;
+        const roomColorHex = new THREE.Color(cRoom.color).getHex();
+
+        const floorBoxGeo = new THREE.BoxGeometry(cRoom.w, 0.08, cRoom.d);
+        const floorMat = new THREE.MeshStandardMaterial({
+          color: roomColorHex,
+          transparent: true,
+          opacity: 0.18,
+          roughness: 0.25,
+          metalness: 0.1,
+        });
+        floorMaterials.push(floorMat);
+
+        const floorMesh = new THREE.Mesh(floorBoxGeo, floorMat);
+        floorMesh.position.set(cx, -0.04, cz);
+        floorMesh.name = `floor_${cRoom.id}`;
+        floorMesh.userData.isStatic = true;
+        roomGroup.add(floorMesh);
+
+        const floorEdgesGeo = new THREE.EdgesGeometry(floorBoxGeo);
+        const edgeMat = new THREE.LineBasicMaterial({
+          color: roomColorHex,
+          transparent: true,
+          opacity: 0.75,
+        });
+        const edgeLines = new THREE.LineSegments(floorEdgesGeo, edgeMat);
+        edgeLines.position.set(cx, -0.04, cz);
+        edgeLines.name = `floorEdges_${cRoom.id}`;
+        edgeLines.userData.isStatic = true;
+        roomGroup.add(edgeLines);
+
+        const hitGeo = new THREE.BoxGeometry(cRoom.w, 0.3, cRoom.d);
+        const hitMat = new THREE.MeshBasicMaterial({ visible: false });
+        const hitMesh = new THREE.Mesh(hitGeo, hitMat);
+        hitMesh.position.set(cx, 0.15, cz);
+        hitMesh.userData = { type: "room", id: cRoom.id };
+        roomGroup.add(hitMesh);
+        raycastHitMeshes.push(hitMesh);
+
+        const labelDiv = document.createElement("div");
+        labelDiv.className = "room-tag3d";
+        labelDiv.style.setProperty("--c", cRoom.color);
+        labelDiv.textContent = cRoom.label.toUpperCase();
+        labelDiv.setAttribute("role", "button");
+        labelDiv.setAttribute("tabindex", "0");
+        labelDiv.setAttribute("aria-label", `Ruangan ${cRoom.label}`);
+        labelDiv.addEventListener("click", (e) => {
+          e.stopPropagation();
+          handlersRef.current.selectRoom(cRoom.id);
+        });
+        labelDiv.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handlersRef.current.selectRoom(cRoom.id);
+          }
+        });
+
+        const labelObj = new CSS2DObject(labelDiv);
+        labelObj.position.set(cx, 1.6, cRoom.z + 1.2);
+        roomGroup.add(labelObj);
+
+        scene.add(roomGroup);
+
+        roomRecords[cRoom.id] = {
+          group: roomGroup,
+          floorMesh,
+          floorMat,
+          edgeLines,
+          edgeMat,
+          hitMesh,
+          labelObj,
+          labelDiv,
+        };
+      });
+
     roomRecordsRef.current = roomRecords;
     floorMaterialsRef.current = floorMaterials;
 
@@ -1624,7 +1746,6 @@ export function OfficeStage3D({
 
       // Initial position
       const isGatheredNow = gatheredRef.current;
-      const meetingRoom = ROOMS.find((r) => r.meeting)!;
       let startX: number;
       let startZ: number;
 
@@ -1635,12 +1756,12 @@ export function OfficeStage3D({
             `[OfficeStage3D] Kursi rapat tidak ditemukan untuk agen "${name}" di SEAT_BY_AGENT`
           );
         }
-        startX = meetingRoom.x + seat[0] + OFFSET_X;
-        startZ = meetingRoom.y + seat[1] + OFFSET_Z;
+        startX = seat[0];
+        startZ = seat[1];
       } else {
         const hp = HOME_POSITIONS[name];
-        startX = hp[0] + OFFSET_X;
-        startZ = hp[1] + OFFSET_Z;
+        startX = hp[0];
+        startZ = hp[1];
       }
       group.position.set(startX, 0, startZ);
 
@@ -1668,8 +1789,8 @@ export function OfficeStage3D({
       agentRecords[name] = record;
 
       // Daftarkan SEMUA agen ke Choreography Engine
-      const homeX = HOME_POSITIONS[name][0] + OFFSET_X;
-      const homeZ = HOME_POSITIONS[name][1] + OFFSET_Z;
+      const homeX = HOME_POSITIONS[name][0];
+      const homeZ = HOME_POSITIONS[name][1];
       choreo.registerActor({
         id: name,
         group,
@@ -1818,8 +1939,7 @@ export function OfficeStage3D({
       for (const entry of entries) {
         const cr = entry.contentRect;
         if (cr.width > 0 && cr.height > 0) {
-          camera.aspect = cr.width / cr.height;
-          camera.updateProjectionMatrix();
+          updateCameraFrustum(camera, cr.width, cr.height);
           renderer.setSize(cr.width, cr.height, false);
           cssRenderer.setSize(cr.width, cr.height);
         }
@@ -1875,10 +1995,38 @@ export function OfficeStage3D({
 
     if (exposeStage3D) {
       (window as unknown as { __STAGE_3D__?: unknown }).__STAGE_3D__ = {
+        scene,
+        camera,
+        renderer,
+        floorplan: FLOORPLAN,
+        validateFloorplan: () => validateFloorplan(FLOORPLAN),
         getSceneUuid: () => scene.uuid,
         getCameraPosition: () => camera.position.clone(),
         getCameraTarget: () => controls.target.clone(),
         getMemoryInfo: () => ({ ...renderer.info.memory }),
+        getRenderInfo: () => ({
+          calls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          points: renderer.info.render.points,
+          lines: renderer.info.render.lines,
+        }),
+        getStaticDrawCalls: () => {
+          let count = 0;
+          scene.traverse((obj) => {
+            if (
+              obj.userData?.isStatic === true &&
+              ((obj as THREE.Mesh).isMesh || (obj as THREE.LineSegments).isLineSegments)
+            ) {
+              count++;
+            }
+          });
+          return count;
+        },
+        projectPoint: (x: number, y: number, z: number) => {
+          const v = new THREE.Vector3(x, y, z);
+          v.project(camera);
+          return { x: v.x, y: v.y, z: v.z };
+        },
         getSelected: () => selectedRef.current,
         getActivePointerCount: () => activePointers.size,
         getAgentPosition: (nama: string) =>
@@ -1910,14 +2058,13 @@ export function OfficeStage3D({
         getHomePositions: () => HOME_POSITIONS,
         findPath: (from: string, to: string) => findPath(from, to),
         getAgentMeetingWaypoints: (nama: string) => {
-          const mr = ROOMS.find((r) => r.meeting)!;
           const seat = SEAT_BY_AGENT[nama];
           if (!seat) {
             throw new Error(
               `[OfficeStage3D] Kursi rapat tidak ditemukan untuk agen "${nama}" di SEAT_BY_AGENT`
             );
           }
-          const target = { x: mr.x + seat[0] + OFFSET_X, z: mr.y + seat[1] + OFFSET_Z };
+          const target = { x: seat[0], z: seat[1] };
           const p = agentRecords[nama]?.group.position;
           return getMeetingPathForAgent(nama, { x: p.x, z: p.z }, target);
         },
@@ -1962,9 +2109,6 @@ export function OfficeStage3D({
           dynamicAgentsCount: dynamicAgentsRef.current.length,
           isRunning: isInstanceDemoRunningRef.current,
         }),
-        renderer,
-        scene,
-        camera,
         controls,
       };
     }
@@ -2133,16 +2277,23 @@ export function OfficeStage3D({
 
         // Dalam mode kumpul ruang meeting, sembunyikan label agent lain yang tidak dipilih
         if (isGathered && !isHovered && !isSelected) {
-          rec.labelDiv.style.display = "none";
+          if (rec.labelDiv.style.display !== "none") {
+            rec.labelDiv.style.display = "none";
+          }
         } else {
-          rec.labelDiv.style.display = "inline-flex";
+          if (rec.labelDiv.style.display !== "inline-flex") {
+            rec.labelDiv.style.display = "inline-flex";
+          }
           const maxDist = 52;
           const minDist = 16;
           const alpha = Math.min(
             1.0,
             Math.max(0.35, 1.0 - (dist - minDist) / (maxDist - minDist))
           );
-          rec.labelDiv.style.opacity = alpha.toFixed(2);
+          const alphaStr = alpha.toFixed(2);
+          if (rec.labelDiv.style.opacity !== alphaStr) {
+            rec.labelDiv.style.opacity = alphaStr;
+          }
         }
       });
 
@@ -2150,7 +2301,10 @@ export function OfficeStage3D({
       Object.entries(roomRecords).forEach(([, rRec]) => {
         const dist = camPos.distanceTo(rRec.group.position);
         const alpha = Math.min(1.0, Math.max(0.4, 1.0 - (dist - 14) / 42));
-        rRec.labelDiv.style.opacity = alpha.toFixed(2);
+        const alphaStr = alpha.toFixed(2);
+        if (rRec.labelDiv.style.opacity !== alphaStr) {
+          rRec.labelDiv.style.opacity = alphaStr;
+        }
       });
 
       renderer.render(scene, camera);

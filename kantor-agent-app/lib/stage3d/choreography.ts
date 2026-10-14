@@ -272,7 +272,7 @@ export class ChoreographyEngine {
     reducedMotion: boolean = false
   ): void {
     this.isMeetingActive = true;
-    const meetingCenter = { x: 0.0, z: -2.9 };
+    const meetingCenter = { x: 7.5, z: 4.5 };
 
     let idx = 0;
     for (const [name, actor] of this.actors.entries()) {
@@ -421,25 +421,25 @@ export class ChoreographyEngine {
 
       if (actor.isDrainingBacklog) {
         if (tripsCount >= 5) {
-          speedMultiplier = 4.2;
+          speedMultiplier = 7.5;
           waitMultiplier = 0.0; // Lewati jeda saat backlog sangat tinggi
         } else if (tripsCount >= 3) {
-          speedMultiplier = 3.2;
-          waitMultiplier = 0.05; // Jeda hampir instan
+          speedMultiplier = 6.0;
+          waitMultiplier = 0.0; // Lewati jeda saat backlog tinggi
         } else {
           // Sisa 1-2 perjalanan terakhir dari backlog tetap dipercepat agar antrean segera tuntas
-          speedMultiplier = 2.6;
-          waitMultiplier = 0.1;
+          speedMultiplier = 4.8;
+          waitMultiplier = 0.0;
         }
       } else {
         // Mode normal
         if (tripsCount >= 2) {
-          speedMultiplier = 1.4;
-          waitMultiplier = 0.4; // Jeda diperpendek sedikit jika ada 2 antrean
+          speedMultiplier = 1.8;
+          waitMultiplier = 0.3; // Jeda diperpendek sedikit jika ada 2 antrean
         }
       }
 
-      const baseSpeed = 2.6; // Unit per detik
+      const baseSpeed = 3.6; // Unit per detik (disesuaikan untuk denah 44x36 dan kehalusan animasi)
       const currentSpeed = baseSpeed * speedMultiplier;
 
       // Update speech bubble timeout
