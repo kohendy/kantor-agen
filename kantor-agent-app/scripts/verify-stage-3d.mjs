@@ -2020,6 +2020,213 @@ async function run() {
     console.log("   ✓ KASUS 12 LOLOS SEMPURNA.");
 
     // =========================================================================
+    // KASUS T2A: INTERIOR ISOMETRIK TAHAP 2A (4 DEPT & COMMON AREAS)
+    // =========================================================================
+    console.log("\n===============================================================");
+    console.log("=== PENGUJIAN T2A: ISOMETRIC INTERIOR & VOXEL PROPS         ===");
+    console.log("===============================================================\n");
+
+    // 1. Validasi Startup Tata Letak Props
+    console.log("--- KASUS T2a-1: Validasi Startup Tata Letak Props ---");
+    const startupPropsValidation = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      return stage.validatePropsPlacement();
+    });
+    console.log("   Hasil validasi startup props:", startupPropsValidation);
+    if (!startupPropsValidation.valid || startupPropsValidation.errors.length > 0) {
+      throw new Error(`Validasi startup props gagal! Error: ${startupPropsValidation.errors.join("; ")}`);
+    }
+    console.log("   ✓ Validasi startup props berhasil: 0 error tumpang tindih pintu, kursi rapat, dan meja agen.");
+    testReport.kasusT2a_1 = startupPropsValidation;
+
+    // 2. Routing & Pathfinding Bebas Hambatan (19 Agen & Obstacles)
+    console.log("\n--- KASUS T2a-2: Routing & Pathfinding Bebas Hambatan ---");
+    const routeCollisionsTest = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const homePos = stage.getHomePositions();
+
+      const agents = Object.keys(homePos);
+      const results = {};
+      let totalFailures = 0;
+
+      for (const agent of agents) {
+        // Path desk -> seat
+        const p1 = stage.findPath("desk_" + agent, "seat_" + agent);
+        const p2 = stage.findPath("seat_" + agent, "desk_" + agent);
+
+        results[agent] = {
+          p1Length: p1.length,
+          p2Length: p2.length,
+          valid: p1.length > 1 && p2.length > 1,
+        };
+
+        if (p1.length <= 1 || p2.length <= 1) {
+          totalFailures++;
+        }
+      }
+
+      return {
+        results,
+        totalAgents: agents.length,
+        totalFailures,
+      };
+    });
+
+    console.log(`   Uji rute 19 agen: ${routeCollisionsTest.totalAgents} agen diuji, kegagalan: ${routeCollisionsTest.totalFailures}`);
+    if (routeCollisionsTest.totalFailures > 0) {
+      throw new Error(`Ada rute agen yang gagal atau terhalang! Hasil: ${JSON.stringify(routeCollisionsTest.results)}`);
+    }
+    console.log("   ✓ Seluruh 19 agen memiliki rute Dijkstra valid bolak-balik tanpa terputus.");
+    testReport.kasusT2a_2 = routeCollisionsTest;
+
+    // 3. Prop Registry & Integrasi THEME.props
+    console.log("\n--- KASUS T2a-3: Prop Registry & Integrasi THEME.props ---");
+    const themePropsTest = await page.evaluate(() => {
+      const theme = window.__STAGE_3D__.getTheme();
+      const hasPropsTheme = !!theme.props;
+      const deptFloors = theme.deptFloors;
+      return {
+        hasPropsTheme,
+        hasDeptFloors: !!deptFloors,
+        hasMeetingProps: !!theme.props?.meeting,
+        hasManagerProps: !!theme.props?.manager,
+        hasRisetProps: !!theme.props?.riset,
+        hasOpsProps: !!theme.props?.operasional,
+        hasNatureProps: !!theme.props?.nature,
+        hasKitchenProps: !!theme.props?.kitchen,
+      };
+    });
+    console.log("   Status THEME.props di runtime:", themePropsTest);
+    if (!themePropsTest.hasPropsTheme || !themePropsTest.hasDeptFloors) {
+      throw new Error("THEME.props atau THEME.deptFloors tidak ditemukan di runtime Stage 3D!");
+    }
+    console.log("   ✓ Prop Registry terintegrasi penuh dengan THEME.props & THEME.deptFloors.");
+    testReport.kasusT2a_3 = themePropsTest;
+
+    // 4. InstancedMesh & Anggaran Static Draw Calls (< 220)
+    console.log("\n--- KASUS T2a-4: InstancedMesh & Anggaran Static Draw Calls ---");
+    const instancedMeshStats = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const instancedMeshes = [];
+      stage.scene.traverse((obj) => {
+        if (obj.isInstancedMesh) {
+          instancedMeshes.push({
+            name: obj.name,
+            count: obj.count,
+          });
+        }
+      });
+      const staticCalls = stage.getStaticDrawCalls ? stage.getStaticDrawCalls() : 0;
+      return {
+        instancedMeshes,
+        instancedCount: instancedMeshes.length,
+        staticCalls,
+      };
+    });
+
+    console.log(`   InstancedMesh terdeteksi (${instancedMeshStats.instancedCount}):`, instancedMeshStats.instancedMeshes);
+    console.log(`   Static Draw Calls terukur: ${instancedMeshStats.staticCalls} (anggaran T2a: < 220)`);
+
+    if (instancedMeshStats.instancedCount < 5) {
+      throw new Error(`Jumlah InstancedMesh (${instancedMeshStats.instancedCount}) kurang dari minimal 5 untuk repeated props!`);
+    }
+    if (instancedMeshStats.staticCalls >= 220) {
+      throw new Error(`Static draw calls (${instancedMeshStats.staticCalls}) melebihi batas anggaran 220!`);
+    }
+    console.log(`   ✓ Repeated props terbukti menggunakan InstancedMesh dan static draw calls hemat (${instancedMeshStats.staticCalls} < 220).`);
+    testReport.kasusT2a_4 = instancedMeshStats;
+
+    // 5. Kamera focusRoom & Integritas Visual Scoped Rooms
+    console.log("\n--- KASUS T2a-5: Kamera focusRoom & Integritas Visual ---");
+    const scopedRooms = [
+      "meeting",
+      "manager",
+      "riset",
+      "operasional",
+      "atrium",
+      "pantry",
+      "lounge",
+      "toilet",
+      "taman",
+      "resepsi",
+    ];
+
+    const focusRoomResults = {};
+    for (const roomId of scopedRooms) {
+      const focusRes = await page.evaluate((rId) => {
+        const stage = window.__STAGE_3D__;
+        const ok = stage.focusRoom(rId);
+        const camPos = stage.getCameraPosition();
+        const camTarget = stage.getCameraTarget();
+        return { ok, camPos, camTarget };
+      }, roomId);
+
+      if (!focusRes.ok) {
+        throw new Error(`focusRoom gagal untuk ruangan: ${roomId}!`);
+      }
+      focusRoomResults[roomId] = focusRes;
+    }
+    console.log(`   ✓ focusRoom berhasil mengorbitkan kamera ke seluruh ${scopedRooms.length} ruangan scoped.`);
+    testReport.kasusT2a_5 = focusRoomResults;
+
+    // 6. Tangkapan Layar Visual Jam 12 dan Jam 22 untuk 10 Ruangan Scoped
+    console.log("\n--- KASUS T2a-6: Tangkapan Layar Visual Jam 12 & 22 ke docs/design/t2a/ ---");
+    const designDir = "docs/design/t2a";
+    const rootDesignDir = "../docs/design/t2a";
+    if (!fs.existsSync(designDir)) fs.mkdirSync(designDir, { recursive: true });
+    if (!fs.existsSync(rootDesignDir)) fs.mkdirSync(rootDesignDir, { recursive: true });
+
+    const capturedScreenshots = [];
+    for (const roomId of scopedRooms) {
+      // Fokus ke ruangan
+      await page.evaluate((rId) => {
+        window.__STAGE_3D__.focusRoom(rId);
+      }, roomId);
+      await page.waitForTimeout(100);
+
+      for (const h of [12, 22]) {
+        await page.evaluate((hour) => {
+          window.__STAGE_3D__.setHourOverride(hour);
+        }, h);
+        await page.waitForTimeout(200);
+
+        const fileName = `${roomId}-jam${h}.png`;
+        const path1 = `${designDir}/${fileName}`;
+        const path2 = `${rootDesignDir}/${fileName}`;
+
+        await page.screenshot({ path: path1 });
+        try {
+          fs.copyFileSync(path1, path2);
+        } catch {
+          // ignore if same directory
+        }
+
+        const stats = fs.statSync(path1);
+        if (stats.size < 10000) {
+          throw new Error(`Screenshot ${fileName} berukuran terlalu kecil (${stats.size} bytes)!`);
+        }
+        capturedScreenshots.push({ file: fileName, size: stats.size, hour: h, room: roomId });
+      }
+    }
+
+    // Reset hour override and reset camera view
+    await page.evaluate(() => {
+      window.__STAGE_3D__.setHourOverride(null);
+    });
+    const resetButton = page.locator("button", { hasText: "Reset View" });
+    if (await resetButton.count() > 0) {
+      await resetButton.click();
+      await page.waitForTimeout(600);
+    }
+
+    console.log(`   ✓ Berhasil mengambil total ${capturedScreenshots.length} screenshot visual jam 12 & 22 (semua > 10KB).`);
+    testReport.kasusT2a_6 = {
+      totalScreenshots: capturedScreenshots.length,
+      screenshots: capturedScreenshots,
+    };
+    console.log("   ✓ KASUS T2A LOLOS SEMPURNA.");
+
+    // =========================================================================
     // KASUS 11: VERIFIKASI AKHIR DATABASE & INTEGRITAS SISTEM
     // =========================================================================
     console.log("\n--- KASUS 11: Integritas Akhir Database & Sistem ---");

@@ -17,6 +17,7 @@ import {
   roomOfAgent,
 } from "@/lib/officeConfig";
 import { THEME } from "./theme";
+import { PROPS_OBSTACLES, WalkObstacle } from "./props/index";
 
 export interface WaypointNode {
   id: string;
@@ -130,13 +131,29 @@ export function segmentIntersectsUnallowedRooms(
 export function generateWalkwayGraph(
   fp: FloorplanData = FLOORPLAN,
   homePosMap: Record<string, [number, number]> = HOME_POSITIONS,
-  seatPosMap: Record<string, [number, number]> = SEAT_BY_AGENT
+  seatPosMap: Record<string, [number, number]> = SEAT_BY_AGENT,
+  obstacles: WalkObstacle[] = PROPS_OBSTACLES
 ): Record<string, WaypointNode> {
   const nodes: Record<string, WaypointNode> = {};
 
   function addNode(node: WaypointNode) {
     node.x = +node.x.toFixed(3);
     node.z = +node.z.toFixed(3);
+
+    // Node koridor/aisle tidak boleh berada di dalam obstacle
+    if (!node.isDesk && !node.isSeat) {
+      for (const obs of obstacles) {
+        if (
+          node.x > obs.minX + 0.05 &&
+          node.x < obs.maxX - 0.05 &&
+          node.z > obs.minZ + 0.05 &&
+          node.z < obs.maxZ - 0.05
+        ) {
+          return;
+        }
+      }
+    }
+
     if (!nodes[node.id]) {
       nodes[node.id] = { ...node, neighbors: [...node.neighbors] };
     } else {
@@ -148,6 +165,16 @@ export function generateWalkwayGraph(
 
   function addEdge(id1: string, id2: string) {
     if (id1 === id2 || !nodes[id1] || !nodes[id2]) return;
+    const n1 = nodes[id1];
+    const n2 = nodes[id2];
+
+    // Hindari segmen yang memotong obstacle
+    for (const obs of obstacles) {
+      if (segmentIntersectsBox(n1, n2, obs)) {
+        return;
+      }
+    }
+
     if (!nodes[id1].neighbors.includes(id2)) nodes[id1].neighbors.push(id2);
     if (!nodes[id2].neighbors.includes(id1)) nodes[id2].neighbors.push(id1);
   }
@@ -486,6 +513,30 @@ export function generateWalkwayGraph(
     addEdge(seatNodeId, bestAisle);
   }
 
+  // 5b. INTERIOR RUANG RISET (Aisle loop mengelilingi lab island)
+  addNode({ id: "riset_aisle_nw", x: 12.8, z: 13.0, roomId: "riset", isAisle: true, neighbors: [] });
+  addNode({ id: "riset_aisle_n",  x: 16.0, z: 13.0, roomId: "riset", isAisle: true, neighbors: [] });
+  addNode({ id: "riset_aisle_ne", x: 19.2, z: 13.0, roomId: "riset", isAisle: true, neighbors: [] });
+  addNode({ id: "riset_aisle_w",  x: 12.8, z: 16.0, roomId: "riset", isAisle: true, neighbors: [] });
+  addNode({ id: "riset_aisle_e",  x: 19.2, z: 16.0, roomId: "riset", isAisle: true, neighbors: [] });
+  addNode({ id: "riset_aisle_sw", x: 14.0, z: 18.2, roomId: "riset", isAisle: true, neighbors: [] });
+  addNode({ id: "riset_aisle_se", x: 18.0, z: 18.2, roomId: "riset", isAisle: true, neighbors: [] });
+  addNode({ id: "riset_aisle_metis_w", x: 14.0, z: 16.5, roomId: "riset", isAisle: true, neighbors: [] });
+  addNode({ id: "riset_aisle_metis_e", x: 18.0, z: 16.5, roomId: "riset", isAisle: true, neighbors: [] });
+
+  addEdge("riset_aisle_nw", "riset_aisle_n");
+  addEdge("riset_aisle_n", "riset_aisle_ne");
+  addEdge("riset_aisle_nw", "door_d_riset_w_in");
+  addEdge("riset_aisle_w", "door_d_riset_w_in");
+  addEdge("riset_aisle_ne", "door_d_riset_e_in");
+  addEdge("riset_aisle_e", "door_d_riset_e_in");
+  addEdge("riset_aisle_w", "riset_aisle_metis_w");
+  addEdge("riset_aisle_metis_w", "riset_aisle_sw");
+  addEdge("riset_aisle_sw", "door_d_riset_s_in");
+  addEdge("riset_aisle_e", "riset_aisle_metis_e");
+  addEdge("riset_aisle_metis_e", "riset_aisle_se");
+  addEdge("riset_aisle_se", "door_d_riset_s_in");
+
   // 6. INTERIOR DEPARTEMEN LAIN: Meja Agent (Home Desks) & Lorong Interior
   for (const [agentName, [hx, hz]] of Object.entries(homePosMap)) {
     const deskNodeId = `desk_${agentName}`;
@@ -500,24 +551,25 @@ export function generateWalkwayGraph(
       neighbors: [],
     });
 
-    // Cari pintu masuk inside dari ruangan ini
-    const roomDoors = fp.doors.filter((d) => d.roomId === rId);
-    if (roomDoors.length > 0) {
-      // Hubungkan ke pintu inside terdekat
-      let bestDoorIn = `door_${roomDoors[0].id}_in`;
-      let minD = Infinity;
-      for (const d of roomDoors) {
-        const dinId = `door_${d.id}_in`;
-        const dn = nodes[dinId];
-        if (dn) {
-          const dist = Math.hypot(dn.x - hx, dn.z - hz);
-          if (dist < minD) {
-            minD = dist;
-            bestDoorIn = dinId;
-          }
-        }
+    if (rId === "riset") {
+      if (agentName === "METIS") {
+        addEdge(deskNodeId, "riset_aisle_metis_w");
+        addEdge(deskNodeId, "riset_aisle_metis_e");
+      } else if (agentName === "ATHENA") {
+        addEdge(deskNodeId, "riset_aisle_nw");
+        addEdge(deskNodeId, "riset_aisle_n");
+        addEdge(deskNodeId, "door_d_riset_w_in");
+      } else if (agentName === "ARGUS") {
+        addEdge(deskNodeId, "riset_aisle_ne");
+        addEdge(deskNodeId, "riset_aisle_n");
+        addEdge(deskNodeId, "door_d_riset_e_in");
       }
-      addEdge(deskNodeId, bestDoorIn);
+    }
+
+    // Sambungkan ke seluruh pintu masuk inside yang dapat dijangkau tanpa tabrakan
+    const roomDoors = fp.doors.filter((d) => d.roomId === rId);
+    for (const d of roomDoors) {
+      addEdge(deskNodeId, `door_${d.id}_in`);
     }
   }
 
