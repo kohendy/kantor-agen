@@ -6,7 +6,7 @@
 import * as THREE from "three";
 import { THEME } from "../theme";
 import { VoxelBoxDef, buildVoxelGeometry } from "./voxel";
-import { FloorplanData } from "../floorplan";
+import { FloorplanData, FLOORPLAN } from "../floorplan";
 import { HOME_POSITIONS, SEAT_BY_AGENT } from "@/lib/officeConfig";
 
 export interface PropDefinition {
@@ -852,6 +852,560 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
       return buildVoxelGeometry(boxes);
     },
   },
+
+  // ---------------------------------------------------------------------------
+  // TAHAP 2B: ADVERTISER PROPS
+  // ---------------------------------------------------------------------------
+  advertiser_screen_wall: {
+    id: "advertiser_screen_wall",
+    name: "Dinding Layar Analitik Iklan",
+    footprint: { w: 5.0, d: 0.3 },
+    height: 1.6,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Rangka dinding belakang
+        { x: 0, y: 0.2, z: 0, w: 5.0, h: 1.4, d: 0.14, color: THEME.props.advertiser.screenWall },
+        // Panel layar utama
+        { x: 0, y: 0.25, z: 0.06, w: 4.8, h: 1.3, d: 0.04, color: THEME.props.advertiser.screenDim },
+        // Batang metrik CPA multiwarna
+        { x: -1.6, y: 0.35, z: 0.08, w: 0.4, h: 0.6, d: 0.04, color: THEME.props.advertiser.cpaBars[0] },
+        { x: -1.0, y: 0.35, z: 0.08, w: 0.4, h: 0.8, d: 0.04, color: THEME.props.advertiser.cpaBars[1] },
+        { x: -0.4, y: 0.35, z: 0.08, w: 0.4, h: 0.5, d: 0.04, color: THEME.props.advertiser.cpaBars[2] },
+        { x: 0.2, y: 0.35, z: 0.08, w: 0.4, h: 0.9, d: 0.04, color: THEME.props.advertiser.cpaBars[3] },
+        // Header grafik & garis tren
+        { x: 1.2, y: 0.75, z: 0.08, w: 1.8, h: 0.08, d: 0.02, color: THEME.props.advertiser.screenGlow },
+        { x: 1.2, y: 0.55, z: 0.08, w: 1.8, h: 0.05, d: 0.02, color: THEME.props.advertiser.screenGlow },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+    createEmissiveGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        { x: -1.6, y: 0.35, z: 0.09, w: 0.38, h: 0.58, d: 0.02, color: THEME.props.advertiser.cpaBars[0] },
+        { x: -1.0, y: 0.35, z: 0.09, w: 0.38, h: 0.78, d: 0.02, color: THEME.props.advertiser.cpaBars[1] },
+        { x: -0.4, y: 0.35, z: 0.09, w: 0.38, h: 0.48, d: 0.02, color: THEME.props.advertiser.cpaBars[2] },
+        { x: 0.2, y: 0.35, z: 0.09, w: 0.38, h: 0.88, d: 0.02, color: THEME.props.advertiser.cpaBars[3] },
+        { x: 1.2, y: 0.75, z: 0.09, w: 1.8, h: 0.08, d: 0.02, color: THEME.props.advertiser.screenGlow },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  advertiser_cpa_board: {
+    id: "advertiser_cpa_board",
+    name: "Papan Status CPA Kampanye",
+    footprint: { w: 0.25, d: 2.2 },
+    height: 1.4,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Kaki penyangga logam
+        { x: 0, y: 0, z: -0.8, w: 0.08, h: 1.4, d: 0.08, color: THEME.props.metal.industrial },
+        { x: 0, y: 0, z: 0.8, w: 0.08, h: 1.4, d: 0.08, color: THEME.props.metal.industrial },
+        // Papan display biru
+        { x: 0, y: 0.3, z: 0, w: 0.08, h: 1.0, d: 2.0, color: THEME.props.advertiser.cpaBoard },
+        // Indikator status kampanye
+        { x: -0.05, y: 0.9, z: -0.4, w: 0.03, h: 0.15, d: 0.4, color: THEME.props.advertiser.cpaBars[0] },
+        { x: -0.05, y: 0.9, z: 0.4, w: 0.03, h: 0.15, d: 0.4, color: THEME.props.advertiser.cpaBars[1] },
+        { x: -0.05, y: 0.6, z: 0, w: 0.03, h: 0.15, d: 1.2, color: THEME.props.tech.paper },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  advertiser_desk: {
+    id: "advertiser_desk",
+    name: "Meja Kampanye Advertiser",
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan meja biru navy melengkung
+        { x: 0, y: 0.38, z: 0, w: 1.4, h: 0.04, d: 0.65, color: THEME.props.advertiser.arcDesk },
+        // 4 Kaki meja logam
+        { x: -0.62, y: 0, z: -0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: 0.62, y: 0, z: -0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: -0.62, y: 0, z: 0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: 0.62, y: 0, z: 0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        // Monitor ganda
+        { x: -0.28, y: 0.42, z: -0.15, w: 0.45, h: 0.28, d: 0.04, color: THEME.props.metal.dark },
+        { x: 0.28, y: 0.42, z: -0.15, w: 0.45, h: 0.28, d: 0.04, color: THEME.props.metal.dark },
+        // Layar monitor bercahaya
+        { x: -0.28, y: 0.44, z: -0.12, w: 0.41, h: 0.24, d: 0.01, color: THEME.props.advertiser.screenGlow },
+        { x: 0.28, y: 0.44, z: -0.12, w: 0.41, h: 0.24, d: 0.01, color: THEME.props.advertiser.screenDim },
+        // Keyboard & mousepad
+        { x: 0, y: 0.42, z: 0.1, w: 0.5, h: 0.015, d: 0.2, color: THEME.props.metal.dark },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  advertiser_trolley: {
+    id: "advertiser_trolley",
+    name: "Troli Server Kampanye Iklan",
+    footprint: { w: 0.6, d: 0.6 },
+    height: 0.8,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Rangka troli
+        { x: 0, y: 0.04, z: 0, w: 0.6, h: 0.76, d: 0.6, color: THEME.props.advertiser.trolley },
+        // Rak modul server & LED
+        { x: 0, y: 0.15, z: 0.22, w: 0.5, h: 0.15, d: 0.12, color: THEME.props.metal.dark },
+        { x: 0, y: 0.40, z: 0.22, w: 0.5, h: 0.15, d: 0.12, color: THEME.props.metal.dark },
+        { x: 0, y: 0.65, z: 0.22, w: 0.5, h: 0.10, d: 0.12, color: THEME.props.advertiser.cpaBars[0] },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // TAHAP 2B: HR PROPS
+  // ---------------------------------------------------------------------------
+  hr_desk: {
+    id: "hr_desk",
+    name: "Meja Eksekutif HR",
+    footprint: { w: 1.6, d: 0.65 },
+    height: 0.48,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Meja utama kurva magenta tua
+        { x: 0, y: 0, z: 0, w: 1.6, h: 0.44, d: 0.65, color: THEME.props.hr.receptionCurved },
+        // Countertop putih pastel
+        { x: 0, y: 0.44, z: 0, w: 1.64, h: 0.04, d: 0.69, color: THEME.props.hr.receptionTop },
+        // Monitor HR
+        { x: 0, y: 0.48, z: -0.1, w: 0.5, h: 0.32, d: 0.04, color: THEME.props.metal.dark },
+        { x: 0, y: 0.50, z: -0.07, w: 0.46, h: 0.28, d: 0.01, color: THEME.props.hr.portalGlow },
+        // Dokumen & map berkas karyawan
+        { x: 0.5, y: 0.48, z: 0.1, w: 0.25, h: 0.06, d: 0.22, color: THEME.props.hr.portalFrame },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  hr_file_shelf: {
+    id: "hr_file_shelf",
+    name: "Lemari Arsip Karyawan HR",
+    footprint: { w: 2.4, d: 0.45 },
+    height: 1.6,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Rangka lemari kayu ungu tua
+        { x: 0, y: 0, z: 0, w: 2.4, h: 1.6, d: 0.45, color: THEME.props.hr.fileShelf },
+        // Baris map berkas arsip (merah, ungu, putih)
+        { x: -0.6, y: 0.2, z: 0.15, w: 0.9, h: 0.3, d: 0.12, color: THEME.props.hr.waitingChair },
+        { x: 0.6, y: 0.2, z: 0.15, w: 0.9, h: 0.3, d: 0.12, color: THEME.props.hr.portalGlow },
+        { x: -0.6, y: 0.7, z: 0.15, w: 0.9, h: 0.3, d: 0.12, color: THEME.props.hr.receptionTop },
+        { x: 0.6, y: 0.7, z: 0.15, w: 0.9, h: 0.3, d: 0.12, color: THEME.props.hr.waitingChair },
+        { x: 0, y: 1.2, z: 0.15, w: 2.0, h: 0.28, d: 0.12, color: THEME.props.hr.portalFrame },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  hr_portal_kiosk: {
+    id: "hr_portal_kiosk",
+    name: "Kios Portal Rekrutmen",
+    footprint: { w: 1.4, d: 0.3 },
+    height: 1.4,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Rangka portal ungu
+        { x: 0, y: 0, z: 0, w: 1.4, h: 1.4, d: 0.2, color: THEME.props.hr.portalFrame },
+        // Layar portal pelamar
+        { x: 0, y: 0.4, z: 0.08, w: 1.2, h: 0.7, d: 0.04, color: THEME.props.hr.portalGlow },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  hr_waiting_couch: {
+    id: "hr_waiting_couch",
+    name: "Sofa Tamu & Pelamar HR",
+    footprint: { w: 1.6, d: 0.6 },
+    height: 0.46,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Dudukan sofa magenta
+        { x: 0, y: 0.05, z: 0, w: 1.6, h: 0.22, d: 0.6, color: THEME.props.hr.waitingChair },
+        // Bantalan sofa
+        { x: 0, y: 0.27, z: 0.02, w: 1.5, h: 0.12, d: 0.54, color: THEME.props.hr.portalGlow },
+        // Sandaran sofa
+        { x: 0, y: 0.27, z: -0.22, w: 1.5, h: 0.24, d: 0.14, color: THEME.props.hr.waitingChair },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // TAHAP 2B: SOSMED PROPS
+  // ---------------------------------------------------------------------------
+  sosmed_desk: {
+    id: "sosmed_desk",
+    name: "Meja Kreator Sosmed",
+    footprint: { w: 1.5, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan meja kayu hangat
+        { x: 0, y: 0.38, z: 0, w: 1.5, h: 0.04, d: 0.65, color: THEME.props.sosmed.desk },
+        // Kaki meja
+        { x: -0.65, y: 0, z: -0.25, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: 0.65, y: 0, z: -0.25, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: -0.65, y: 0, z: 0.25, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: 0.65, y: 0, z: 0.25, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        // Monitor layar lebar & antarmuka suara
+        { x: 0, y: 0.42, z: -0.15, w: 0.6, h: 0.32, d: 0.04, color: THEME.props.metal.dark },
+        { x: 0, y: 0.44, z: -0.12, w: 0.56, h: 0.28, d: 0.01, color: THEME.props.sosmed.calendarGrid[1] },
+        { x: -0.45, y: 0.42, z: 0.1, w: 0.06, h: 0.28, d: 0.06, color: THEME.props.metal.industrial },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  sosmed_green_screen: {
+    id: "sosmed_green_screen",
+    name: "Layar Green Screen Studio",
+    footprint: { w: 2.6, d: 0.25 },
+    height: 1.8,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Tiang samping
+        { x: -1.25, y: 0, z: 0, w: 0.06, h: 1.8, d: 0.06, color: THEME.props.sosmed.ringStand },
+        { x: 1.25, y: 0, z: 0, w: 0.06, h: 1.8, d: 0.06, color: THEME.props.sosmed.ringStand },
+        // Tiang atas
+        { x: 0, y: 1.76, z: 0, w: 2.56, h: 0.05, d: 0.05, color: THEME.props.sosmed.ringStand },
+        // Kain green screen cerah
+        { x: 0, y: 0.1, z: 0, w: 2.45, h: 1.65, d: 0.02, color: THEME.props.sosmed.greenScreen },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  sosmed_ring_light: {
+    id: "sosmed_ring_light",
+    name: "Lampu Ring Light Studio",
+    footprint: { w: 0.5, d: 0.5 },
+    height: 1.5,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Tiang tripod
+        { x: 0, y: 0, z: 0, w: 0.06, h: 1.2, d: 0.06, color: THEME.props.sosmed.ringStand },
+        // Kaki tripod
+        { x: -0.15, y: 0, z: -0.15, w: 0.04, h: 0.25, d: 0.04, color: THEME.props.sosmed.ringStand },
+        { x: 0.15, y: 0, z: -0.15, w: 0.04, h: 0.25, d: 0.04, color: THEME.props.sosmed.ringStand },
+        { x: 0, y: 0, z: 0.2, w: 0.04, h: 0.25, d: 0.04, color: THEME.props.sosmed.ringStand },
+        // Ring light
+        { x: 0, y: 1.3, z: 0, w: 0.38, h: 0.38, d: 0.05, color: THEME.props.sosmed.ringStand },
+        { x: 0, y: 1.3, z: 0.02, w: 0.32, h: 0.32, d: 0.02, color: THEME.props.sosmed.ringLight },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+    createEmissiveGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        { x: 0, y: 1.3, z: 0.02, w: 0.32, h: 0.32, d: 0.02, color: THEME.props.sosmed.ringLight },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  sosmed_content_calendar: {
+    id: "sosmed_content_calendar",
+    name: "Papan Kalender Konten Sosmed",
+    footprint: { w: 0.25, d: 2.2 },
+    height: 1.3,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan latar
+        { x: 0, y: 0.2, z: 0, w: 0.04, h: 1.1, d: 2.2, color: THEME.props.metal.dark },
+        // Permukaan kalender
+        { x: 0.03, y: 0.25, z: 0, w: 0.02, h: 1.0, d: 2.1, color: THEME.props.tech.paper },
+        // Slot konten mingguan multiwarna
+        { x: 0.045, y: 0.8, z: -0.6, w: 0.015, h: 0.25, d: 0.35, color: THEME.props.sosmed.calendarGrid[0] },
+        { x: 0.045, y: 0.8, z: 0, w: 0.015, h: 0.25, d: 0.35, color: THEME.props.sosmed.calendarGrid[1] },
+        { x: 0.045, y: 0.8, z: 0.6, w: 0.015, h: 0.25, d: 0.35, color: THEME.props.sosmed.calendarGrid[2] },
+        { x: 0.045, y: 0.45, z: -0.3, w: 0.015, h: 0.25, d: 0.35, color: THEME.props.sosmed.calendarGrid[3] },
+        { x: 0.045, y: 0.45, z: 0.3, w: 0.015, h: 0.25, d: 0.35, color: THEME.props.sosmed.calendarGrid[4] },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  sosmed_lounge_sofa: {
+    id: "sosmed_lounge_sofa",
+    name: "Sofa Santai Kreator Sosmed",
+    footprint: { w: 0.7, d: 2.0 },
+    height: 0.5,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Dudukan oranye
+        { x: 0, y: 0.05, z: 0, w: 0.7, h: 0.22, d: 2.0, color: THEME.props.sosmed.sofa },
+        // Sandaran
+        { x: 0.22, y: 0.27, z: 0, w: 0.18, h: 0.24, d: 1.9, color: THEME.props.sosmed.sofa },
+        // Bantal
+        { x: -0.05, y: 0.27, z: 0, w: 0.55, h: 0.12, d: 1.9, color: THEME.props.sosmed.calendarGrid[0] },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // TAHAP 2B: CREATIVE PROPS
+  // ---------------------------------------------------------------------------
+  creative_drafting_desk: {
+    id: "creative_drafting_desk",
+    name: "Meja Gambar Desainer Kreatif",
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.48,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan gambar miring ungu
+        { x: 0, y: 0.38, z: 0, w: 1.4, h: 0.04, d: 0.65, color: THEME.props.creative.draftingDesk },
+        // Kaki kayu penyangga
+        { x: -0.55, y: 0, z: -0.22, w: 0.1, h: 0.38, d: 0.08, color: THEME.props.creative.easel },
+        { x: 0.55, y: 0, z: -0.22, w: 0.1, h: 0.38, d: 0.08, color: THEME.props.creative.easel },
+        { x: -0.55, y: 0, z: 0.22, w: 0.1, h: 0.38, d: 0.08, color: THEME.props.creative.easel },
+        { x: 0.55, y: 0, z: 0.22, w: 0.1, h: 0.38, d: 0.08, color: THEME.props.creative.easel },
+        // Tablet gambar digital
+        { x: 0, y: 0.42, z: 0.04, w: 0.6, h: 0.02, d: 0.38, color: THEME.props.metal.dark },
+        // Monitor referensi
+        { x: 0.38, y: 0.42, z: -0.15, w: 0.35, h: 0.25, d: 0.04, color: THEME.props.metal.dark },
+        { x: 0.38, y: 0.44, z: -0.12, w: 0.31, h: 0.21, d: 0.01, color: THEME.props.creative.artFrame2 },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  creative_easel: {
+    id: "creative_easel",
+    name: "Easel Lukis & Kanvas Desain",
+    footprint: { w: 0.8, d: 0.8 },
+    height: 1.4,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Kaki kayu tripod
+        { x: -0.25, y: 0, z: 0.15, w: 0.06, h: 1.4, d: 0.06, color: THEME.props.creative.easel },
+        { x: 0.25, y: 0, z: 0.15, w: 0.06, h: 1.4, d: 0.06, color: THEME.props.creative.easel },
+        { x: 0, y: 0, z: -0.25, w: 0.06, h: 1.3, d: 0.06, color: THEME.props.creative.easel },
+        // Tatakan kanvas
+        { x: 0, y: 0.5, z: 0.12, w: 0.7, h: 0.04, d: 0.1, color: THEME.props.creative.easel },
+        // Kanvas putih
+        { x: 0, y: 0.54, z: 0.12, w: 0.6, h: 0.75, d: 0.03, color: THEME.props.creative.canvas },
+        // Coretan warna cat
+        { x: -0.1, y: 0.8, z: 0.14, w: 0.2, h: 0.2, d: 0.01, color: THEME.props.creative.paints[0] },
+        { x: 0.1, y: 0.7, z: 0.14, w: 0.2, h: 0.2, d: 0.01, color: THEME.props.creative.paints[1] },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  creative_paint_rack: {
+    id: "creative_paint_rack",
+    name: "Rak Cat & Perlengkapan Seni",
+    footprint: { w: 0.45, d: 1.4 },
+    height: 1.3,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Rangka rak
+        { x: 0, y: 0, z: 0, w: 0.45, h: 1.3, d: 1.4, color: THEME.props.creative.paintRack },
+        // Kaleng & botol cat warna-warni
+        { x: 0.05, y: 0.35, z: -0.3, w: 0.25, h: 0.18, d: 0.2, color: THEME.props.creative.paints[0] },
+        { x: 0.05, y: 0.35, z: 0.3, w: 0.25, h: 0.18, d: 0.2, color: THEME.props.creative.paints[2] },
+        { x: 0.05, y: 0.75, z: -0.2, w: 0.25, h: 0.18, d: 0.2, color: THEME.props.creative.paints[1] },
+        { x: 0.05, y: 0.75, z: 0.2, w: 0.25, h: 0.18, d: 0.2, color: THEME.props.creative.paints[3] },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  creative_art_frame: {
+    id: "creative_art_frame",
+    name: "Bingkai Seni Dinding",
+    footprint: { w: 1.5, d: 0.15 },
+    height: 1.1,
+    blocksWalk: true,
+    createGeometry: (options?: Record<string, unknown>) => {
+      const frameColor = options?.color === "pink" ? THEME.props.creative.artFrame2 : THEME.props.creative.artFrame1;
+      const boxes: VoxelBoxDef[] = [
+        { x: 0, y: 0.4, z: 0, w: 1.5, h: 1.1, d: 0.08, color: frameColor },
+        { x: 0, y: 0.45, z: 0.04, w: 1.35, h: 0.95, d: 0.02, color: THEME.props.creative.canvas },
+        { x: -0.2, y: 0.6, z: 0.05, w: 0.5, h: 0.4, d: 0.01, color: THEME.props.creative.paints[4] },
+        { x: 0.2, y: 0.55, z: 0.05, w: 0.4, h: 0.3, d: 0.01, color: THEME.props.creative.paints[0] },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // TAHAP 2B: COPY PROPS
+  // ---------------------------------------------------------------------------
+  copy_desk: {
+    id: "copy_desk",
+    name: "Meja Kerja Copywriter",
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan meja merah marun
+        { x: 0, y: 0.38, z: 0, w: 1.4, h: 0.04, d: 0.65, color: THEME.props.copy.triangleDesk },
+        // Kaki meja
+        { x: -0.62, y: 0, z: -0.25, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: 0.62, y: 0, z: -0.25, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: -0.62, y: 0, z: 0.25, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        { x: 0.62, y: 0, z: 0.25, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.dark },
+        // Laptop & tumpukan kertas naskah
+        { x: -0.15, y: 0.42, z: 0, w: 0.45, h: 0.02, d: 0.35, color: THEME.props.metal.dark },
+        { x: -0.15, y: 0.44, z: -0.14, w: 0.45, h: 0.26, d: 0.02, color: THEME.props.metal.dark },
+        { x: 0.35, y: 0.42, z: 0, w: 0.3, h: 0.06, d: 0.32, color: THEME.props.tech.paper },
+        // Lampu meja kecil kuning
+        { x: -0.5, y: 0.42, z: -0.15, w: 0.12, h: 0.24, d: 0.12, color: THEME.props.copy.deskLamp },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  copy_bookshelf: {
+    id: "copy_bookshelf",
+    name: "Rak Buku Perpustakaan Copy",
+    footprint: { w: 0.45, d: 2.0 },
+    height: 1.7,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Rangka lemari buku kayu anggur gelap
+        { x: 0, y: 0, z: 0, w: 0.45, h: 1.7, d: 2.0, color: THEME.props.copy.bookshelf },
+        // Baris buku warna-warni (spines)
+        { x: 0.08, y: 0.2, z: -0.4, w: 0.24, h: 0.32, d: 0.6, color: THEME.props.copy.bookSpines[0] },
+        { x: 0.08, y: 0.2, z: 0.4, w: 0.24, h: 0.32, d: 0.6, color: THEME.props.copy.bookSpines[1] },
+        { x: 0.08, y: 0.65, z: -0.3, w: 0.24, h: 0.32, d: 0.7, color: THEME.props.copy.bookSpines[2] },
+        { x: 0.08, y: 0.65, z: 0.4, w: 0.24, h: 0.32, d: 0.5, color: THEME.props.copy.bookSpines[3] },
+        { x: 0.08, y: 1.15, z: 0, w: 0.24, h: 0.32, d: 1.4, color: THEME.props.copy.bookSpines[4] },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  copy_whiteboard: {
+    id: "copy_whiteboard",
+    name: "Papan Brainstorming Copy",
+    footprint: { w: 2.0, d: 0.15 },
+    height: 1.2,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        { x: 0, y: 0.4, z: 0, w: 2.0, h: 1.2, d: 0.06, color: THEME.props.metal.industrial },
+        { x: 0, y: 0.45, z: 0.03, w: 1.9, h: 1.1, d: 0.02, color: THEME.props.copy.whiteboard },
+        // Sticky notes / headline blocks
+        { x: -0.5, y: 0.8, z: 0.045, w: 0.3, h: 0.2, d: 0.01, color: THEME.props.copy.bookSpines[0] },
+        { x: 0, y: 0.75, z: 0.045, w: 0.4, h: 0.2, d: 0.01, color: THEME.props.copy.deskLamp },
+        { x: 0.5, y: 0.8, z: 0.045, w: 0.3, h: 0.2, d: 0.01, color: THEME.props.copy.bookSpines[1] },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  copy_reading_table: {
+    id: "copy_reading_table",
+    name: "Meja Diskusi & Mesin Tik Antik",
+    footprint: { w: 1.2, d: 0.9 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Meja bundar kayu cokelat
+        { x: 0, y: 0.38, z: 0, w: 1.2, h: 0.04, d: 0.9, color: THEME.props.copy.centerTable },
+        // Kaki penyangga
+        { x: 0, y: 0, z: 0, w: 0.25, h: 0.38, d: 0.25, color: THEME.props.copy.centerTable },
+        // Mesin tik antik di tengah
+        { x: 0, y: 0.42, z: 0, w: 0.4, h: 0.12, d: 0.35, color: THEME.props.copy.typewriter },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  // ---------------------------------------------------------------------------
+  // TAHAP 2B: LANDING PAGE PROPS
+  // ---------------------------------------------------------------------------
+  landing_page_desk: {
+    id: "landing_page_desk",
+    name: "Meja Pengembang Landing Page",
+    footprint: { w: 1.3, d: 0.6 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan meja hijau tua modern
+        { x: 0, y: 0.38, z: 0, w: 1.3, h: 0.04, d: 0.6, color: THEME.props.landing_page.zigzagDesk },
+        // Kaki meja
+        { x: -0.58, y: 0, z: -0.24, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.landing_page.monitorRack },
+        { x: 0.58, y: 0, z: -0.24, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.landing_page.monitorRack },
+        { x: -0.58, y: 0, z: 0.24, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.landing_page.monitorRack },
+        { x: 0.58, y: 0, z: 0.24, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.landing_page.monitorRack },
+        // Monitor ganda pengembang
+        { x: -0.25, y: 0.42, z: -0.12, w: 0.44, h: 0.28, d: 0.03, color: THEME.props.landing_page.monitorRack },
+        { x: 0.25, y: 0.42, z: -0.12, w: 0.44, h: 0.28, d: 0.03, color: THEME.props.landing_page.monitorRack },
+        { x: -0.25, y: 0.44, z: -0.1, w: 0.4, h: 0.24, d: 0.01, color: THEME.props.landing_page.wireframeAccent },
+        { x: 0.25, y: 0.44, z: -0.1, w: 0.4, h: 0.24, d: 0.01, color: THEME.props.tech.screenDim },
+        // Mousepad aksen hijau
+        { x: 0, y: 0.42, z: 0.1, w: 0.55, h: 0.015, d: 0.22, color: THEME.props.landing_page.wireframeAccent },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  landing_page_wireframe_board: {
+    id: "landing_page_wireframe_board",
+    name: "Papan Wireframe & Alur UI/UX",
+    footprint: { w: 0.25, d: 2.2 },
+    height: 1.4,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Bingkai papan
+        { x: 0, y: 0.25, z: 0, w: 0.05, h: 1.25, d: 2.2, color: THEME.props.landing_page.wireframeBoard },
+        // Kartu wireframe mobile
+        { x: 0.035, y: 0.7, z: -0.6, w: 0.02, h: 0.45, d: 0.3, color: THEME.props.landing_page.wireframeCards },
+        { x: 0.035, y: 0.7, z: 0, w: 0.02, h: 0.45, d: 0.3, color: THEME.props.landing_page.wireframeCards },
+        { x: 0.035, y: 0.7, z: 0.6, w: 0.02, h: 0.45, d: 0.3, color: THEME.props.landing_page.wireframeCards },
+        // Garis panah alur hijau
+        { x: 0.04, y: 0.5, z: 0, w: 0.015, h: 0.06, d: 1.6, color: THEME.props.landing_page.wireframeAccent },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  landing_page_device_rack: {
+    id: "landing_page_device_rack",
+    name: "Rak Uji Perangkat Responsif",
+    footprint: { w: 0.45, d: 1.4 },
+    height: 1.4,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Rangka rak
+        { x: 0, y: 0, z: 0, w: 0.45, h: 1.4, d: 1.4, color: THEME.props.landing_page.monitorRack },
+        // Perangkat uji (tablet & hp)
+        { x: 0.08, y: 0.4, z: -0.3, w: 0.2, h: 0.25, d: 0.3, color: THEME.props.metal.dark },
+        { x: 0.08, y: 0.4, z: 0.3, w: 0.2, h: 0.25, d: 0.3, color: THEME.props.metal.dark },
+        { x: 0.08, y: 0.85, z: 0, w: 0.2, h: 0.3, d: 0.5, color: THEME.props.landing_page.wireframeAccent },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
 };
 
 // =============================================================================
@@ -1483,6 +2037,498 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
 ];
 
 // =============================================================================
+// 2B. PENEMPATAN PROP STATIS TAHAP 2B (6 DEPARTEMEN TERSISA)
+// =============================================================================
+
+export const T2B_PLACED_PROPS: PlacedPropInstance[] = [
+  // ---------------------------------------------------------------------------
+  // 1. ADVERTISER (28, 0, 13, 9)
+  // ---------------------------------------------------------------------------
+  {
+    id: "advertiser_screen_wall_north",
+    propId: "advertiser_screen_wall",
+    roomId: "advertiser",
+    x: 34.5,
+    y: 0,
+    z: 0.35,
+    footprint: { w: 5.0, d: 0.3 },
+    height: 1.6,
+    blocksWalk: true,
+    bounds: { minX: 32.0, maxX: 37.0, minZ: 0.2, maxZ: 0.5 },
+  },
+  {
+    id: "advertiser_cpa_board_west",
+    propId: "advertiser_cpa_board",
+    roomId: "advertiser",
+    x: 28.3,
+    y: 0,
+    z: 7.0,
+    footprint: { w: 0.25, d: 2.2 },
+    height: 1.4,
+    blocksWalk: true,
+    bounds: { minX: 28.175, maxX: 28.425, minZ: 5.9, maxZ: 8.1 },
+  },
+  {
+    id: "advertiser_desk_zeus",
+    propId: "advertiser_desk",
+    roomId: "advertiser",
+    x: 31.5,
+    y: 0,
+    z: 3.8,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 30.8, maxX: 32.2, minZ: 3.475, maxZ: 4.125 },
+  },
+  {
+    id: "advertiser_desk_artemis",
+    propId: "advertiser_desk",
+    roomId: "advertiser",
+    x: 34.5,
+    y: 0,
+    z: 3.8,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 33.8, maxX: 35.2, minZ: 3.475, maxZ: 4.125 },
+  },
+  {
+    id: "advertiser_desk_plutus",
+    propId: "advertiser_desk",
+    roomId: "advertiser",
+    x: 37.5,
+    y: 0,
+    z: 3.8,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 36.8, maxX: 38.2, minZ: 3.475, maxZ: 4.125 },
+  },
+  {
+    id: "advertiser_trolley_se",
+    propId: "advertiser_trolley",
+    roomId: "advertiser",
+    x: 39.5,
+    y: 0,
+    z: 7.5,
+    footprint: { w: 0.6, d: 0.6 },
+    height: 0.8,
+    blocksWalk: true,
+    bounds: { minX: 39.2, maxX: 39.8, minZ: 7.2, maxZ: 7.8 },
+  },
+  {
+    id: "advertiser_plant_ne",
+    propId: "potted_plant",
+    roomId: "advertiser",
+    x: 40.0,
+    y: 0,
+    z: 1.0,
+    footprint: { w: 0.6, d: 0.6 },
+    height: 0.85,
+    blocksWalk: true,
+    bounds: { minX: 39.7, maxX: 40.3, minZ: 0.7, maxZ: 1.3 },
+  },
+
+  // ---------------------------------------------------------------------------
+  // 2. HR (0, 21, 9, 4)
+  // ---------------------------------------------------------------------------
+  {
+    id: "hr_desk_hera",
+    propId: "hr_desk",
+    roomId: "hr",
+    x: 4.5,
+    y: 0,
+    z: 22.3,
+    footprint: { w: 1.6, d: 0.65 },
+    height: 0.48,
+    blocksWalk: true,
+    bounds: { minX: 3.7, maxX: 5.3, minZ: 21.975, maxZ: 22.625 },
+  },
+  {
+    id: "hr_file_shelf_north",
+    propId: "hr_file_shelf",
+    roomId: "hr",
+    x: 4.5,
+    y: 0,
+    z: 21.3,
+    footprint: { w: 2.4, d: 0.45 },
+    height: 1.6,
+    blocksWalk: true,
+    bounds: { minX: 3.3, maxX: 5.7, minZ: 21.075, maxZ: 21.525 },
+  },
+  {
+    id: "hr_portal_kiosk_nw",
+    propId: "hr_portal_kiosk",
+    roomId: "hr",
+    x: 1.5,
+    y: 0,
+    z: 21.3,
+    footprint: { w: 1.4, d: 0.3 },
+    height: 1.4,
+    blocksWalk: true,
+    bounds: { minX: 0.8, maxX: 2.2, minZ: 21.15, maxZ: 21.45 },
+  },
+  {
+    id: "hr_waiting_couch_sw",
+    propId: "hr_waiting_couch",
+    roomId: "hr",
+    x: 1.5,
+    y: 0,
+    z: 23.8,
+    footprint: { w: 1.6, d: 0.6 },
+    height: 0.46,
+    blocksWalk: true,
+    bounds: { minX: 0.7, maxX: 2.3, minZ: 23.5, maxZ: 24.1 },
+  },
+  {
+    id: "hr_plant_ne",
+    propId: "potted_plant",
+    roomId: "hr",
+    x: 8.2,
+    y: 0,
+    z: 21.6,
+    footprint: { w: 0.6, d: 0.6 },
+    height: 0.85,
+    blocksWalk: true,
+    bounds: { minX: 7.9, maxX: 8.5, minZ: 21.3, maxZ: 21.9 },
+  },
+
+  // ---------------------------------------------------------------------------
+  // 3. SOSMED (0, 27, 10, 7)
+  // ---------------------------------------------------------------------------
+  {
+    id: "sosmed_desk_hermes",
+    propId: "sosmed_desk",
+    roomId: "sosmed",
+    x: 5.0,
+    y: 0,
+    z: 31.3,
+    footprint: { w: 1.5, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 4.25, maxX: 5.75, minZ: 30.975, maxZ: 31.625 },
+  },
+  {
+    id: "sosmed_green_screen_south",
+    propId: "sosmed_green_screen",
+    roomId: "sosmed",
+    x: 4.5,
+    y: 0,
+    z: 33.7,
+    footprint: { w: 2.6, d: 0.25 },
+    height: 1.8,
+    blocksWalk: true,
+    bounds: { minX: 3.2, maxX: 5.8, minZ: 33.575, maxZ: 33.825 },
+  },
+  {
+    id: "sosmed_ring_light_sw",
+    propId: "sosmed_ring_light",
+    roomId: "sosmed",
+    x: 2.0,
+    y: 0,
+    z: 33.0,
+    footprint: { w: 0.5, d: 0.5 },
+    height: 1.5,
+    blocksWalk: true,
+    bounds: { minX: 1.75, maxX: 2.25, minZ: 32.75, maxZ: 33.25 },
+  },
+  {
+    id: "sosmed_content_calendar_west",
+    propId: "sosmed_content_calendar",
+    roomId: "sosmed",
+    x: 0.35,
+    y: 0,
+    z: 30.5,
+    footprint: { w: 0.25, d: 2.2 },
+    height: 1.3,
+    blocksWalk: true,
+    bounds: { minX: 0.225, maxX: 0.475, minZ: 29.4, maxZ: 31.6 },
+  },
+  {
+    id: "sosmed_lounge_sofa_nw",
+    propId: "sosmed_lounge_sofa",
+    roomId: "sosmed",
+    x: 1.0,
+    y: 0,
+    z: 28.3,
+    footprint: { w: 0.7, d: 2.0 },
+    height: 0.5,
+    blocksWalk: true,
+    bounds: { minX: 0.65, maxX: 1.35, minZ: 27.3, maxZ: 29.3 },
+  },
+  {
+    id: "sosmed_plant_se",
+    propId: "potted_plant",
+    roomId: "sosmed",
+    x: 8.5,
+    y: 0,
+    z: 33.0,
+    footprint: { w: 0.6, d: 0.6 },
+    height: 0.85,
+    blocksWalk: true,
+    bounds: { minX: 8.2, maxX: 8.8, minZ: 32.7, maxZ: 33.3 },
+  },
+
+  // ---------------------------------------------------------------------------
+  // 4. CREATIVE (11, 27, 10, 7)
+  // ---------------------------------------------------------------------------
+  {
+    id: "creative_desk_theia",
+    propId: "creative_drafting_desk",
+    roomId: "creative",
+    x: 13.5,
+    y: 0,
+    z: 31.3,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.48,
+    blocksWalk: true,
+    bounds: { minX: 12.8, maxX: 14.2, minZ: 30.975, maxZ: 31.625 },
+  },
+  {
+    id: "creative_desk_lyra",
+    propId: "creative_drafting_desk",
+    roomId: "creative",
+    x: 16.0,
+    y: 0,
+    z: 31.3,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.48,
+    blocksWalk: true,
+    bounds: { minX: 15.3, maxX: 16.7, minZ: 30.975, maxZ: 31.625 },
+  },
+  {
+    id: "creative_desk_iris",
+    propId: "creative_drafting_desk",
+    roomId: "creative",
+    x: 18.5,
+    y: 0,
+    z: 31.3,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.48,
+    blocksWalk: true,
+    bounds: { minX: 17.8, maxX: 19.2, minZ: 30.975, maxZ: 31.625 },
+  },
+  {
+    id: "creative_easel_nw",
+    propId: "creative_easel",
+    roomId: "creative",
+    x: 13.0,
+    y: 0,
+    z: 28.2,
+    footprint: { w: 0.8, d: 0.8 },
+    height: 1.4,
+    blocksWalk: true,
+    bounds: { minX: 12.6, maxX: 13.4, minZ: 27.8, maxZ: 28.6 },
+  },
+  {
+    id: "creative_paint_rack_se",
+    propId: "creative_paint_rack",
+    roomId: "creative",
+    x: 20.6,
+    y: 0,
+    z: 33.0,
+    footprint: { w: 0.45, d: 1.4 },
+    height: 1.3,
+    blocksWalk: true,
+    bounds: { minX: 20.375, maxX: 20.825, minZ: 32.3, maxZ: 33.7 },
+  },
+  {
+    id: "creative_art_frame_north",
+    propId: "creative_art_frame",
+    roomId: "creative",
+    x: 13.0,
+    y: 0,
+    z: 27.2,
+    footprint: { w: 1.5, d: 0.15 },
+    height: 1.1,
+    blocksWalk: true,
+    bounds: { minX: 12.25, maxX: 13.75, minZ: 27.125, maxZ: 27.275 },
+  },
+  {
+    id: "creative_plant_sw",
+    propId: "potted_plant",
+    roomId: "creative",
+    x: 11.6,
+    y: 0,
+    z: 33.2,
+    footprint: { w: 0.6, d: 0.6 },
+    height: 0.85,
+    blocksWalk: true,
+    bounds: { minX: 11.3, maxX: 11.9, minZ: 32.9, maxZ: 33.5 },
+  },
+
+  // ---------------------------------------------------------------------------
+  // 5. COPY (22, 27, 10, 7)
+  // ---------------------------------------------------------------------------
+  {
+    id: "copy_desk_clio",
+    propId: "copy_desk",
+    roomId: "copy",
+    x: 24.5,
+    y: 0,
+    z: 31.3,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 23.8, maxX: 25.2, minZ: 30.975, maxZ: 31.625 },
+  },
+  {
+    id: "copy_desk_erato",
+    propId: "copy_desk",
+    roomId: "copy",
+    x: 27.0,
+    y: 0,
+    z: 31.3,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 26.3, maxX: 27.7, minZ: 30.975, maxZ: 31.625 },
+  },
+  {
+    id: "copy_desk_daphne",
+    propId: "copy_desk",
+    roomId: "copy",
+    x: 29.5,
+    y: 0,
+    z: 31.3,
+    footprint: { w: 1.4, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 28.8, maxX: 30.2, minZ: 30.975, maxZ: 31.625 },
+  },
+  {
+    id: "copy_bookshelf_sw",
+    propId: "copy_bookshelf",
+    roomId: "copy",
+    x: 22.4,
+    y: 0,
+    z: 32.8,
+    footprint: { w: 0.45, d: 2.0 },
+    height: 1.7,
+    blocksWalk: true,
+    bounds: { minX: 22.175, maxX: 22.625, minZ: 31.8, maxZ: 33.8 },
+  },
+  {
+    id: "copy_whiteboard_north",
+    propId: "copy_whiteboard",
+    roomId: "copy",
+    x: 24.0,
+    y: 0,
+    z: 27.2,
+    footprint: { w: 2.0, d: 0.15 },
+    height: 1.2,
+    blocksWalk: true,
+    bounds: { minX: 23.0, maxX: 25.0, minZ: 27.125, maxZ: 27.275 },
+  },
+  {
+    id: "copy_reading_table_ne",
+    propId: "copy_reading_table",
+    roomId: "copy",
+    x: 30.5,
+    y: 0,
+    z: 28.2,
+    footprint: { w: 1.2, d: 0.9 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 29.9, maxX: 31.1, minZ: 27.75, maxZ: 28.65 },
+  },
+  {
+    id: "copy_plant_se",
+    propId: "potted_plant",
+    roomId: "copy",
+    x: 31.2,
+    y: 0,
+    z: 33.2,
+    footprint: { w: 0.6, d: 0.6 },
+    height: 0.85,
+    blocksWalk: true,
+    bounds: { minX: 30.9, maxX: 31.5, minZ: 32.9, maxZ: 33.5 },
+  },
+
+  // ---------------------------------------------------------------------------
+  // 6. LANDING PAGE (33, 27, 7, 7)
+  // ---------------------------------------------------------------------------
+  {
+    id: "landing_page_desk_hestia",
+    propId: "landing_page_desk",
+    roomId: "landing_page",
+    x: 35.0,
+    y: 0,
+    z: 28.7,
+    footprint: { w: 1.3, d: 0.6 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 34.35, maxX: 35.65, minZ: 28.4, maxZ: 29.0 },
+  },
+  {
+    id: "landing_page_desk_talos",
+    propId: "landing_page_desk",
+    roomId: "landing_page",
+    x: 35.0,
+    y: 0,
+    z: 32.3,
+    footprint: { w: 1.3, d: 0.6 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 34.35, maxX: 35.65, minZ: 32.0, maxZ: 32.6 },
+  },
+  {
+    id: "landing_page_desk_themis",
+    propId: "landing_page_desk",
+    roomId: "landing_page",
+    x: 37.0,
+    y: 0,
+    z: 32.3,
+    footprint: { w: 1.3, d: 0.6 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 36.35, maxX: 37.65, minZ: 32.0, maxZ: 32.6 },
+  },
+  {
+    id: "landing_page_wireframe_board_east",
+    propId: "landing_page_wireframe_board",
+    roomId: "landing_page",
+    x: 39.7,
+    y: 0,
+    z: 29.0,
+    footprint: { w: 0.25, d: 2.2 },
+    height: 1.4,
+    blocksWalk: true,
+    bounds: { minX: 39.575, maxX: 39.825, minZ: 27.9, maxZ: 30.1 },
+  },
+  {
+    id: "landing_page_device_rack_sw",
+    propId: "landing_page_device_rack",
+    roomId: "landing_page",
+    x: 33.4,
+    y: 0,
+    z: 33.0,
+    footprint: { w: 0.45, d: 1.4 },
+    height: 1.4,
+    blocksWalk: true,
+    bounds: { minX: 33.175, maxX: 33.625, minZ: 32.3, maxZ: 33.7 },
+  },
+  {
+    id: "landing_page_plant_ne",
+    propId: "potted_plant",
+    roomId: "landing_page",
+    x: 38.8,
+    y: 0,
+    z: 27.6,
+    footprint: { w: 0.6, d: 0.6 },
+    height: 0.85,
+    blocksWalk: true,
+    bounds: { minX: 38.5, maxX: 39.1, minZ: 27.3, maxZ: 27.9 },
+  },
+];
+
+// Gabungan seluruh prop yang ditempatkan (Tahap 2a + Tahap 2b)
+export const ALL_PLACED_PROPS: PlacedPropInstance[] = [
+  ...T2A_PLACED_PROPS,
+  ...T2B_PLACED_PROPS,
+];
+
+// =============================================================================
 // 3. DAFTAR OBSTACLE STATIS UNTUK GENERATOR WALKWAY
 // =============================================================================
 
@@ -1495,7 +2541,7 @@ export interface WalkObstacle {
   maxZ: number;
 }
 
-export const PROPS_OBSTACLES: WalkObstacle[] = T2A_PLACED_PROPS
+export const PROPS_OBSTACLES: WalkObstacle[] = ALL_PLACED_PROPS
   .filter((p) => p.blocksWalk)
   .map((p) => ({
     id: p.id,
@@ -1507,25 +2553,48 @@ export const PROPS_OBSTACLES: WalkObstacle[] = T2A_PLACED_PROPS
   }));
 
 // =============================================================================
-// 4. VALIDASI STARTUP: PENGECEKAN BUKAAN PINTU & KURSI AGENT
+// 4. VALIDASI STARTUP: PENGECEKAN BUKAAN PINTU, KURSI, & BAY KOSONG
 // =============================================================================
 
 /**
- * Validasi startup tambahan (throw):
+ * Validasi startup (throw jika ada pelanggaran):
  * 1. Tidak ada prop blocksWalk yang menimpa area bukaan pintu (1 tile di depan dan belakang pintu).
  * 2. Tidak ada prop blocksWalk yang menimpa kursi rapat di SEAT_BY_AGENT.
  * 3. Tidak ada prop blocksWalk yang menimpa posisi duduk/kerja agen di HOME_POSITIONS.
+ * 4. Seluruh bay pada FLOORPLAN.bays harus 100% kosong (tidak ada prop apapun di area bay).
  */
 export function validatePropsPlacement(
-  doors: FloorplanData["doors"],
-  rooms: FloorplanData["rooms"],
+  doors: FloorplanData["doors"] = FLOORPLAN.doors,
+  rooms: FloorplanData["rooms"] = FLOORPLAN.rooms,
   seatByAgent: Record<string, [number, number]> = SEAT_BY_AGENT,
   homePositions: Record<string, [number, number]> = HOME_POSITIONS,
-  placedProps: PlacedPropInstance[] = T2A_PLACED_PROPS
+  placedProps: PlacedPropInstance[] = ALL_PLACED_PROPS,
+  bays: FloorplanData["bays"] = FLOORPLAN.bays
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
   for (const prop of placedProps) {
+    // 4. Cek apakah prop menempati bay manapun (harus kosong 100%)
+    for (const bay of bays) {
+      const bayMinX = bay.x;
+      const bayMaxX = bay.x + bay.w;
+      const bayMinZ = bay.z;
+      const bayMaxZ = bay.z + bay.d;
+
+      const overlapsBay = !(
+        prop.bounds.maxX <= bayMinX ||
+        prop.bounds.minX >= bayMaxX ||
+        prop.bounds.maxZ <= bayMinZ ||
+        prop.bounds.minZ >= bayMaxZ
+      );
+
+      if (overlapsBay) {
+        errors.push(
+          `Prop "${prop.id}" di ruangan "${prop.roomId}" menempati bay "${bay.id}" (${bay.x}, ${bay.z}, w=${bay.w}, d=${bay.d}) yang harus tetap kosong 100%!`
+        );
+      }
+    }
+
     if (!prop.blocksWalk) continue;
 
     // 1. Cek tumpang tindih dengan area bukaan tiap pintu (1 tile depan dan belakang)

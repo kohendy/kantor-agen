@@ -34,6 +34,9 @@ import {
   getMeetingPathForAgent,
   findPath,
   generateWalkwayGraph,
+  findPathWithGraph,
+  findPathNodes,
+  WaypointNode,
 } from "@/lib/stage3d/walkways";
 import { ChoreographyEngine } from "@/lib/stage3d/choreography";
 import {
@@ -50,9 +53,12 @@ import {
 import { THEME, softenColor } from "@/lib/stage3d/theme";
 import {
   T2A_PLACED_PROPS,
+  T2B_PLACED_PROPS,
+  ALL_PLACED_PROPS,
   PROPS_REGISTRY,
   validatePropsPlacement,
   PROPS_OBSTACLES,
+  WalkObstacle,
 } from "@/lib/stage3d/props/index";
 
 export type Selection = {
@@ -214,6 +220,21 @@ export function OfficeStage3D({
   const [hourOverrideState, setHourOverrideState] = useState<number | null>(() =>
     getHourFromUrl()
   );
+  const [shotMode, setShotMode] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      const search = window.location.search;
+      return new URLSearchParams(search).get("shot") === "1";
+    }
+    return false;
+  });
+  const shotModeRef = useRef<boolean>(shotMode);
+
+  useEffect(() => {
+    shotModeRef.current = shotMode;
+    if (cssRendererRef.current) {
+      cssRendererRef.current.domElement.style.display = shotMode ? "none" : "block";
+    }
+  }, [shotMode]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -280,6 +301,7 @@ export function OfficeStage3D({
     duration: number;
     startPos: THREE.Vector3;
     startTarget: THREE.Vector3;
+    startZoom: number;
   } | null>(null);
 
   useEffect(() => {
@@ -699,7 +721,8 @@ export function OfficeStage3D({
       FLOORPLAN.rooms,
       SEAT_BY_AGENT,
       HOME_POSITIONS,
-      T2A_PLACED_PROPS
+      ALL_PLACED_PROPS,
+      FLOORPLAN.bays
     );
     if (!propsValidation.valid) {
       throw new Error(
@@ -726,6 +749,9 @@ export function OfficeStage3D({
     cssRenderer.domElement.style.zIndex = "10";
     cssRenderer.domElement.className = "stage-3d-css-layer";
     container.appendChild(cssRenderer.domElement);
+    if (shotModeRef.current) {
+      cssRenderer.domElement.style.display = "none";
+    }
     cssRendererRef.current = cssRenderer;
 
     // Controls
@@ -1415,7 +1441,7 @@ export function OfficeStage3D({
     // =========================================================================
     const dummy = new THREE.Object3D();
 
-    // 1. Instanced Chairs (19 meeting chairs + 3 riset chairs + 3 operasional chairs = 25 chairs)
+    // 1. Instanced Chairs (19 meeting chairs + 19 home desk chairs = 38 chairs)
     const chairGeo = PROPS_REGISTRY["chair_single"].createGeometry();
     const chairMat = new THREE.MeshStandardMaterial({
       vertexColors: true,
@@ -1430,15 +1456,18 @@ export function OfficeStage3D({
       chairPositions.push({ x: sx, y: 0, z: sz, rotY });
     });
 
-    // 3 Riset chairs
-    chairPositions.push({ x: 14.0, y: 0, z: 13.5, rotY: 0 }); // Athena
-    chairPositions.push({ x: 18.0, y: 0, z: 13.5, rotY: 0 }); // Argus
-    chairPositions.push({ x: 16.0, y: 0, z: 16.0, rotY: 0 }); // Metis
-
-    // 3 Operasional chairs
-    chairPositions.push({ x: 25.0, y: 0, z: 14.5, rotY: Math.PI / 2 }); // Hera
-    chairPositions.push({ x: 23.0, y: 0, z: 13.5, rotY: 0 });            // Hephaestus
-    chairPositions.push({ x: 23.0, y: 0, z: 17.0, rotY: 0 });            // Hermes
+    // 19 home desk chairs
+    Object.entries(HOME_POSITIONS).forEach(([agentName, [hx, hz]]) => {
+      let rotY = 0;
+      if (
+        ["THEIA", "LYRA", "IRIS", "CLIO", "ERATO", "DAPHNE", "HERMES", "THEMIS", "TALOS"].includes(
+          agentName
+        )
+      ) {
+        rotY = Math.PI;
+      }
+      chairPositions.push({ x: hx, y: 0, z: hz, rotY });
+    });
 
     const instancedChairs = new THREE.InstancedMesh(chairGeo, chairMat, chairPositions.length);
     instancedChairs.name = "instanced_chairs";
@@ -1459,7 +1488,7 @@ export function OfficeStage3D({
       meshName: string,
       matParams: THREE.MeshStandardMaterialParameters = {}
     ) {
-      const items = T2A_PLACED_PROPS.filter((p) => p.propId === propId);
+      const items = ALL_PLACED_PROPS.filter((p) => p.propId === propId);
       if (items.length === 0) return null;
       const def = PROPS_REGISTRY[propId];
       if (!def) return null;
@@ -1491,6 +1520,12 @@ export function OfficeStage3D({
     createInstancedPropsFromList("toilet_cubicle", "instanced_toilet_cubicles", { roughness: 0.4, metalness: 0.1 });
     createInstancedPropsFromList("manager_coffee_table", "instanced_coffee_tables", { roughness: 0.4, metalness: 0.15 });
     createInstancedPropsFromList("atrium_bench", "instanced_benches", { roughness: 0.5, metalness: 0.2 });
+    createInstancedPropsFromList("ops_shelving", "instanced_ops_shelving", { roughness: 0.5, metalness: 0.2 });
+    createInstancedPropsFromList("beanbag", "instanced_beanbags", { roughness: 0.6, metalness: 0.05 });
+    createInstancedPropsFromList("advertiser_desk", "instanced_advertiser_desks", { roughness: 0.4, metalness: 0.15 });
+    createInstancedPropsFromList("creative_drafting_desk", "instanced_creative_desks", { roughness: 0.5, metalness: 0.1 });
+    createInstancedPropsFromList("copy_desk", "instanced_copy_desks", { roughness: 0.5, metalness: 0.1 });
+    createInstancedPropsFromList("landing_page_desk", "instanced_lp_desks", { roughness: 0.4, metalness: 0.15 });
 
     const instancedPropIds = new Set([
       "potted_plant",
@@ -1499,11 +1534,18 @@ export function OfficeStage3D({
       "toilet_cubicle",
       "manager_coffee_table",
       "atrium_bench",
+      "ops_shelving",
+      "beanbag",
       "chair_single",
+      "manager_chair",
+      "advertiser_desk",
+      "creative_drafting_desk",
+      "copy_desk",
+      "landing_page_desk",
     ]);
 
     // Unique Voxel Props
-    T2A_PLACED_PROPS.forEach((prop) => {
+    ALL_PLACED_PROPS.forEach((prop) => {
       if (instancedPropIds.has(prop.propId)) return;
       const def = PROPS_REGISTRY[prop.propId];
       if (!def) return;
@@ -1971,24 +2013,62 @@ export function OfficeStage3D({
         camera,
         renderer,
         floorplan: FLOORPLAN,
+        obstacles: PROPS_OBSTACLES,
+        allPlacedProps: ALL_PLACED_PROPS,
+        t2aPlacedProps: T2A_PLACED_PROPS,
+        t2bPlacedProps: T2B_PLACED_PROPS,
         validateFloorplan: () => validateFloorplan(FLOORPLAN),
-        validatePropsPlacement: () =>
+        validatePropsPlacement: (props = ALL_PLACED_PROPS) =>
           validatePropsPlacement(
             FLOORPLAN.doors,
             FLOORPLAN.rooms,
             SEAT_BY_AGENT,
             HOME_POSITIONS,
-            T2A_PLACED_PROPS
+            props,
+            FLOORPLAN.bays
           ),
         focusRoom: (roomId: string) => {
           const room = FLOORPLAN.rooms.find((r) => r.id === roomId);
           if (!room) return false;
           const cx = room.x + room.w / 2;
           const cz = room.z + room.d / 2;
-          controls.target.set(cx, 0, cz);
-          const span = Math.max(room.w, room.d);
-          const dist = Math.max(9.0, span * 1.5);
-          camera.position.set(cx + dist, dist * 0.844, cz + dist);
+          const cy = 1.0;
+          controls.target.set(cx, cy, cz);
+          camera.position.set(cx + 45.0, cy + 38.0, cz + 45.0);
+          camera.lookAt(controls.target);
+          camera.updateMatrixWorld();
+
+          const corners = [
+            new THREE.Vector3(room.x, 0, room.z),
+            new THREE.Vector3(room.x + room.w, 0, room.z),
+            new THREE.Vector3(room.x, 0, room.z + room.d),
+            new THREE.Vector3(room.x + room.w, 0, room.z + room.d),
+            new THREE.Vector3(room.x, 2.5, room.z),
+            new THREE.Vector3(room.x + room.w, 2.5, room.z),
+            new THREE.Vector3(room.x, 2.5, room.z + room.d),
+            new THREE.Vector3(room.x + room.w, 2.5, room.z + room.d),
+          ];
+
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          corners.forEach((c) => {
+            c.applyMatrix4(camera.matrixWorldInverse);
+            if (c.x < minX) minX = c.x;
+            if (c.x > maxX) maxX = c.x;
+            if (c.y < minY) minY = c.y;
+            if (c.y > maxY) maxY = c.y;
+          });
+
+          const viewW = maxX - minX;
+          const viewH = maxY - minY;
+          const frustumHalfH = (camera.top - camera.bottom) / 2;
+          const frustumHalfW = (camera.right - camera.left) / 2;
+
+          const targetZoomY = (0.70 * 2 * frustumHalfH) / viewH;
+          const targetZoomX = (0.80 * 2 * frustumHalfW) / viewW;
+          const targetZoom = Math.min(targetZoomY, targetZoomX);
+
+          camera.zoom = targetZoom;
+          camera.updateProjectionMatrix();
           controls.update();
           return true;
         },
@@ -2040,7 +2120,12 @@ export function OfficeStage3D({
         getTheme: () => THEME,
         getEffectiveSpeed: (actorId: string = MANAGER_AGENT_NAME) =>
           choreo.getEffectiveSpeed(actorId),
-        generateWalkwayGraph: (fp?: FloorplanData) => generateWalkwayGraph(fp),
+        generateWalkwayGraph: (
+          fp?: FloorplanData,
+          hp?: Record<string, [number, number]>,
+          sp?: Record<string, [number, number]>,
+          obs?: WalkObstacle[]
+        ) => generateWalkwayGraph(fp, hp, sp, obs),
         calculateRoomSlotPosition: (room: RoomConfig, slotIdx: number, isExp?: boolean) =>
           calculateRoomSlotPosition(room, slotIdx, isExp),
         demoDelegate: (roomId: string) => choreo.delegate(roomId),
@@ -2054,7 +2139,27 @@ export function OfficeStage3D({
         isGathered: () => gatheredRef.current,
         getSeatPositions: () => SEAT_BY_AGENT,
         getHomePositions: () => HOME_POSITIONS,
-        findPath: (from: string, to: string) => findPath(from, to),
+        findPath: (
+          from: string,
+          to: string,
+          customAllowed?: string[],
+          customGraph?: Record<string, WaypointNode>
+        ) => findPath(from, to, customAllowed, customGraph),
+        findPathNodes: (
+          from: string,
+          to: string,
+          customAllowed?: string[],
+          customGraph?: Record<string, WaypointNode>
+        ) => findPathNodes(from, to, customAllowed, customGraph),
+        resetCamera: () => handleResetCamera(),
+        setShotMode: (val: boolean) => {
+          setShotMode(val);
+          shotModeRef.current = val;
+          if (cssRendererRef.current) {
+            cssRendererRef.current.domElement.style.display = val ? "none" : "block";
+          }
+        },
+        isShotMode: () => shotModeRef.current,
         getAgentMeetingWaypoints: (nama: string) => {
           const seat = SEAT_BY_AGENT[nama];
           if (!seat) {
@@ -2124,6 +2229,7 @@ export function OfficeStage3D({
 
       timer.update();
       const rawDt = timer.getDelta();
+      const dt = Math.min(rawDt, 0.1);
       const time = timer.getElapsed();
       const reducedMotion = motionQuery.matches;
 
@@ -2139,10 +2245,14 @@ export function OfficeStage3D({
 
         camera.position.lerpVectors(anim.startPos, INIT_CAM_POS, ease);
         controls.target.lerpVectors(anim.startTarget, INIT_CAM_TARGET, ease);
+        camera.zoom = THREE.MathUtils.lerp(anim.startZoom, 1.0, ease);
+        camera.updateProjectionMatrix();
 
         if (progress >= 1) {
           camera.position.copy(INIT_CAM_POS);
           controls.target.copy(INIT_CAM_TARGET);
+          camera.zoom = 1.0;
+          camera.updateProjectionMatrix();
           resetAnimRef.current.active = false;
         }
       }
@@ -2151,7 +2261,7 @@ export function OfficeStage3D({
 
       // Siklus pencahayaan jam nyata (daylight)
       daylight.checkPeriodicUpdate();
-      daylight.update(rawDt, {
+      daylight.update(dt, {
         ambientLight,
         dirLight1,
         dirLight2,
@@ -2160,7 +2270,7 @@ export function OfficeStage3D({
       });
 
       // Mesin koreografi
-      choreo.update(rawDt, reducedMotion);
+      choreo.update(dt, reducedMotion);
 
       // Animate Agents
       const isGathered = gatheredRef.current;
@@ -2379,6 +2489,7 @@ export function OfficeStage3D({
       duration: 520,
       startPos: cameraRef.current.position.clone(),
       startTarget: controlsRef.current.target.clone(),
+      startZoom: cameraRef.current.zoom,
     };
   }, []);
 
@@ -2567,7 +2678,7 @@ export function OfficeStage3D({
         />
 
         {/* Kartu Persetujuan CEO (Floating Demo Modal V1b) */}
-        {showCeoApprovalCard && (
+        {!shotMode && showCeoApprovalCard && (
           <div
             className="ceo-approval-demo-card"
             role="dialog"
@@ -2610,7 +2721,7 @@ export function OfficeStage3D({
         )}
 
         {/* Panel Kontrol Mode Demo & Jam (Hanya non-production atau ?demo=1) */}
-        {showDemoUI && (
+        {!shotMode && showDemoUI && (
           <aside
             className="stage-demo-panel"
             aria-label="Mode Demo dan Kontrol Cahaya"
@@ -2734,7 +2845,7 @@ export function OfficeStage3D({
         )}
 
         {/* Fullscreen Toggle Button (Top Right) */}
-        {onToggleFullFrame && (
+        {!shotMode && onToggleFullFrame && (
           <button
             type="button"
             className="stage-ctrl-btn stage-fullscreen-btn"
@@ -2776,41 +2887,17 @@ export function OfficeStage3D({
         )}
 
         {/* Reset Camera Button (Bottom Right, above Info icon) */}
-        <button
-          type="button"
-          className="stage-ctrl-btn stage-reset-btn"
-          aria-label="Reset tampilan"
-          title="Reset tampilan kamera"
-          onClick={handleResetCamera}
-        >
-          <svg
-            width="19"
-            height="19"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            <polyline points="9 22 9 12 15 12 15 22" />
-          </svg>
-        </button>
-
-        {/* Info Button & Popover (Bottom Right) */}
-        <div className="stage-info-wrap" ref={infoContainerRef}>
+        {!shotMode && (
           <button
             type="button"
-            className="stage-info-btn"
-            aria-label="Informasi"
-            aria-expanded={infoOpen}
-            onClick={() => setInfoOpen((prev) => !prev)}
+            className="stage-ctrl-btn stage-reset-btn"
+            aria-label="Reset tampilan"
+            title="Reset tampilan kamera"
+            onClick={handleResetCamera}
           >
             <svg
-              width="18"
-              height="18"
+              width="19"
+              height="19"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -2819,33 +2906,61 @@ export function OfficeStage3D({
               strokeLinejoin="round"
               aria-hidden="true"
             >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="16" x2="12" y2="12" />
-              <line x1="12" y1="8" x2="12.01" y2="8" />
+              <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
           </button>
-          {infoOpen && (
-            <div
-              className="stage-info-popover"
-              role="region"
-              aria-label="Informasi Sinkronisasi Realtime"
+        )}
+
+        {/* Info Button & Popover (Bottom Right) */}
+        {!shotMode && (
+          <div className="stage-info-wrap" ref={infoContainerRef}>
+            <button
+              type="button"
+              className="stage-info-btn"
+              aria-label="Informasi"
+              aria-expanded={infoOpen}
+              onClick={() => setInfoOpen((prev) => !prev)}
             >
-              <p>
-                Peta 3D Three.js interaktif. Geser untuk memutar, klik kanan / dua jari
-                untuk menggeser, roda mouse untuk memperbesar. Tiap agent menulis event ke
-                database dan Supabase Realtime memperbarui lampu status dan posisi secara
-                langsung tanpa membangun ulang adegan.
-              </p>
-            </div>
-          )}
-        </div>
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="16" x2="12" y2="12" />
+                <line x1="12" y1="8" x2="12.01" y2="8" />
+              </svg>
+            </button>
+            {infoOpen && (
+              <div
+                className="stage-info-popover"
+                role="region"
+                aria-label="Informasi Sinkronisasi Realtime"
+              >
+                <p>
+                  Peta 3D Three.js interaktif. Geser untuk memutar, klik kanan / dua jari
+                  untuk menggeser, roda mouse untuk memperbesar. Tiap agent menulis event ke
+                  database dan Supabase Realtime memperbarui lampu status dan posisi secara
+                  langsung tanpa membangun ulang adegan.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Normal Mode Detail Panel */}
-      {!fullFrame && <div className="detail">{renderDetailContent()}</div>}
+      {!shotMode && !fullFrame && <div className="detail">{renderDetailContent()}</div>}
 
       {/* Full Frame Desktop Floating Detail Panel (Bottom Center) */}
-      {fullFrame && (
+      {!shotMode && fullFrame && (
         <div
           className={`stage-detail-floating ${
             detailCollapsed ? "collapsed" : ""
