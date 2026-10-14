@@ -1234,6 +1234,30 @@ pre.json {
 .agent-tag3d.sel .agent-name3d {
   color: #0f172a;
 }
+.agent-initial3d {
+  display: none;
+}
+.agent-tag3d.is-mini {
+  padding: 1px 4px;
+  font-size: 9px;
+  gap: 3px;
+  border-width: 1px;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+.agent-tag3d.is-mini .agent-name3d {
+  display: none;
+}
+.agent-tag3d.is-mini .agent-initial3d {
+  display: inline;
+  font-weight: 700;
+  font-size: 9px;
+}
+@media (max-width: 480px) {
+  .agent-tag3d:not(.sel) {
+    display: none !important;
+  }
+}
 .agent-dot3d {
   display: inline-block;
   width: 6px;

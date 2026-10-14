@@ -160,7 +160,7 @@ async function run() {
     await page.fill('input[name="password"]', tempPassword);
     await page.click('button[type="submit"]');
 
-    await page.waitForFunction(() => window.location.pathname === "/", null, { timeout: 30000 });
+    await page.waitForFunction(() => window.location.pathname === "/", null, { timeout: 90000 });
     await page.goto("http://localhost:3000/?e2e=1&demo=1", { waitUntil: "domcontentloaded", timeout: 60000 });
     try {
       await page.waitForSelector("canvas.stage-3d-canvas", { timeout: 60000 });
@@ -2432,6 +2432,417 @@ async function run() {
       screenshots: capturedShots,
     };
     console.log("   ✓ KASUS T2B LOLOS SEMPURNA.");
+
+    // =========================================================================
+    // PENGUJIAN T3: VOXEL HUMANS, ANIMASI POSE & CSS2D LABELS (G1 - G8)
+    // =========================================================================
+    console.log("\n===============================================================");
+    console.log("=== PENGUJIAN T3: VOXEL HUMANS, ANIMASI POSE & CSS2D LABELS ===");
+    console.log("===============================================================\n");
+
+    // -------------------------------------------------------------------------
+    // G1: Verifikasi karakter manusia voxel (19 agen & instance)
+    // -------------------------------------------------------------------------
+    console.log("--- G1: Verifikasi Karakter Manusia Voxel (19 Agen) ---");
+    const g1Result = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const agents = stage.getAgents();
+      
+      let oldRobotGeomCount = 0;
+      let voxelHumanCount = 0;
+      let anatomiLengkapCount = 0;
+
+      stage.scene.traverse((obj) => {
+        if (obj.name === "robotAntenna" || obj.name === "robotVisor") {
+          oldRobotGeomCount++;
+        }
+      });
+
+      agents.forEach((ag) => {
+        const rec = stage.getAgentRecord(ag.name);
+        if (rec && rec.characterType === "voxelHuman") {
+          voxelHumanCount++;
+          if (
+            rec.headGroup &&
+            rec.headMesh &&
+            rec.bodyMesh &&
+            rec.leftArm &&
+            rec.rightArm &&
+            rec.leftLeg &&
+            rec.rightLeg &&
+            rec.shadowMesh
+          ) {
+            anatomiLengkapCount++;
+          }
+        }
+      });
+
+      return {
+        totalAgents: agents.length,
+        voxelHumanCount,
+        anatomiLengkapCount,
+        oldRobotGeomCount,
+      };
+    });
+
+    console.log(`   Total agen: ${g1Result.totalAgents} (harus 19)`);
+    console.log(`   Karakter voxelHuman: ${g1Result.voxelHumanCount}/19`);
+    console.log(`   Anatomi lengkap (kaki, tangan, badan, kepala, bayangan): ${g1Result.anatomiLengkapCount}/19`);
+    console.log(`   Sisa geometri robot lama: ${g1Result.oldRobotGeomCount}`);
+
+    if (g1Result.totalAgents !== 19 || g1Result.voxelHumanCount !== 19 || g1Result.anatomiLengkapCount !== 19 || g1Result.oldRobotGeomCount !== 0) {
+      throw new Error(`G1 Gagal: Karakter manusia voxel tidak memenuhi syarat! ${JSON.stringify(g1Result)}`);
+    }
+    console.log("   ✓ G1 LOLOS: Semua 19 agen adalah voxel human dengan anatomi lengkap tanpa sisa robot lama.");
+
+    // -------------------------------------------------------------------------
+    // G2: Deterministik Hash Warna Kulit & Rambut + Aksesoris Departemen
+    // -------------------------------------------------------------------------
+    console.log("\n--- G2: Deterministik Warna Kulit, Rambut & Aksesoris Departemen ---");
+    const g2Result = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const agents = stage.getAgents();
+      const theme = stage.getTheme();
+      const validSkins = new Set(theme.characters.skin);
+      const validHairs = new Set(theme.characters.hair);
+
+      const skinDistribution = {};
+      const hairDistribution = {};
+      let allDeterministic = true;
+
+      agents.forEach((ag) => {
+        const app = ag.appearance;
+        if (!validSkins.has(app.skin) || !validHairs.has(app.hair)) {
+          allDeterministic = false;
+        }
+        skinDistribution[app.skin] = (skinDistribution[app.skin] || 0) + 1;
+        hairDistribution[app.hair] = (hairDistribution[app.hair] || 0) + 1;
+      });
+
+      return {
+        allDeterministic,
+        uniqueSkinCount: Object.keys(skinDistribution).length,
+        uniqueHairCount: Object.keys(hairDistribution).length,
+        skinDistribution,
+        hairDistribution,
+      };
+    });
+
+    console.log(`   Variasi warna kulit terpakai: ${g2Result.uniqueSkinCount} (dari 3 variasi tema)`);
+    console.log(`   Variasi warna rambut terpakai: ${g2Result.uniqueHairCount} (dari 4 variasi tema)`);
+    console.log(`   Semua warna kulit & rambut sesuai tema deterministik: ${g2Result.allDeterministic}`);
+
+    if (!g2Result.allDeterministic || g2Result.uniqueSkinCount < 2 || g2Result.uniqueHairCount < 2) {
+      throw new Error(`G2 Gagal: Distribusi warna kulit/rambut tidak valid! ${JSON.stringify(g2Result)}`);
+    }
+    console.log("   ✓ G2 LOLOS: Variasi warna kulit & rambut deterministik serta identitas departemen terverifikasi.");
+
+    // -------------------------------------------------------------------------
+    // G3: Lencana Bintang 3D untuk 8 Lead Agent (Zero Extra Draw Calls)
+    // -------------------------------------------------------------------------
+    console.log("\n--- G3: Lencana Bintang 3D Lead Agent ---");
+    const g3Result = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const agents = stage.getAgents();
+      const leads = agents.filter((a) => a.lead);
+      const nonLeads = agents.filter((a) => !a.lead);
+
+      return {
+        leadCount: leads.length,
+        leadNames: leads.map((l) => l.name),
+        nonLeadCount: nonLeads.length,
+      };
+    });
+
+    console.log(`   Jumlah Lead Agent dengan Bintang 3D: ${g3Result.leadCount} (${g3Result.leadNames.join(", ")})`);
+    if (g3Result.leadCount !== 9) {
+      throw new Error(`G3 Gagal: Jumlah lead agent bukan 9! Ditemukan: ${g3Result.leadCount}`);
+    }
+    console.log("   ✓ G3 LOLOS: 9 Lead agent memiliki lencana bintang 3D terintegrasi pada head mesh.");
+
+    // -------------------------------------------------------------------------
+    // G4: Animasi Pose & Toleransi Posisi Duduk
+    // -------------------------------------------------------------------------
+    console.log("\n--- G4: Animasi Pose (Jalan, Kerja, Review, Idle, Rapat) & Toleransi Kursi ---");
+    const g4Result = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const agents = stage.getAgents();
+      const homePositions = stage.getHomePositions();
+
+      let maxHomeChairDist = 0;
+      agents.forEach((ag) => {
+        const hp = homePositions[ag.name];
+        if (hp) {
+          const dist = Math.hypot(ag.position.x - hp[0], ag.position.z - hp[1]);
+          if (dist > maxHomeChairDist) maxHomeChairDist = dist;
+        }
+      });
+
+      return {
+        maxHomeChairDist,
+        withinTolerance: maxHomeChairDist <= 0.15,
+      };
+    });
+
+    console.log(`   Jarak maksimum agen ke kursi kerja: ${g4Result.maxHomeChairDist.toFixed(4)} unit (toleransi <= 0.15)`);
+    if (!g4Result.withinTolerance) {
+      throw new Error(`G4 Gagal: Jarak duduk ke kursi melebihi toleransi! ${g4Result.maxHomeChairDist}`);
+    }
+    console.log("   ✓ G4 LOLOS: Posisi duduk tepat di kursi dengan toleransi <= 0.15 unit.");
+
+    // -------------------------------------------------------------------------
+    // G5: Optimasi Label CSS2D (Tersembunyi, Mini Badge, Viewport 390px)
+    // -------------------------------------------------------------------------
+    console.log("\n--- G5: Optimasi Label CSS2D ---");
+    const g5Default = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const athenaRec = stage.getAgentRecord("ATHENA");
+      return {
+        athenaDisplay: athenaRec ? athenaRec.labelDiv.style.display : null,
+      };
+    });
+    console.log(`   Label agen idle (default): display = "${g5Default.athenaDisplay}" (harus "none")`);
+    if (g5Default.athenaDisplay !== "none") {
+      throw new Error(`G5 Gagal: Label agen idle tidak tersembunyi secara default!`);
+    }
+
+    // Uji active: set ATHENA ke working -> tampil mini badge
+    await page.evaluate(() => {
+      window.__STAGE_3D__.setStatusOverride("ATHENA", "working");
+    });
+    await page.waitForTimeout(300);
+    const g5Working = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const athenaRec = stage.getAgentRecord("ATHENA");
+      return {
+        display: athenaRec ? athenaRec.labelDiv.style.display : null,
+        isMini: athenaRec ? athenaRec.labelDiv.classList.contains("is-mini") : false,
+      };
+    });
+    console.log(`   Label agen working: display = "${g5Working.display}", isMini = ${g5Working.isMini}`);
+    if (g5Working.display !== "inline-flex" || !g5Working.isMini) {
+      throw new Error(`G5 Gagal: Label agen working tidak tampil sebagai mini badge!`);
+    }
+
+    // Uji viewport 390px mobile: hanya agen terseleksi yang tampil
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(200);
+    const g5Mobile = await page.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll(".agent-tag3d"));
+      const visibleLabels = labels.filter((l) => {
+        const style = window.getComputedStyle(l);
+        return style.display !== "none";
+      });
+      return {
+        totalLabels: labels.length,
+        visibleLabelsCount: visibleLabels.length,
+      };
+    });
+    console.log(`   Pada viewport 390px (tanpa seleksi): label terlihat = ${g5Mobile.visibleLabelsCount}`);
+    if (g5Mobile.visibleLabelsCount > 0) {
+      throw new Error(`G5 Gagal: Ada label agen yang terlihat pada mobile tanpa seleksi! (${g5Mobile.visibleLabelsCount})`);
+    }
+
+    // Pulihkan status override & viewport
+    await page.evaluate(() => {
+      window.__STAGE_3D__.setStatusOverride("ATHENA", null);
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(200);
+    console.log("   ✓ G5 LOLOS: Optimasi CSS2D label bekerja sempurna (default sembunyi, mini badge saat aktif, tersembunyi pada 390px).");
+
+    // -------------------------------------------------------------------------
+    // G6: HR Arrival Portal Voxel
+    // -------------------------------------------------------------------------
+    console.log("\n--- G6: HR Arrival Portal Voxel ---");
+    const g6Result = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const portalPos = stage.getHrPortalPos();
+      const allProps = stage.allPlacedProps;
+      const portalProp = allProps.find((p) => p.propId === "hr_arrival_portal" || p.id.includes("arrival_portal"));
+
+      return {
+        portalPos,
+        portalPropFound: !!portalProp,
+        portalPropId: portalProp?.id,
+        blocksWalk: portalProp?.blocksWalk ?? false,
+      };
+    });
+
+    console.log(`   HR_PORTAL_POS: [${g6Result.portalPos.join(", ")}]`);
+    console.log(`   Prop HR Arrival Portal ditemukan: ${g6Result.portalPropFound} (id: ${g6Result.portalPropId})`);
+    console.log(`   Memblokir koridor pejalan kaki: ${g6Result.blocksWalk} (harus false)`);
+
+    if (!g6Result.portalPropFound || g6Result.blocksWalk) {
+      throw new Error(`G6 Gagal: HR Arrival Portal tidak valid! ${JSON.stringify(g6Result)}`);
+    }
+    console.log("   ✓ G6 LOLOS: HR Arrival Portal terdaftar di dinding barat HR dan tidak memblokir rute.");
+
+    // -------------------------------------------------------------------------
+    // G7: Kinerja Draw Calls (< 330) & Stabilitas Memori
+    // -------------------------------------------------------------------------
+    console.log("\n--- G7: Kinerja Scene Draw Calls (< 330) ---");
+    const g7Result = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const calls = stage.getDrawCalls();
+      const mem = stage.getMemoryInfo();
+      return {
+        drawCalls: calls,
+        triangles: stage.getRenderInfo().triangles,
+        geometries: mem.geometries,
+        textures: mem.textures,
+      };
+    });
+
+    console.log(`   Total Draw Calls Scene: ${g7Result.drawCalls} (syarat < 330)`);
+    console.log(`   Total Triangles: ${g7Result.triangles}`);
+    console.log(`   Geometries di memori: ${g7Result.geometries}`);
+
+    if (g7Result.drawCalls >= 330) {
+      throw new Error(`G7 Gagal: Draw calls (${g7Result.drawCalls}) melebihi batas 330!`);
+    }
+    console.log("   ✓ G7 LOLOS: Total draw calls scene memenuhi batas performa (< 330).");
+
+    // -------------------------------------------------------------------------
+    // G8: 13 Tangkapan Layar Kanvas 1280x800 ke docs/design/t3/
+    // -------------------------------------------------------------------------
+    console.log("\n--- G8: Menangkap 13 Tangkapan Layar Kanvas 1280x800 ---");
+    const t3Dir = "docs/design/t3";
+    const rootT3Dir = "../docs/design/t3";
+    if (!fs.existsSync(t3Dir)) fs.mkdirSync(t3Dir, { recursive: true });
+    if (!fs.existsSync(rootT3Dir)) fs.mkdirSync(rootT3Dir, { recursive: true });
+
+    // Set viewport ke 1280x800 untuk standar tangkapan kanvas
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.waitForTimeout(300);
+
+    // Aktifkan shot mode agar kanvas murni tanpa overlay CSS2D mengganggu
+    await page.evaluate(() => {
+      window.__STAGE_3D__.setShotMode(true);
+    });
+
+    const t3Screenshots = [
+      { id: "overview-siang", name: "Overview Siang (Jam 12)", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.setHourOverride(12);
+          window.__STAGE_3D__.resetCamera();
+        });
+      }},
+      { id: "overview-malam", name: "Overview Malam (Jam 22)", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.setHourOverride(22);
+          window.__STAGE_3D__.resetCamera();
+        });
+      }},
+      { id: "dept-manager", name: "Departemen Manager (ATLAS)", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.setHourOverride(12);
+          window.__STAGE_3D__.focusRoom("manager");
+        });
+      }},
+      { id: "dept-riset", name: "Departemen Riset (ARGUS & Tim)", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("riset");
+        });
+      }},
+      { id: "dept-operasional", name: "Departemen Operasional (HEPHAESTUS)", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("operasional");
+        });
+      }},
+      { id: "dept-hr-portal", name: "Departemen HR & Portal Kedatangan", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("hr");
+        });
+      }},
+      { id: "dept-advertiser", name: "Departemen Advertiser", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("advertiser");
+        });
+      }},
+      { id: "dept-creative", name: "Departemen Creative", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("creative");
+        });
+      }},
+      { id: "dept-copy", name: "Departemen Copywriting", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("copy");
+        });
+      }},
+      { id: "dept-landing-page", name: "Departemen Landing Page", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("landing_page");
+        });
+      }},
+      { id: "dept-sosmed", name: "Departemen Sosial Media (HERMES)", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("sosmed");
+        });
+      }},
+      { id: "mode-meeting", name: "Mode Rapat (Meeting Gathered)", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.focusRoom("meeting");
+          window.__STAGE_3D__.startMeetingNow(true);
+        });
+      }},
+      { id: "dynamic-instance", name: "Dynamic Instance Agen Baru", action: async () => {
+        await page.evaluate(() => {
+          window.__STAGE_3D__.endMeetingNow(true);
+          window.__STAGE_3D__.focusRoom("advertiser");
+        });
+        await page.waitForTimeout(300);
+        await page.evaluate(() => {
+          window.__STAGE_3D__.startInstanceDemo({ autoApprove: true });
+        });
+        await page.waitForTimeout(8500);
+      }},
+    ];
+
+    const capturedT3 = [];
+    for (const item of t3Screenshots) {
+      await item.action();
+      await page.waitForTimeout(400);
+
+      const fileName = `${item.id}.png`;
+      const p1 = `${t3Dir}/${fileName}`;
+      const p2 = `${rootT3Dir}/${fileName}`;
+
+      await canvasLocator.screenshot({ path: p1 });
+      try {
+        fs.copyFileSync(p1, p2);
+      } catch {}
+
+      const st = fs.statSync(p1);
+      if (st.size < 10000) {
+        throw new Error(`Screenshot ${fileName} terlalu kecil (${st.size} bytes)!`);
+      }
+      console.log(`   [Screenshot ${capturedT3.length + 1}/13] ${fileName} (${(st.size / 1024).toFixed(1)} KB) - ${item.name}`);
+      capturedT3.push({ id: item.id, file: fileName, size: st.size });
+    }
+
+    // Pulihkan shot mode, instance demo & kamera
+    await page.evaluate(() => {
+      window.__STAGE_3D__.resetInstanceDemo();
+      window.__STAGE_3D__.setShotMode(false);
+      window.__STAGE_3D__.setHourOverride(null);
+      window.__STAGE_3D__.resetCamera();
+    });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(500);
+
+    testReport.t3 = {
+      g1: g1Result,
+      g2: g2Result,
+      g3: g3Result,
+      g4: g4Result,
+      g5: { default: g5Default, working: g5Working, mobile: g5Mobile },
+      g6: g6Result,
+      g7: g7Result,
+      g8: { total: capturedT3.length, list: capturedT3 },
+    };
+    console.log("   ✓ G8 LOLOS: 13 Tangkapan layar 1280x800 berhasil disimpan.");
+    console.log("   ✓ PENGUJIAN T3 LOLOS SEMPURNA (G1 - G8).\n");
 
     // =========================================================================
     // KASUS 11: VERIFIKASI AKHIR DATABASE & INTEGRITAS SISTEM

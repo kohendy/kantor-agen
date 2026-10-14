@@ -512,5 +512,8 @@ export function validateFloorplan(fp: FloorplanData): void {
   }
 }
 
+// Titik muncul agen baru di ruang HR (dinding barat, dekat bay_hr)
+export const HR_PORTAL_POS = [1.0, 22.5] as const;
+
 // Jalankan validasi saat module load
 validateFloorplan(FLOORPLAN);

@@ -1023,6 +1023,27 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
     },
   },
 
+  hr_arrival_portal: {
+    id: "hr_arrival_portal",
+    name: "Portal Kedatangan HR Voxel",
+    footprint: { w: 0.15, d: 1.0 },
+    height: 1.8,
+    blocksWalk: false,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Tiang kiri portal (z: -0.45)
+        { x: 0, y: 0, z: -0.45, w: 0.14, h: 1.8, d: 0.12, color: THEME.props.hr.portalFrame },
+        // Tiang kanan portal (z: +0.45)
+        { x: 0, y: 0, z: 0.45, w: 0.14, h: 1.8, d: 0.12, color: THEME.props.hr.portalFrame },
+        // Ambang atas portal
+        { x: 0, y: 1.68, z: 0, w: 0.14, h: 0.12, d: 1.02, color: THEME.props.hr.portalFrame },
+        // Panel pendaran portal
+        { x: -0.01, y: 0.1, z: 0, w: 0.04, h: 1.58, d: 0.82, color: THEME.props.hr.portalGlow },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
   hr_waiting_couch: {
     id: "hr_waiting_couch",
     name: "Sofa Tamu & Pelamar HR",
@@ -2132,6 +2153,18 @@ export const T2B_PLACED_PROPS: PlacedPropInstance[] = [
   // ---------------------------------------------------------------------------
   // 2. HR (0, 21, 9, 4)
   // ---------------------------------------------------------------------------
+  {
+    id: "hr_arrival_portal_w",
+    propId: "hr_arrival_portal",
+    roomId: "hr",
+    x: 0.1,
+    y: 0,
+    z: 22.5,
+    footprint: { w: 0.15, d: 1.0 },
+    height: 1.8,
+    blocksWalk: false,
+    bounds: { minX: 0.025, maxX: 0.175, minZ: 22.0, maxZ: 23.0 },
+  },
   {
     id: "hr_desk_hera",
     propId: "hr_desk",

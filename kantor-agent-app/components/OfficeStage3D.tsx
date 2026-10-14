@@ -17,6 +17,7 @@ import {
   ROOMS,
   SEAT_BY_AGENT,
   STATUS_LABEL,
+  HR_PORTAL_POS,
   colorOfAgent,
   roomOfAgent,
   RoomConfig,
@@ -50,6 +51,11 @@ import {
   DynamicDeskResult,
   DynamicAgentResult,
 } from "@/lib/stage3d/instances";
+import {
+  createVoxelHuman,
+  getAgentAppearance,
+  VoxelHumanResult,
+} from "@/lib/stage3d/characters/voxelHuman";
 import { THEME, softenColor } from "@/lib/stage3d/theme";
 import {
   T2A_PLACED_PROPS,
@@ -73,17 +79,29 @@ interface Agent3DRecord {
   headMesh: THREE.Mesh;
   leftArm: THREE.Mesh;
   rightArm: THREE.Mesh;
-  statusLightMesh: THREE.Mesh;
+  leftLeg: THREE.Mesh;
+  rightLeg: THREE.Mesh;
+  shadowMesh: THREE.Mesh;
+  statusLightMesh?: THREE.Mesh;
   statusLightMat: THREE.MeshStandardMaterial;
   hitMesh: THREE.Mesh;
   labelObj: CSS2DObject;
   labelDiv: HTMLDivElement;
   dotSpan: HTMLSpanElement;
+  bubbleDiv?: HTMLDivElement;
   targetPos: THREE.Vector3;
   currentPos: THREE.Vector3;
   baseY: number;
   phase: number;
   status: AgentStatus;
+  appearance: {
+    skin: string;
+    hair: string;
+    department: string;
+    lead: boolean;
+  };
+  characterType: "voxelHuman";
+  dispose: () => void;
 }
 
 interface Room3DRecord {
@@ -585,11 +603,12 @@ export function OfficeStage3D({
           rec.statusLightMat.color.setHex(hex);
           rec.statusLightMat.emissive.setHex(hex);
           rec.dotSpan.className = `agent-dot3d st-${nextStatus}`;
+          const isMini = rec.labelDiv.classList.contains("is-mini");
           rec.labelDiv.className = `agent-tag3d st-${nextStatus}${
             selectedRef.current?.type === "agent" && selectedRef.current.id === a.nama
               ? " sel"
               : ""
-          }`;
+          }${isMini ? " is-mini" : ""}`;
           rec.labelDiv.setAttribute("data-status", nextStatus);
         }
       }
@@ -1582,181 +1601,17 @@ export function OfficeStage3D({
       }
     });
 
-    // Build Agents (Robots) dengan geometri bersama (shared geometries)
+    // =========================================================================
+    // TAHAP 3: KARAKTER MANUSIA VOXEL HIDUP (19 AGEN)
+    // =========================================================================
     const agentRecords: Record<string, Agent3DRecord> = {};
-    const shadowGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.01, 16);
-    const shadowMat = new THREE.MeshBasicMaterial({
-      color: 0x000000,
-      transparent: true,
-      opacity: THEME.character.shadowOpacity,
-    });
-    const bodyGeo = new THREE.BoxGeometry(0.5, 0.44, 0.38);
-    const headGeo = new THREE.BoxGeometry(0.56, 0.42, 0.42);
-    const visorGeo = new THREE.BoxGeometry(0.44, 0.2, 0.04);
-    const visorMat = new THREE.MeshBasicMaterial({ color: 0x1e293b });
-    const eyeGeo = new THREE.BoxGeometry(0.08, 0.08, 0.02);
-    const antennaGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.18);
-    const tipGeo = new THREE.SphereGeometry(0.07, 12, 12);
-    const starGeo = new THREE.OctahedronGeometry(0.12, 0);
-    const starMat = new THREE.MeshStandardMaterial({
-      color: 0xffd700,
-      emissive: 0xffb800,
-      emissiveIntensity: 0.8,
-      roughness: 0.2,
-      metalness: 0.8,
-    });
-    const armGeo = new THREE.BoxGeometry(0.08, 0.20, 0.08);
-    const robotHitGeo = new THREE.BoxGeometry(0.85, 1.25, 0.85);
 
     AGENT_RENDER_ORDER.forEach((name, i) => {
-      const group = new THREE.Group();
       const cfg = AGENTS[name];
       const agentColor = colorOfAgent(name);
-      const agentHex = new THREE.Color(agentColor).getHex();
       const currentAgents = agentsRef.current;
       const agentRow = currentAgents.find((a) => a.nama === name);
       const currentStatus: AgentStatus = (agentRow?.status as AgentStatus) ?? "idle";
-      const statusHex = getStatusColor(currentStatus);
-
-      // Floor Shadow
-      const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
-      shadowMesh.position.set(0, 0.005, 0);
-      group.add(shadowMesh);
-
-      // Robot Body
-      const bodyMat = new THREE.MeshStandardMaterial({
-        color: 0xdfe3ff,
-        roughness: 0.35,
-        metalness: 0.2,
-      });
-      const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-      bodyMesh.position.set(0, 0.34, 0);
-      group.add(bodyMesh);
-
-      // Chest plate badge with agent color
-      const chestGeo = new THREE.BoxGeometry(0.24, 0.14, 0.02);
-      const chestMat = new THREE.MeshBasicMaterial({ color: agentHex });
-      const chestMesh = new THREE.Mesh(chestGeo, chestMat);
-      chestMesh.position.set(0, 0.34, 0.2);
-      group.add(chestMesh);
-
-      // Two arms for working animation (lengan mengetuk meja)
-      const armMat = new THREE.MeshStandardMaterial({
-        color: 0xdfe3ff,
-        roughness: 0.35,
-        metalness: 0.2,
-      });
-      const leftArm = new THREE.Mesh(armGeo, armMat);
-      leftArm.position.set(-0.29, 0.32, 0.08);
-      group.add(leftArm);
-
-      const rightArm = new THREE.Mesh(armGeo, armMat);
-      rightArm.position.set(0.29, 0.32, 0.08);
-      group.add(rightArm);
-
-      // Head Group (agar visor, mata, antena, bintang ikut berputar/menoleh bersama kepala)
-      const headGroup = new THREE.Group();
-      headGroup.position.set(0, 0.77, 0);
-
-      const headMat = new THREE.MeshStandardMaterial({
-        color: 0xeef0ff,
-        roughness: 0.35,
-        metalness: 0.2,
-      });
-      const headMesh = new THREE.Mesh(headGeo, headMat);
-      headMesh.position.set(0, 0, 0);
-      headGroup.add(headMesh);
-
-      // Visor
-      const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-      visorMesh.position.set(0, 0, 0.22);
-      headGroup.add(visorMesh);
-
-      // Eyes
-      const eyeMat = new THREE.MeshBasicMaterial({ color: agentHex });
-      const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-      leftEye.position.set(-0.11, 0, 0.24);
-      headGroup.add(leftEye);
-      const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-      rightEye.position.set(0.11, 0, 0.24);
-      headGroup.add(rightEye);
-
-      // Antenna
-      const antMat = new THREE.MeshBasicMaterial({ color: 0xeef0ff });
-      const antennaMesh = new THREE.Mesh(antennaGeo, antMat);
-      antennaMesh.position.set(0, 0.30, 0);
-      headGroup.add(antennaMesh);
-
-      // Status Light indicator tip
-      const statusLightMat = new THREE.MeshStandardMaterial({
-        color: statusHex,
-        emissive: statusHex,
-        emissiveIntensity: 1.2,
-        roughness: 0.2,
-      });
-      const statusLightMesh = new THREE.Mesh(tipGeo, statusLightMat);
-      statusLightMesh.position.set(0, 0.43, 0);
-      headGroup.add(statusLightMesh);
-
-      // Lead agent star
-      if (cfg.lead) {
-        const starMesh = new THREE.Mesh(starGeo, starMat);
-        starMesh.position.set(0, 0.57, 0);
-        headGroup.add(starMesh);
-      }
-
-      group.add(headGroup);
-
-      // Balon teks CSS2D khusus untuk ATLAS
-      let bubbleDiv: HTMLDivElement | undefined;
-      if (name === MANAGER_AGENT_NAME) {
-        bubbleDiv = document.createElement("div");
-        bubbleDiv.className = "atlas-speech-bubble";
-        bubbleDiv.setAttribute("aria-hidden", "true");
-        const bubbleObj = new CSS2DObject(bubbleDiv);
-        bubbleObj.position.set(0, 2.05, 0);
-        group.add(bubbleObj);
-      }
-
-      // Invisible Hitbox
-      const hitMat = new THREE.MeshBasicMaterial({ visible: false });
-      const hitMesh = new THREE.Mesh(robotHitGeo, hitMat);
-      hitMesh.position.set(0, 0.62, 0);
-      hitMesh.userData = { type: "agent", id: name };
-      group.add(hitMesh);
-      raycastHitMeshes.push(hitMesh);
-
-      // CSS2D Tag Label
-      const labelDiv = document.createElement("div");
-      labelDiv.className = `agent-tag3d st-${currentStatus}`;
-      labelDiv.style.setProperty("--c", agentColor);
-      labelDiv.setAttribute("role", "button");
-      labelDiv.setAttribute("tabindex", "0");
-      labelDiv.setAttribute("aria-label", `${name}, ${cfg.role}`);
-
-      const dotSpan = document.createElement("span");
-      dotSpan.className = `agent-dot3d st-${currentStatus}`;
-      labelDiv.appendChild(dotSpan);
-
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "agent-name3d";
-      nameSpan.textContent = (cfg.lead ? "★ " : "") + name;
-      labelDiv.appendChild(nameSpan);
-
-      labelDiv.addEventListener("click", (e) => {
-        e.stopPropagation();
-        handlersRef.current.selectAgent(name);
-      });
-      labelDiv.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handlersRef.current.selectAgent(name);
-        }
-      });
-
-      const labelObj = new CSS2DObject(labelDiv);
-      labelObj.position.set(0, 1.48, 0);
-      group.add(labelObj);
 
       // Initial position
       const isGatheredNow = gatheredRef.current;
@@ -1777,28 +1632,49 @@ export function OfficeStage3D({
         startX = hp[0];
         startZ = hp[1];
       }
-      group.position.set(startX, 0, startZ);
 
-      scene.add(group);
+      const dept = roomOfAgent(name)?.id ?? "manager";
+      const vHuman = createVoxelHuman({
+        name,
+        department: dept,
+        lead: cfg.lead ?? false,
+        status: currentStatus,
+        color: agentColor,
+        initialPos: { x: startX, y: 0, z: startZ },
+        role: cfg.role,
+        onClick: () => {
+          handlersRef.current.selectAgent(name);
+        },
+      });
+
+      scene.add(vHuman.group);
+      raycastHitMeshes.push(vHuman.hitMesh);
 
       const record: Agent3DRecord = {
-        group,
-        bodyMesh,
-        headGroup,
-        headMesh,
-        leftArm,
-        rightArm,
-        statusLightMesh,
-        statusLightMat,
-        hitMesh,
-        labelObj,
-        labelDiv,
-        dotSpan,
+        group: vHuman.group,
+        bodyMesh: vHuman.bodyMesh,
+        headGroup: vHuman.headGroup,
+        headMesh: vHuman.headMesh,
+        leftArm: vHuman.leftArm,
+        rightArm: vHuman.rightArm,
+        leftLeg: vHuman.leftLeg,
+        rightLeg: vHuman.rightLeg,
+        shadowMesh: vHuman.shadowMesh,
+        statusLightMesh: vHuman.statusLightMesh,
+        statusLightMat: vHuman.statusLightMat,
+        hitMesh: vHuman.hitMesh,
+        labelObj: vHuman.labelObj,
+        labelDiv: vHuman.labelDiv,
+        dotSpan: vHuman.dotSpan,
+        bubbleDiv: vHuman.bubbleDiv,
         targetPos: new THREE.Vector3(startX, 0, startZ),
         currentPos: new THREE.Vector3(startX, 0, startZ),
         baseY: 0,
         phase: i * 0.45,
         status: currentStatus,
+        appearance: vHuman.appearance,
+        characterType: vHuman.characterType,
+        dispose: vHuman.dispose,
       };
       agentRecords[name] = record;
 
@@ -1807,10 +1683,10 @@ export function OfficeStage3D({
       const homeZ = HOME_POSITIONS[name][1];
       choreo.registerActor({
         id: name,
-        group,
-        bodyMesh,
-        headMesh,
-        bubbleDiv,
+        group: vHuman.group,
+        bodyMesh: vHuman.bodyMesh,
+        headMesh: vHuman.headMesh,
+        bubbleDiv: vHuman.bubbleDiv,
         homePos: new THREE.Vector3(homeX, 0, homeZ),
         targetPos: record.targetPos,
       });
@@ -2212,6 +2088,36 @@ export function OfficeStage3D({
           dynamicAgentsCount: dynamicAgentsRef.current.length,
           isRunning: isInstanceDemoRunningRef.current,
         }),
+        getAgents: () =>
+          Object.entries(agentRecords).map(([name, rec]) => ({
+            name,
+            department: rec.appearance.department,
+            status: rec.status,
+            role: AGENTS[name]?.role,
+            lead: rec.appearance.lead,
+            appearance: rec.appearance,
+            position: rec.group.position.clone(),
+            characterType: rec.characterType,
+          })),
+        getAgentRecord: (nama: string) => agentRecords[nama] ?? null,
+        getAgentPose: (nama: string) => {
+          const rec = agentRecords[nama];
+          if (!rec) return null;
+          return {
+            status: statusOverridesRef.current[nama] ?? rec.status,
+            isSitting: rec.leftLeg.rotation.x < -1.0,
+            leftArmRotX: rec.leftArm.rotation.x,
+            rightArmRotX: rec.rightArm.rotation.x,
+            leftLegRotX: rec.leftLeg.rotation.x,
+            rightLegRotX: rec.rightLeg.rotation.x,
+            headRot: { x: rec.headGroup.rotation.x, y: rec.headGroup.rotation.y, z: rec.headGroup.rotation.z },
+            bodyRot: { x: rec.bodyMesh.rotation.x, y: rec.bodyMesh.rotation.y, z: rec.bodyMesh.rotation.z },
+          };
+        },
+        getDrawCalls: () => renderer.info.render.calls,
+        getHrPortalPos: () => HR_PORTAL_POS,
+        getCharacterType: (nama: string) => agentRecords[nama]?.characterType ?? "voxelHuman",
+        getAgentAppearance: (nama: string) => agentRecords[nama]?.appearance ?? null,
         controls,
       };
     }
@@ -2299,23 +2205,35 @@ export function OfficeStage3D({
           rec.headGroup.rotation.set(0, 0, 0);
           rec.leftArm.rotation.set(0, 0, 0);
           rec.rightArm.rotation.set(0, 0, 0);
+          rec.leftLeg.rotation.set(-1.45, 0, 0);
+          rec.rightLeg.rotation.set(-1.45, 0, 0);
           rec.statusLightMat.emissiveIntensity =
             activeStatus === "idle" ? 0.3 : 1.2;
         } else if (isActorUnderChoreo) {
-          // Sedang berjalan dalam koreografi (bobbing & rotasi sudah ditangani choreo)
-          rec.leftArm.rotation.set(0, 0, 0);
-          rec.rightArm.rotation.set(0, 0, 0);
+          // Sedang berjalan dalam koreografi: ayunan lengan & kaki berlawanan
+          const speed = choreo.getEffectiveSpeed(name);
+          const walkPhase = time * 10 * Math.max(0.8, speed / 4.0) + rec.phase;
+          rec.leftLeg.rotation.x = Math.sin(walkPhase) * 0.6;
+          rec.rightLeg.rotation.x = -Math.sin(walkPhase) * 0.6;
+          rec.leftArm.rotation.x = -Math.sin(walkPhase) * 0.5;
+          rec.rightArm.rotation.x = Math.sin(walkPhase) * 0.5;
+          rec.bodyMesh.rotation.y = Math.sin(walkPhase) * 0.05;
+          rec.bodyMesh.rotation.x = 0;
+          rec.bodyMesh.scale.set(1, 1, 1);
+          rec.headGroup.rotation.set(0, 0, 0);
           rec.statusLightMat.emissiveIntensity = 0.9;
         } else if (isGathered) {
           // POSE KHUSUS DI RUANG MEETING:
-          // Berdiri menghadap ke tengah meja rapat, tangan rileks, menyimak dengan napas halus
+          // Duduk menghadap ke tengah meja rapat (7.5, 4.5), menyimak dengan napas halus
           rec.group.position.y = rec.baseY;
-          rec.leftArm.rotation.set(0, 0, 0);
-          rec.rightArm.rotation.set(0, 0, 0);
+          rec.leftLeg.rotation.x = -1.45;
+          rec.rightLeg.rotation.x = -1.45;
+          rec.leftArm.rotation.set(-0.4, 0, 0);
+          rec.rightArm.rotation.set(-0.4, 0, 0);
           rec.bodyMesh.rotation.set(0, 0, 0);
 
-          // Orientasi menghadap ke tengah meja rapat (0.0, -2.9)
-          const meetingCenter = { x: 0.0, z: -2.9 };
+          // Orientasi menghadap ke tengah meja rapat (7.5, 4.5)
+          const meetingCenter = { x: 7.5, z: 4.5 };
           const dx = meetingCenter.x - rec.group.position.x;
           const dz = meetingCenter.z - rec.group.position.z;
           rec.group.rotation.y = Math.atan2(dx, dz);
@@ -2329,80 +2247,92 @@ export function OfficeStage3D({
           rec.headGroup.rotation.z = 0;
           rec.statusLightMat.emissiveIntensity = 0.6;
         } else {
-          // Di meja: status visual halus
+          // Di meja kerja: duduk menghadap meja
+          const deskRot = [
+            "THEIA", "LYRA", "IRIS", "CLIO", "ERATO", "DAPHNE", "HERMES", "THEMIS", "TALOS"
+          ].includes(name)
+            ? Math.PI
+            : 0;
+          rec.group.rotation.y = deskRot;
+          rec.leftLeg.rotation.x = -1.45;
+          rec.rightLeg.rotation.x = -1.45;
+
           if (activeStatus === "working") {
-            // working: kepala miring & mengetuk, badan goyang mikro, lengan mengetuk meja
-            const bobY = Math.sin(time * 5.2 + rec.phase) * 0.055;
+            // working: duduk membungkuk ke meja, mengetik (lengan bergerak), kepala miring
+            const bobY = Math.sin(time * 5.2 + rec.phase) * 0.035;
             rec.group.position.y = rec.baseY + bobY;
             rec.statusLightMat.emissiveIntensity =
               1.1 + Math.sin(time * 6.5 + rec.phase) * 0.7;
 
-            rec.leftArm.rotation.x = Math.sin(time * 12 + rec.phase) * 0.28;
-            rec.rightArm.rotation.x = Math.cos(time * 12 + rec.phase) * 0.28;
+            rec.leftArm.rotation.x = -0.45 + Math.sin(time * 12 + rec.phase) * 0.28;
+            rec.rightArm.rotation.x = -0.45 + Math.cos(time * 12 + rec.phase) * 0.28;
 
             rec.headGroup.rotation.z = Math.sin(time * 3.2 + rec.phase) * 0.06;
-            rec.headGroup.rotation.x = Math.abs(Math.sin(time * 6.5 + rec.phase)) * 0.08;
+            rec.headGroup.rotation.x = 0.12 + Math.abs(Math.sin(time * 6.5 + rec.phase)) * 0.08;
             rec.headGroup.rotation.y = 0;
 
-            rec.bodyMesh.rotation.y = Math.sin(time * 4.0 + rec.phase) * 0.03;
+            rec.bodyMesh.rotation.x = 0.08 + Math.sin(time * 4.0 + rec.phase) * 0.02;
+            rec.bodyMesh.rotation.y = Math.sin(time * 3.8 + rec.phase) * 0.03;
             rec.bodyMesh.scale.set(1, 1, 1);
           } else if (activeStatus === "review") {
-            // review: kepala mengangguk lambat seolah menunggu
-            const bobY = Math.sin(time * 2.8 + rec.phase) * 0.025;
-            rec.group.position.y = rec.baseY + bobY;
+            // review: kepala mengangguk lambat, tangan di dagu
+            rec.group.position.y = rec.baseY;
             rec.statusLightMat.emissiveIntensity =
               1.0 + Math.sin(time * 3.5 + rec.phase) * 0.4;
 
-            rec.leftArm.rotation.set(0, 0, 0);
-            rec.rightArm.rotation.set(0, 0, 0);
-            rec.headGroup.rotation.x = Math.abs(Math.sin(time * 3.0 + rec.phase)) * 0.18;
+            rec.leftArm.rotation.set(-0.35, 0, 0);
+            rec.rightArm.rotation.set(-1.15, 0, -0.22); // tangan di dagu
+            rec.headGroup.rotation.x = 0.08 + Math.abs(Math.sin(time * 3.0 + rec.phase)) * 0.18;
             rec.headGroup.rotation.y = 0;
             rec.headGroup.rotation.z = 0;
             rec.bodyMesh.rotation.set(0, 0, 0);
             rec.bodyMesh.scale.set(1, 1, 1);
           } else {
-            // idle: napas pelan (skala Y ±1-1.5%) dan sesekali menoleh
+            // idle: napas pelan (skala Y), tangan rileks di meja, toleh 4-9s
             rec.group.position.y = rec.baseY;
             rec.statusLightMat.emissiveIntensity = 0.3;
-            rec.leftArm.rotation.set(0, 0, 0);
-            rec.rightArm.rotation.set(0, 0, 0);
+            rec.leftArm.rotation.set(-0.25, 0, 0);
+            rec.rightArm.rotation.set(-0.25, 0, 0);
             rec.bodyMesh.rotation.set(0, 0, 0);
 
             rec.bodyMesh.scale.y = 1.0 + Math.sin(time * 2.6 + rec.phase) * 0.022;
-            const turnPhase = Math.sin(time * 0.4 + rec.phase);
+            const turnPhase = Math.sin(time * 0.35 + rec.phase);
             rec.headGroup.rotation.y =
-              turnPhase > 0.6 ? Math.sin(time * 1.8 + rec.phase) * 0.22 : 0;
+              turnPhase > 0.6 ? Math.sin(time * 1.5 + rec.phase) * 0.22 : 0;
             rec.headGroup.rotation.x = 0;
             rec.headGroup.rotation.z = 0;
           }
         }
+      });
 
-        // Label distance fading & gather occlusion
-        const dist = camPos.distanceTo(rec.group.position);
-        const isHovered =
-          hoveredRef.current?.type === "agent" && hoveredRef.current.id === name;
-        const isSelected =
-          currentSel?.type === "agent" && currentSel.id === name;
+      // Animasi Agen Dinamis (Instance)
+      dynamicAgentsRef.current.forEach((dynAgent) => {
+        const isSel =
+          currentSel?.type === "agent_instance" &&
+          currentSel.id === (dynAgent.hitMesh.userData.id as string);
+        const isHov =
+          hoveredRef.current?.type === "agent_instance" &&
+          hoveredRef.current.id === (dynAgent.hitMesh.userData.id as string);
 
-        // Dalam mode kumpul ruang meeting, sembunyikan label agent lain yang tidak dipilih
-        if (isGathered && !isHovered && !isSelected) {
-          if (rec.labelDiv.style.display !== "none") {
-            rec.labelDiv.style.display = "none";
-          }
+        if (dynAgent.leftLeg && dynAgent.rightLeg) {
+          dynAgent.leftLeg.rotation.x = -1.45;
+          dynAgent.rightLeg.rotation.x = -1.45;
+        }
+        dynAgent.leftArm.rotation.x = -0.45 + Math.sin(time * 12) * 0.28;
+        dynAgent.rightArm.rotation.x = -0.45 + Math.cos(time * 12) * 0.28;
+        dynAgent.headGroup.rotation.z = Math.sin(time * 3.2) * 0.06;
+        dynAgent.headGroup.rotation.x = 0.12 + Math.abs(Math.sin(time * 6.5)) * 0.08;
+
+        if (isSel || isHov) {
+          dynAgent.labelDiv.classList.remove("is-mini");
+          dynAgent.labelDiv.style.display = "inline-flex";
+          dynAgent.labelDiv.style.opacity = "1.0";
+          dynAgent.labelDiv.style.zIndex = isSel ? "30" : "20";
         } else {
-          if (rec.labelDiv.style.display !== "inline-flex") {
-            rec.labelDiv.style.display = "inline-flex";
-          }
-          const maxDist = 52;
-          const minDist = 16;
-          const alpha = Math.min(
-            1.0,
-            Math.max(0.35, 1.0 - (dist - minDist) / (maxDist - minDist))
-          );
-          const alphaStr = alpha.toFixed(2);
-          if (rec.labelDiv.style.opacity !== alphaStr) {
-            rec.labelDiv.style.opacity = alphaStr;
-          }
+          dynAgent.labelDiv.classList.add("is-mini");
+          dynAgent.labelDiv.style.display = "inline-flex";
+          dynAgent.labelDiv.style.opacity = "0.85";
+          dynAgent.labelDiv.style.zIndex = "10";
         }
       });
 
@@ -2418,6 +2348,66 @@ export function OfficeStage3D({
 
       renderer.render(scene, camera);
       cssRenderer.render(scene, camera);
+
+      // Label CSS2D Teroptimasi pasca-CSS2DRenderer:
+      // default tersembunyi (display: none), mini badge untuk aktif (working/review), penuh untuk hover/selected
+      Object.entries(agentRecords).forEach(([name, rec]) => {
+        const isHovered =
+          hoveredRef.current?.type === "agent" && hoveredRef.current.id === name;
+        const isSelected =
+          currentSel?.type === "agent" && currentSel.id === name;
+        const override = statusOverridesRef.current[name];
+        const activeStatus = override ?? rec.status;
+        const isActorUnderChoreo = choreo.isBusy(name);
+        const isActive =
+          isActorUnderChoreo || activeStatus === "working" || activeStatus === "review";
+
+        if (isSelected || isHovered) {
+          rec.labelDiv.classList.remove("is-mini");
+          rec.labelDiv.style.display = "inline-flex";
+          rec.labelDiv.style.opacity = "1.0";
+          rec.labelDiv.style.zIndex = isSelected ? "30" : "20";
+        } else if (isGathered) {
+          if (isActive) {
+            rec.labelDiv.classList.add("is-mini");
+            rec.labelDiv.style.display = "inline-flex";
+            rec.labelDiv.style.opacity = "0.85";
+            rec.labelDiv.style.zIndex = "10";
+          } else {
+            rec.labelDiv.style.display = "none";
+          }
+        } else if (isActive) {
+          rec.labelDiv.classList.add("is-mini");
+          rec.labelDiv.style.display = "inline-flex";
+          const dist = camPos.distanceTo(rec.group.position);
+          const alpha = Math.min(1.0, Math.max(0.4, 1.0 - (dist - 16) / 36));
+          rec.labelDiv.style.opacity = alpha.toFixed(2);
+          rec.labelDiv.style.zIndex = "10";
+        } else {
+          rec.labelDiv.style.display = "none";
+        }
+      });
+
+      dynamicAgentsRef.current.forEach((dynAgent) => {
+        const isSel =
+          currentSel?.type === "agent_instance" &&
+          currentSel.id === (dynAgent.hitMesh.userData.id as string);
+        const isHov =
+          hoveredRef.current?.type === "agent_instance" &&
+          hoveredRef.current.id === (dynAgent.hitMesh.userData.id as string);
+
+        if (isSel || isHov) {
+          dynAgent.labelDiv.classList.remove("is-mini");
+          dynAgent.labelDiv.style.display = "inline-flex";
+          dynAgent.labelDiv.style.opacity = "1.0";
+          dynAgent.labelDiv.style.zIndex = isSel ? "30" : "20";
+        } else {
+          dynAgent.labelDiv.classList.add("is-mini");
+          dynAgent.labelDiv.style.display = "inline-flex";
+          dynAgent.labelDiv.style.opacity = "0.85";
+          dynAgent.labelDiv.style.zIndex = "10";
+        }
+      });
     }
 
     animate();
@@ -2441,6 +2431,11 @@ export function OfficeStage3D({
       gl.canvas.removeEventListener("webglcontextrestored", onContextRestored);
 
       controls.dispose();
+
+      // Dispose all agent records
+      Object.values(agentRecordsRef.current).forEach((rec) => {
+        rec.dispose?.();
+      });
 
       // Dispose all geometries, materials, textures
       scene.traverse((obj) => {
