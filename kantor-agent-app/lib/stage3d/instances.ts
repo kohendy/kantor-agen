@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import {
   RoomConfig,
+  calculateFacingAngle,
 } from "@/lib/officeConfig";
 import { FLOORPLAN } from "./floorplan";
 import { THEME } from "./theme";
@@ -62,8 +63,9 @@ export const ROOM_EXPANSION_SIDES: Record<string, ExpansionSide> = {
 export const ROOM_DESK_PROP_ID: Record<string, string> = {
   advertiser: "advertiser_desk",
   ads: "advertiser_desk",
-  riset: "dining_table",
-  operasional: "dining_table",
+  riset: "riset_lab_desk",
+  operasional: "ops_workstation_desk",
+  ops: "ops_workstation_desk",
   creative: "creative_drafting_desk",
   copy: "copy_desk",
   landing_page: "landing_page_desk",
@@ -120,8 +122,6 @@ export function calculateRoomSlotPosition(
       // Dinding luar di z = bay.z + bay.d. Meja diletakkan dekat dinding luar dengan margin >= 0.15.
       deskZ = +(bay.z + bay.d - 0.20 - deskD / 2).toFixed(3);
       chairZ = +(deskZ - 0.65).toFixed(3);
-      faceAngle = 0; // Menghadap ke Selatan (+Z) ke arah meja
-      rotY = 0;
 
       const maxSlots = Math.max(2, Math.floor(bay.w / 2.2));
       const stepX = bay.w / (maxSlots + 1);
@@ -133,8 +133,6 @@ export function calculateRoomSlotPosition(
       // Dinding luar di z = bay.z. Meja diletakkan dekat dinding utara dengan margin >= 0.15.
       deskZ = +(bay.z + 0.20 + deskD / 2).toFixed(3);
       chairZ = +(deskZ + 0.65).toFixed(3);
-      faceAngle = Math.PI; // Menghadap ke Utara (-Z) ke arah meja
-      rotY = Math.PI;
 
       const maxSlots = Math.max(2, Math.floor(bay.w / 2.2));
       const stepX = bay.w / (maxSlots + 1);
@@ -146,8 +144,6 @@ export function calculateRoomSlotPosition(
       // Dinding luar di x = bay.x. Meja diletakkan dekat dinding barat dengan margin >= 0.15.
       deskX = +(bay.x + 0.20 + deskD / 2).toFixed(3);
       chairX = +(deskX + 0.65).toFixed(3);
-      faceAngle = -Math.PI / 2; // Menghadap ke Barat (-X) ke arah meja
-      rotY = -Math.PI / 2;
 
       const maxSlots = Math.max(2, Math.floor(bay.d / 2.0));
       const stepZ = bay.d / (maxSlots + 1);
@@ -159,8 +155,6 @@ export function calculateRoomSlotPosition(
       // Dinding luar di x = bay.x + bay.w. Meja diletakkan dekat dinding timur dengan margin >= 0.15.
       deskX = +(bay.x + bay.w - 0.20 - deskD / 2).toFixed(3);
       chairX = +(deskX - 0.65).toFixed(3);
-      faceAngle = Math.PI / 2; // Menghadap ke Timur (+X) ke arah meja
-      rotY = Math.PI / 2;
 
       const maxSlots = Math.max(2, Math.floor(bay.d / 2.0));
       const stepZ = bay.d / (maxSlots + 1);
@@ -169,8 +163,13 @@ export function calculateRoomSlotPosition(
       chairZ = deskZ;
     }
 
+    // Hitung orientasi hadap dinamis via vektor kursi -> meja (atan2)
+    faceAngle = calculateFacingAngle([chairX, chairZ], [deskX, deskZ]);
+    rotY = faceAngle;
+
+    const roomZ = typeof room.z === "number" ? room.z : (room.y ?? 0);
     return {
-      rel: [+(chairX - room.x).toFixed(3), +(chairZ - room.y).toFixed(3)],
+      rel: [+(chairX - room.x).toFixed(3), +(chairZ - roomZ).toFixed(3)],
       world: { x: chairX, y: 0, z: chairZ },
       deskPos: { x: deskX, y: 0, z: deskZ },
       faceAngle,
@@ -209,10 +208,13 @@ export function calculateRoomSlotPosition(
     relY = Math.min(room.d - 1.5, Math.max(1.5, 3.5));
   }
 
+  const roomZ = typeof room.z === "number" ? room.z : (room.y ?? 0);
   const worldX = +(room.x + relX).toFixed(3);
   const worldY = 0;
-  const worldZ = +(room.y + relY).toFixed(3);
+  const worldZ = +(roomZ + relY).toFixed(3);
   const deskZ = normRoomId === "advertiser" ? +(worldZ - 0.70).toFixed(3) : +(worldZ + 0.75).toFixed(3);
+  faceAngle = calculateFacingAngle([worldX, worldZ], [worldX, deskZ]);
+  rotY = faceAngle;
 
   return {
     rel: [relX, relY],

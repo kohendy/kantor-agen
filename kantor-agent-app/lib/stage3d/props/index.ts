@@ -7,7 +7,7 @@ import * as THREE from "three";
 import { THEME } from "../theme";
 import { VoxelBoxDef, buildVoxelGeometry } from "./voxel";
 import { FloorplanData, FLOORPLAN } from "../floorplan";
-import { HOME_POSITIONS, SEAT_BY_AGENT, HOME_FACE_BY_AGENT, AGENT_DESK_PROP_ID } from "@/lib/officeConfig";
+import { HOME_POSITIONS, SEAT_BY_AGENT, HOME_FACE_BY_AGENT, AGENT_DESK_PROP_ID, getAgentHomeFacing, calculateFacingAngle } from "@/lib/officeConfig";
 
 export interface PropDefinition {
   id: string;
@@ -437,6 +437,36 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
     },
   },
 
+  riset_lab_desk: {
+    id: "riset_lab_desk",
+    name: "Meja Laboratorium Riset",
+    footprint: { w: 1.5, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan meja lab biru muda
+        { x: 0, y: 0.38, z: 0, w: 1.5, h: 0.05, d: 0.65, color: THEME.props.riset.labTableTop },
+        // Lis pinggiran biru cerah
+        { x: 0, y: 0.36, z: 0, w: 1.52, h: 0.02, d: 0.67, color: THEME.props.riset.labTableFrame },
+        // 4 Kaki meja baja lab
+        { x: -0.68, y: 0, z: -0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.industrial },
+        { x: 0.68, y: 0, z: -0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.industrial },
+        { x: -0.68, y: 0, z: 0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.industrial },
+        { x: 0.68, y: 0, z: 0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.industrial },
+        // Monitor data analitik lab
+        { x: -0.35, y: 0.42, z: -0.15, w: 0.45, h: 0.26, d: 0.04, color: THEME.props.metal.dark },
+        { x: -0.35, y: 0.44, z: -0.12, w: 0.41, h: 0.22, d: 0.01, color: THEME.props.riset.dataBoard },
+        // Tabung sampel riset
+        { x: 0.32, y: 0.43, z: -0.12, w: 0.08, h: 0.14, d: 0.08, color: THEME.props.riset.sampleVials[0] },
+        { x: 0.44, y: 0.43, z: -0.12, w: 0.08, h: 0.14, d: 0.08, color: THEME.props.riset.sampleVials[1] },
+        // Keyboard & mini konsol
+        { x: 0.05, y: 0.42, z: 0.1, w: 0.48, h: 0.015, d: 0.2, color: THEME.props.metal.dark },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
   // ---------------------------------------------------------------------------
   // OPERASIONAL PROPS
   // ---------------------------------------------------------------------------
@@ -543,6 +573,33 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
         // Garis rancang putih tipis cetak biru
         { x: -0.05, y: 0.7, z: -0.3, w: 0.01, h: 0.4, d: 0.6, color: THEME.props.tech.paper },
         { x: -0.05, y: 0.5, z: 0.3, w: 0.01, h: 0.3, d: 0.5, color: THEME.props.tech.paper },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  ops_workstation_desk: {
+    id: "ops_workstation_desk",
+    name: "Meja Kerja Operasional & Logistik",
+    footprint: { w: 1.6, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan meja industri kokoh
+        { x: 0, y: 0.38, z: 0, w: 1.6, h: 0.05, d: 0.65, color: THEME.props.operasional.shelving },
+        // Rangka baja tebal
+        { x: -0.72, y: 0, z: -0.26, w: 0.1, h: 0.38, d: 0.1, color: THEME.props.operasional.trolleyFrame },
+        { x: 0.72, y: 0, z: -0.26, w: 0.1, h: 0.38, d: 0.1, color: THEME.props.operasional.trolleyFrame },
+        { x: -0.72, y: 0, z: 0.26, w: 0.1, h: 0.38, d: 0.1, color: THEME.props.operasional.trolleyFrame },
+        { x: 0.72, y: 0, z: 0.26, w: 0.1, h: 0.38, d: 0.1, color: THEME.props.operasional.trolleyFrame },
+        // Monitor ruggedized
+        { x: -0.25, y: 0.42, z: -0.15, w: 0.46, h: 0.28, d: 0.05, color: THEME.props.operasional.serverCabinet },
+        { x: -0.25, y: 0.44, z: -0.12, w: 0.42, h: 0.24, d: 0.01, color: THEME.props.operasional.blueprint },
+        // Dokumen cetak biru di atas meja
+        { x: 0.35, y: 0.43, z: -0.1, w: 0.4, h: 0.06, d: 0.08, color: THEME.props.operasional.blueprint },
+        // Toolbox perkakas
+        { x: 0.38, y: 0.43, z: 0.12, w: 0.25, h: 0.1, d: 0.14, color: THEME.props.operasional.tools },
       ];
       return buildVoxelGeometry(boxes);
     },
@@ -1614,7 +1671,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   // ---------------------------------------------------------------------------
   {
     id: "riset_lab_athena_desk",
-    propId: "dining_table",
+    propId: "riset_lab_desk",
     roomId: "riset",
     x: 14.0,
     y: 0,
@@ -1626,7 +1683,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "riset_lab_argus_desk",
-    propId: "dining_table",
+    propId: "riset_lab_desk",
     roomId: "riset",
     x: 18.0,
     y: 0,
@@ -1638,7 +1695,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "riset_lab_metis_desk",
-    propId: "dining_table",
+    propId: "riset_lab_desk",
     roomId: "riset",
     x: 16.0,
     y: 0,
@@ -1650,7 +1707,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "riset_lab_center_console",
-    propId: "dining_table",
+    propId: "riset_lab_desk",
     roomId: "riset",
     x: 16.0,
     y: 0,
@@ -1717,7 +1774,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "ops_workstation_hephaestus",
-    propId: "dining_table",
+    propId: "ops_workstation_desk",
     roomId: "operasional",
     x: 21.5,
     y: 0,
@@ -2875,11 +2932,7 @@ export function validatePropsPlacement(
       errors.push(`Meja kerja "${deskPropId}" untuk agen "${agentName}" tidak ditemukan di placedProps!`);
       continue;
     }
-    const assignedAngle = HOME_FACE_BY_AGENT[agentName];
-    if (assignedAngle === undefined) {
-      errors.push(`Arah hadap agen "${agentName}" belum didefinisikan di HOME_FACE_BY_AGENT!`);
-      continue;
-    }
+    const assignedAngle = getAgentHomeFacing(agentName, placedProps);
     const dx = deskProp.x - hx;
     const dz = deskProp.z - hz;
     let expectedAngle = Math.atan2(dx, dz);
