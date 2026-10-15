@@ -18,6 +18,7 @@ import {
   SEAT_BY_AGENT,
   STATUS_LABEL,
   HR_PORTAL_POS,
+  HOME_FACE_BY_AGENT,
   colorOfAgent,
   roomOfAgent,
   RoomConfig,
@@ -51,6 +52,7 @@ import {
   calculateRoomSlotPosition,
   DynamicDeskResult,
   DynamicAgentResult,
+  DeskState,
 } from "@/lib/stage3d/instances";
 import {
   InstanceRequestManager,
@@ -140,8 +142,8 @@ function updateCameraFrustum(cam: THREE.OrthographicCamera, w: number, h: number
   cam.right = halfW;
   cam.top = halfH;
   cam.bottom = -halfH;
-  cam.near = -200;
-  cam.far = 500;
+  cam.near = -50;
+  cam.far = 150;
   cam.updateProjectionMatrix();
 }
 
@@ -936,6 +938,7 @@ export function OfficeStage3D({
           const slotPos = calculateRoomSlotPosition(roomConfig, slotIdx, isExp);
           dynAgent.group.position.set(slotPos.world.x, 0, slotPos.world.z);
           dynAgent.targetPos.set(slotPos.world.x, 0, slotPos.world.z);
+          dynAgent.group.rotation.y = slotPos.faceAngle;
         }
         if (dynAgent) {
           if (dynAgent.leftLeg) dynAgent.leftLeg.rotation.x = -1.5;
@@ -963,7 +966,7 @@ export function OfficeStage3D({
             deptHead,
             [
               { type: "walkTo", waypoints: returnWaypoints, targetName: "Kembali ke meja" },
-              { type: "face", angle: 0 },
+              { type: "face", angle: HOME_FACE_BY_AGENT[deptHead] ?? 0 },
             ],
             () => {
               const rec = agentRecordsRef.current[deptHead];
@@ -1175,7 +1178,7 @@ export function OfficeStage3D({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    const camera = new THREE.OrthographicCamera(-20, 20, 20, -20, -200, 500);
+    const camera = new THREE.OrthographicCamera(-20, 20, 20, -20, -50, 150);
     updateCameraFrustum(camera, width, height);
     camera.position.copy(INIT_CAM_POS);
     camera.lookAt(INIT_CAM_TARGET);
@@ -1278,7 +1281,12 @@ export function OfficeStage3D({
       .filter((r) => r.kind === "common" && r.doors.length === 0)
       .forEach((cr) => {
         if (cr.id === "taman_kecil") {
-          const tGeo = new THREE.BoxGeometry(cr.w, 0.08, cr.d);
+          // Dinding selatan resepsi memiliki muka luar di z = 34.08.
+          // Mulai lantai taman_kecil dari z = 34.08 agar tidak tumpang-tindih coplanar dengan dinding selatan.
+          const southWallEdgeZ = 34.08;
+          const adjustedD = cr.z + cr.d - southWallEdgeZ; // 36.0 - 34.08 = 1.92
+          const centerZ = southWallEdgeZ + adjustedD / 2;
+          const tGeo = new THREE.BoxGeometry(cr.w, 0.08, adjustedD);
           const tMat = new THREE.MeshStandardMaterial({
             color: THEME.commonFloors.taman_kecil,
             roughness: 0.45,
@@ -1286,7 +1294,7 @@ export function OfficeStage3D({
           });
           floorMaterials.push(tMat);
           const tMesh = new THREE.Mesh(tGeo, tMat);
-          tMesh.position.set(cr.x + cr.w / 2, -0.04, cr.z + cr.d / 2);
+          tMesh.position.set(cr.x + cr.w / 2, -0.04, centerZ);
           tMesh.name = `floor_${cr.id}`;
           tMesh.userData.isStatic = true;
           scene.add(tMesh);
@@ -1883,7 +1891,8 @@ export function OfficeStage3D({
       });
 
       const labelObj = new CSS2DObject(labelDiv);
-      labelObj.position.set(cx, 1.6, room.z + 1.2);
+      // Posisikan label ruangan di sisi selatan ruangan agar tidak menghalangi / tertutup layar dinding utara
+      labelObj.position.set(cx, 1.6, room.z + room.d - 1.2);
       roomGroup.add(labelObj);
 
       scene.add(roomGroup);
@@ -1968,7 +1977,8 @@ export function OfficeStage3D({
         });
 
         const labelObj = new CSS2DObject(labelDiv);
-        labelObj.position.set(cx, 1.6, cRoom.z + 1.2);
+        // Posisikan label ruangan di sisi selatan agar tidak menghalangi dinding utara
+        labelObj.position.set(cx, 1.6, cRoom.z + cRoom.d - 1.2);
         roomGroup.add(labelObj);
 
         scene.add(roomGroup);
@@ -2078,10 +2088,12 @@ export function OfficeStage3D({
     createInstancedPropsFromList("creative_drafting_desk", "instanced_creative_desks", { roughness: 0.5, metalness: 0.1 });
     createInstancedPropsFromList("copy_desk", "instanced_copy_desks", { roughness: 0.5, metalness: 0.1 });
     createInstancedPropsFromList("landing_page_desk", "instanced_lp_desks", { roughness: 0.4, metalness: 0.15 });
+    createInstancedPropsFromList("atrium_planter", "instanced_planters", { roughness: 0.5, metalness: 0.1 });
 
     const instancedPropIds = new Set([
       "potted_plant",
       "voxel_tree",
+      "atrium_planter",
       "dining_table",
       "toilet_cubicle",
       "manager_coffee_table",
@@ -2180,6 +2192,7 @@ export function OfficeStage3D({
         },
       });
 
+      vHuman.group.rotation.y = HOME_FACE_BY_AGENT[name] ?? 0;
       scene.add(vHuman.group);
       raycastHitMeshes.push(vHuman.hitMesh);
 
@@ -2424,8 +2437,11 @@ export function OfficeStage3D({
         floorplan: FLOORPLAN,
         obstacles: PROPS_OBSTACLES,
         allPlacedProps: ALL_PLACED_PROPS,
+        propsRegistry: PROPS_REGISTRY,
         t2aPlacedProps: T2A_PLACED_PROPS,
         t2bPlacedProps: T2B_PLACED_PROPS,
+        createDeskMesh: (room: RoomConfig, slotIdx: number, state: DeskState = "kosong", isExp: boolean = false) =>
+          createDeskMesh(room, slotIdx, state, isExp),
         validateFloorplan: () => validateFloorplan(FLOORPLAN),
         validatePropsPlacement: (props = ALL_PLACED_PROPS) =>
           validatePropsPlacement(
@@ -2576,6 +2592,7 @@ export function OfficeStage3D({
         isGathered: () => gatheredRef.current,
         getSeatPositions: () => SEAT_BY_AGENT,
         getHomePositions: () => HOME_POSITIONS,
+        getHomeFaceAngles: () => HOME_FACE_BY_AGENT,
         findPath: (
           from: string,
           to: string,
@@ -2885,12 +2902,8 @@ export function OfficeStage3D({
           rec.headGroup.rotation.z = 0;
           rec.statusLightMat.emissiveIntensity = 0.6;
         } else {
-          // Di meja kerja: duduk menghadap meja
-          const deskRot = [
-            "THEIA", "LYRA", "IRIS", "CLIO", "ERATO", "DAPHNE", "HERMES", "THEMIS", "TALOS"
-          ].includes(name)
-            ? Math.PI
-            : 0;
+          // Di meja kerja: duduk menghadap meja sesuai HOME_FACE_BY_AGENT
+          const deskRot = HOME_FACE_BY_AGENT[name] ?? 0;
           rec.group.rotation.y = deskRot;
           rec.leftLeg.rotation.x = -1.45;
           rec.rightLeg.rotation.x = -1.45;

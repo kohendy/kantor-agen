@@ -247,6 +247,73 @@ function computeHomePositions(): Record<string, [number, number]> {
 
 export const HOME_POSITIONS = computeHomePositions();
 
+// Arah hadap 19 agen di meja kerja masing-masing (diturunkan dari vektor kursi ke meja)
+// Koordinat Three.js: 0 = menghadap ke selatan (+Z), Math.PI = menghadap ke utara (-Z)
+export const HOME_FACE_BY_AGENT: Record<string, number> = {
+  // ATLAS: kursi [4.5, 15.0], meja [4.5, 15.8] -> dz = +0.8 -> 0 rad (Selatan)
+  [MANAGER_AGENT_NAME]: 0,
+
+  // HERA: kursi [4.5, 23.0], meja [4.5, 22.3] -> dz = -0.7 -> Math.PI rad (Utara)
+  HERA: Math.PI,
+
+  // HEPHAESTUS: kursi [21.5, 4.5], meja [21.5, 5.3] -> dz = +0.8 -> 0 rad (Selatan)
+  HEPHAESTUS: 0,
+
+  // HERMES: kursi [5.0, 30.5], meja [5.0, 31.3] -> dz = +0.8 -> 0 rad (Selatan)
+  HERMES: 0,
+
+  // RISET: kursi di z=14.0/16.5, meja di z=14.8/17.3 -> dz = +0.8 -> 0 rad (Selatan)
+  ATHENA: 0,
+  ARGUS: 0,
+  METIS: 0,
+
+  // ADVERTISER: kursi di z=4.5, meja di z=3.8 -> dz = -0.7 -> Math.PI rad (Utara)
+  ZEUS: Math.PI,
+  ARTEMIS: Math.PI,
+  PLUTUS: Math.PI,
+
+  // CREATIVE: kursi di z=30.5, meja di z=31.3 -> dz = +0.8 -> 0 rad (Selatan)
+  THEIA: 0,
+  LYRA: 0,
+  IRIS: 0,
+
+  // COPY: kursi di z=30.5, meja di z=31.3 -> dz = +0.8 -> 0 rad (Selatan)
+  CLIO: 0,
+  ERATO: 0,
+  DAPHNE: 0,
+
+  // LANDING PAGE:
+  // HESTIA: kursi [35.0, 29.5], meja [35.0, 28.7] -> dz = -0.8 -> Math.PI rad (Utara)
+  HESTIA: Math.PI,
+  // THEMIS: kursi [37.0, 31.5], meja [37.0, 32.3] -> dz = +0.8 -> 0 rad (Selatan)
+  THEMIS: 0,
+  // TALOS: kursi [35.0, 31.5], meja [35.0, 32.3] -> dz = +0.8 -> 0 rad (Selatan)
+  TALOS: 0,
+};
+
+// Peta agen ke ID prop meja kerja masing-masing (19 agen)
+export const AGENT_DESK_PROP_ID: Record<string, string> = {
+  [MANAGER_AGENT_NAME]: "manager_desk_main",
+  HERA: "hr_desk_hera",
+  HEPHAESTUS: "ops_workstation_hephaestus",
+  HERMES: "sosmed_desk_hermes",
+  ATHENA: "riset_lab_athena_desk",
+  ARGUS: "riset_lab_argus_desk",
+  METIS: "riset_lab_metis_desk",
+  ZEUS: "advertiser_desk_zeus",
+  ARTEMIS: "advertiser_desk_artemis",
+  PLUTUS: "advertiser_desk_plutus",
+  THEIA: "creative_desk_theia",
+  LYRA: "creative_desk_lyra",
+  IRIS: "creative_desk_iris",
+  CLIO: "copy_desk_clio",
+  ERATO: "copy_desk_erato",
+  DAPHNE: "copy_desk_daphne",
+  HESTIA: "landing_page_desk_hestia",
+  THEMIS: "landing_page_desk_themis",
+  TALOS: "landing_page_desk_talos",
+};
+
 // Kursi Meeting (19 kursi) mengelilingi meja panjang di dalam Ruang Meeting (0, 0, 15, 9).
 // Koordinat absolut dunia (x, z). Meja berada di tengah (x: 3.5..11.5, z: 3.5..5.5).
 export const SEAT_BY_AGENT: Record<string, [number, number]> = {

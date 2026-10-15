@@ -2397,11 +2397,11 @@ pre.json {
 
 @keyframes pulseQueue {
   from {
-    transform: scale(1);
+    scale: 1;
     box-shadow: 0 4px 12px rgba(232, 121, 249, 0.4);
   }
   to {
-    transform: scale(1.08);
+    scale: 1.08;
     box-shadow: 0 6px 16px rgba(232, 121, 249, 0.7);
   }
 }
