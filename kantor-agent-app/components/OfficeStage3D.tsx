@@ -17,6 +17,7 @@ import {
   ROOMS,
   SEAT_BY_AGENT,
   STATUS_LABEL,
+  HR_PORTAL_POS,
   colorOfAgent,
   roomOfAgent,
   RoomConfig,
@@ -25,6 +26,7 @@ import {
   FLOORPLAN,
   FloorplanData,
   WallSide,
+  BayDef,
   validateFloorplan,
 } from "@/lib/stage3d/floorplan";
 import type { AgentRow, EventRow, AgentStatus } from "@/lib/types";
@@ -50,6 +52,18 @@ import {
   DynamicDeskResult,
   DynamicAgentResult,
 } from "@/lib/stage3d/instances";
+import {
+  InstanceRequestManager,
+  InstanceScenario,
+  InstanceRequest,
+  InstanceAction,
+  SCENARIO_DEFINITIONS,
+} from "@/lib/stage3d/instanceRequests";
+import {
+  createVoxelHuman,
+  getAgentAppearance,
+  VoxelHumanResult,
+} from "@/lib/stage3d/characters/voxelHuman";
 import { THEME, softenColor } from "@/lib/stage3d/theme";
 import {
   T2A_PLACED_PROPS,
@@ -73,17 +87,29 @@ interface Agent3DRecord {
   headMesh: THREE.Mesh;
   leftArm: THREE.Mesh;
   rightArm: THREE.Mesh;
-  statusLightMesh: THREE.Mesh;
+  leftLeg: THREE.Mesh;
+  rightLeg: THREE.Mesh;
+  shadowMesh: THREE.Mesh;
+  statusLightMesh?: THREE.Mesh;
   statusLightMat: THREE.MeshStandardMaterial;
   hitMesh: THREE.Mesh;
   labelObj: CSS2DObject;
   labelDiv: HTMLDivElement;
   dotSpan: HTMLSpanElement;
+  bubbleDiv?: HTMLDivElement;
   targetPos: THREE.Vector3;
   currentPos: THREE.Vector3;
   baseY: number;
   phase: number;
   status: AgentStatus;
+  appearance: {
+    skin: string;
+    hair: string;
+    department: string;
+    lead: boolean;
+  };
+  characterType: "voxelHuman";
+  dispose: () => void;
 }
 
 interface Room3DRecord {
@@ -179,6 +205,35 @@ function isWebGLAvailable(): boolean {
   }
 }
 
+function getHrQueuePosition(index: number): THREE.Vector3 {
+  if (index === 0) return new THREE.Vector3(3.2, 0, 23.0);
+  if (index === 1) return new THREE.Vector3(2.0, 0, 23.0);
+  return new THREE.Vector3(1.0, 0, 22.5 + Math.min(index - 2, 2) * 0.8);
+}
+
+function getStepFromState(state?: string): number {
+  switch (state) {
+    case "antre":
+      return 1;
+    case "diminta":
+      return 2;
+    case "menunggu_persetujuan":
+      return 3;
+    case "menyiapkan":
+      return 5;
+    case "siap":
+      return 5;
+    case "datang":
+      return 6;
+    case "duduk":
+      return 6;
+    case "selesai":
+      return 7;
+    default:
+      return 0;
+  }
+}
+
 export function OfficeStage3D({
   agents,
   events,
@@ -232,7 +287,7 @@ export function OfficeStage3D({
   useEffect(() => {
     shotModeRef.current = shotMode;
     if (cssRendererRef.current) {
-      cssRendererRef.current.domElement.style.display = shotMode ? "none" : "block";
+      cssRendererRef.current.domElement.style.display = "block";
     }
   }, [shotMode]);
 
@@ -267,6 +322,41 @@ export function OfficeStage3D({
   const raycastHitMeshesRef = useRef<THREE.Mesh[]>([]);
 
   // Demo Instance & Dynamic Items Ref
+  const instanceManagerRef = useRef<InstanceRequestManager>(new InstanceRequestManager());
+  const [instanceRequests, setInstanceRequests] = useState<InstanceRequest[]>([]);
+  const [queueLength, setQueueLength] = useState<number>(0);
+  const [activeRequest, setActiveRequest] = useState<InstanceRequest | null>(null);
+  const autoApproveNextRef = useRef<boolean>(false);
+  const hrQueueBadgeDivRef = useRef<HTMLDivElement | null>(null);
+  const hrQueueBadgeObjRef = useRef<CSS2DObject | null>(null);
+  const hrQueueBadgeSpriteRef = useRef<{
+    sprite: THREE.Sprite;
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+    tex: THREE.CanvasTexture;
+    mat: THREE.SpriteMaterial;
+  } | null>(null);
+  const bayExpansionMatsRef = useRef<Record<string, THREE.MeshStandardMaterial>>({});
+
+  // Geometry refs for Bay expansion & boundary walls
+  const boundaryWallMeshesRef = useRef<Record<string, THREE.Mesh>>({});
+  const outerBayWallsRef = useRef<Record<string, THREE.Group>>({});
+  const bayFloorMeshesRef = useRef<Record<string, THREE.Mesh>>({});
+  const currentWalkwayGraphRef = useRef<Record<string, WaypointNode>>(generateWalkwayGraph([]));
+  const bayHatchedMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
+
+  const activeExpansionAnimRef = useRef<{
+    roomId: string;
+    startTime: number;
+    duration: number;
+    boundaryWall: THREE.Mesh | null;
+    outerWalls: THREE.Group | null;
+    bayFloor: THREE.Mesh | null;
+    targetMat: THREE.Material;
+    originalMat: THREE.Material;
+    onComplete?: () => void;
+  } | null>(null);
+
   const [demoInstanceStep, setDemoInstanceStep] = useState<number>(0);
   const [demoStatusMessage, setDemoStatusMessage] = useState<string>("");
   const [showCeoApprovalCard, setShowCeoApprovalCard] = useState<boolean>(false);
@@ -276,9 +366,6 @@ export function OfficeStage3D({
 
   const dynamicDesksRef = useRef<DynamicDeskResult[]>([]);
   const dynamicAgentsRef = useRef<DynamicAgentResult[]>([]);
-  const demoTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isInstanceDemoRunningRef = useRef<boolean>(false);
-  const demoQueueRef = useRef<Array<() => void>>([]);
   const demoStateRef = useRef({
     step: 0,
     statusMessage: "",
@@ -287,13 +374,15 @@ export function OfficeStage3D({
   });
 
   useEffect(() => {
+    const step = getStepFromState(activeRequest?.state);
+    setDemoInstanceStep(step);
     demoStateRef.current = {
-      step: demoInstanceStep,
+      step,
       statusMessage: demoStatusMessage,
       showApprovalCard: showCeoApprovalCard,
       approvalStatus: ceoApprovalStatus,
     };
-  }, [demoInstanceStep, demoStatusMessage, showCeoApprovalCard, ceoApprovalStatus]);
+  }, [activeRequest?.state, demoStatusMessage, showCeoApprovalCard, ceoApprovalStatus]);
 
   const resetAnimRef = useRef<{
     active: boolean;
@@ -368,21 +457,61 @@ export function OfficeStage3D({
     handlersRef.current = { selectAgent, selectRoom, selectAgentInstance };
   }, [selectAgent, selectRoom, selectAgentInstance]);
 
-  // Handler Demo Instance Request (7 Langkah Dinamis)
-  const handleResetInstanceDemo = useCallback(() => {
-    if (demoTimerRef.current) {
-      clearTimeout(demoTimerRef.current);
-      demoTimerRef.current = null;
+  const updateQueueBadge = useCallback((qLen: number) => {
+    if (hrQueueBadgeDivRef.current) {
+      if (qLen > 0) {
+        hrQueueBadgeDivRef.current.textContent = `Antrean: ${qLen}`;
+        hrQueueBadgeDivRef.current.style.display = "block";
+        if (hrQueueBadgeObjRef.current) hrQueueBadgeObjRef.current.visible = true;
+      } else {
+        hrQueueBadgeDivRef.current.style.display = "none";
+        hrQueueBadgeDivRef.current.textContent = "";
+        if (hrQueueBadgeObjRef.current) hrQueueBadgeObjRef.current.visible = false;
+      }
     }
-    // Bersihkan meja dinamis
+    if (hrQueueBadgeSpriteRef.current) {
+      const { sprite, ctx, tex } = hrQueueBadgeSpriteRef.current;
+      if (qLen > 0) {
+        ctx.clearRect(0, 0, 256, 64);
+        ctx.fillStyle = "rgba(232, 121, 249, 0.95)";
+        ctx.beginPath();
+        ctx.roundRect(16, 8, 224, 48, 24);
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+
+        ctx.fillStyle = "#0b0a1a";
+        ctx.font = "bold 26px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`Antrean: ${qLen}`, 128, 32);
+        tex.needsUpdate = true;
+        sprite.visible = true;
+      } else {
+        sprite.visible = false;
+      }
+    }
+  }, []);
+
+  // Handler Demo Instance Request (V1b-REDO)
+  const handleResetInstanceDemo = useCallback(() => {
+    // 1. Reset state machine
+    instanceManagerRef.current.reset();
+
+    // 2. Bersihkan meja dinamis
     dynamicDesksRef.current.forEach((d) => {
       d.dispose();
       d.group.removeFromParent?.();
     });
     dynamicDesksRef.current = [];
 
-    // Bersihkan agen dinamis
+    // 3. Bersihkan agen dinamis
     dynamicAgentsRef.current.forEach((a) => {
+      if (choreoEngineRef.current) {
+        choreoEngineRef.current.unregisterActor(a.id);
+        choreoEngineRef.current.unregisterActor(a.group.name);
+      }
       a.dispose();
       a.group.removeFromParent?.();
       const idx = raycastHitMeshesRef.current.indexOf(a.hitMesh);
@@ -390,107 +519,88 @@ export function OfficeStage3D({
     });
     dynamicAgentsRef.current = [];
 
-    isInstanceDemoRunningRef.current = false;
-    demoQueueRef.current = [];
+    if (choreoEngineRef.current) {
+      choreoEngineRef.current.getActorIds().forEach((actorId) => {
+        if (actorId.startsWith("inst_") || actorId.startsWith("req_")) {
+          choreoEngineRef.current.unregisterActor(actorId);
+        }
+      });
+    }
+
+    // 4. Pulihkan koreografi & posisi awal kepala departemen
+    ["ATHENA", "ZEUS", "HERMES", "HERA", "HEPHAESTUS", MANAGER_AGENT_NAME].forEach((actorId) => {
+      if (choreoEngineRef.current) {
+        choreoEngineRef.current.clear(actorId);
+      }
+      const rec = agentRecordsRef.current[actorId];
+      if (rec) {
+        const hp = HOME_POSITIONS[actorId];
+        if (hp) {
+          rec.group.position.set(hp[0], 0, hp[1]);
+          rec.targetPos.set(hp[0], 0, hp[1]);
+          rec.leftLeg.rotation.x = -1.5;
+          rec.rightLeg.rotation.x = -1.5;
+          rec.leftArm.rotation.x = -0.5;
+          rec.rightArm.rotation.x = -0.5;
+          rec.bodyMesh.rotation.set(0, 0, 0);
+          rec.headGroup.rotation.set(0, 0, 0);
+        }
+      }
+    });
+
+    // 5. Pulihkan geometri sekat & dinding bay
+    Object.keys(boundaryWallMeshesRef.current).forEach((roomId) => {
+      const bw = boundaryWallMeshesRef.current[roomId];
+      if (bw) {
+        bw.position.y = 0;
+        bw.visible = true;
+      }
+      const ow = outerBayWallsRef.current[roomId];
+      if (ow) {
+        ow.position.y = -2.4;
+        ow.visible = false;
+      }
+      const bf = bayFloorMeshesRef.current[roomId];
+      if (bf && bayHatchedMatRef.current) {
+        bf.material = bayHatchedMatRef.current;
+      }
+    });
+    activeExpansionAnimRef.current = null;
+
+    // 6. Pulihkan graf walkway
+    currentWalkwayGraphRef.current = generateWalkwayGraph([]);
+
+    // 7. Sembunyikan badge antrean HR
+    updateQueueBadge(0);
+
+    // 8. Pulihkan state UI
     setDemoInstanceStep(0);
     setDemoStatusMessage("");
     setShowCeoApprovalCard(false);
     setCeoApprovalStatus("pending");
+    setQueueLength(0);
+    setInstanceRequests([]);
+    setActiveRequest(null);
+    autoApproveNextRef.current = false;
   }, []);
 
   const handleApproveCeo = useCallback(() => {
     setCeoApprovalStatus("approved");
-    setDemoInstanceStep(4);
-    setDemoStatusMessage(
-      "Langkah 4/7: CEO menyetujui penambahan. Menginstruksikan Operasional."
-    );
+    setDemoStatusMessage("CEO menyetujui penambahan agen. Menginstruksikan Operasional.");
     choreoEngineRef.current.say(
       MANAGER_AGENT_NAME,
       "Penambahan disetujui. HEPHAESTUS, siapkan fasilitasnya!",
-      2200
+      1500
     );
 
-    demoTimerRef.current = setTimeout(() => {
+    const isReduced =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    setTimeout(() => {
       setShowCeoApprovalCard(false);
-      // LANGKAH 5: Operasional menyiapkan meja
-      setDemoInstanceStep(5);
-      setDemoStatusMessage(
-        "Langkah 5/7: HEPHAESTUS (Operasional) menyiapkan meja kerja baru"
-      );
-      choreoEngineRef.current.say(
-        "HEPHAESTUS",
-        "Siap! Menyiapkan meja kerja baru di Ruang Iklan...",
-        2200
-      );
-
-      const adsRoom = ROOMS.find((r) => r.id === "ads" || r.id === "advertiser")!;
-      // Buat meja dinamis dengan status "disiapkan"
-      const deskRes = createDeskMesh(adsRoom, 3, "disiapkan");
-      dynamicDesksRef.current.push(deskRes);
-      const adsRec = roomRecordsRef.current["advertiser"] || roomRecordsRef.current["ads"];
-      if (adsRec) {
-        adsRec.group.add(deskRes.group);
-      }
-
-      demoTimerRef.current = setTimeout(() => {
-        // LANGKAH 6: Deploy Agen Baru
-        setDemoInstanceStep(6);
-        setDemoStatusMessage(
-          "Langkah 6/7: Meja siap. Deploying Agent: ARTEMIS · Akun B"
-        );
-
-        // Hapus glow & tag persiapan
-        if (deskRes.prepGlow) deskRes.prepGlow.visible = false;
-        if (deskRes.prepTag && deskRes.prepTag.element.parentNode) {
-          deskRes.prepTag.element.parentNode.removeChild(deskRes.prepTag.element);
-        }
-
-        const slotPos = calculateRoomSlotPosition(adsRoom, 3, true);
-        const agentRes = createAgentCharacter({
-          instanceId: "inst_ads_akun_b",
-          label: "ARTEMIS · Akun B",
-          role: "Pengelola Kampanye (Akun B)",
-          color: "#38bdf8",
-          initialPos: slotPos.world,
-          status: "working",
-          onClick: () => {
-            setSelected({ type: "agent_instance", id: "inst_ads_akun_b" });
-          },
-        });
-        dynamicAgentsRef.current.push(agentRes);
-        sceneRef.current?.add(agentRes.group);
-        raycastHitMeshesRef.current.push(agentRes.hitMesh);
-
-        // Balon ucapan agen baru
-        if (agentRes.bubbleDiv) {
-          agentRes.bubbleDiv.textContent =
-            "Instance ARTEMIS Akun B aktif! Siap kerja.";
-          agentRes.bubbleDiv.style.display = "block";
-          agentRes.bubbleDiv.style.opacity = "1";
-          setTimeout(() => {
-            if (agentRes.bubbleDiv) {
-              agentRes.bubbleDiv.style.opacity = "0";
-              agentRes.bubbleDiv.style.display = "none";
-            }
-          }, 2600);
-        }
-
-        demoTimerRef.current = setTimeout(() => {
-          // LANGKAH 7: Selesai & Aktif Bekerja
-          setDemoInstanceStep(7);
-          setDemoStatusMessage(
-            "Langkah 7/7: Instance Agen aktif bekerja di Ruang Iklan (Selesai)"
-          );
-          isInstanceDemoRunningRef.current = false;
-
-          // Jalankan antrean berikutnya jika ada
-          if (demoQueueRef.current.length > 0) {
-            const nextDemo = demoQueueRef.current.shift()!;
-            nextDemo();
-          }
-        }, 1800);
-      }, 2000);
-    }, 1600);
+      instanceManagerRef.current.approveCeo();
+    }, isReduced ? 10 : 150);
   }, []);
 
   const handleRejectCeo = useCallback(() => {
@@ -501,74 +611,404 @@ export function OfficeStage3D({
       "Permintaan ditolak. Tetap gunakan tim yang ada saat ini.",
       2500
     );
-    demoTimerRef.current = setTimeout(() => {
+
+    const isReduced =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    setTimeout(() => {
       setShowCeoApprovalCard(false);
-      isInstanceDemoRunningRef.current = false;
-      setDemoInstanceStep(0);
-      setDemoStatusMessage("");
-    }, 2000);
+      instanceManagerRef.current.rejectCeo();
+    }, isReduced ? 10 : 1000);
   }, []);
 
-  const startInstanceDemoRef = useRef<(opts?: { autoApprove?: boolean }) => void>(() => {});
+  const handleRequestInstance = useCallback((scenario: InstanceScenario) => {
+    return instanceManagerRef.current.request(scenario);
+  }, []);
+
+  const handleInstanceAction = useCallback((action: InstanceAction) => {
+    const isReduced =
+      (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) ||
+      meetingReducedMotionOverrideRef.current === true;
+
+    switch (action.type) {
+      case "request_queued": {
+        setQueueLength(action.queueLength);
+        setInstanceRequests(instanceManagerRef.current.getRequests());
+        setDemoStatusMessage(`Permintaan ${action.request.label} diantrekan (Antrean #${action.queueLength})`);
+        updateQueueBadge(action.queueLength);
+        break;
+      }
+
+      case "dept_head_to_hr": {
+        const req = action.request;
+        setActiveRequest(instanceManagerRef.current.getActiveRequest());
+        setInstanceRequests(instanceManagerRef.current.getRequests());
+        setQueueLength(instanceManagerRef.current.getQueueLength());
+        updateQueueBadge(instanceManagerRef.current.getQueueLength());
+
+        const targetPos = getHrQueuePosition(action.queueIndex);
+        const actor = choreoEngineRef.current.getActor(req.deptHead);
+        const curPos = actor
+          ? actor.group.position
+          : new THREE.Vector3(HOME_POSITIONS[req.deptHead][0], 0, HOME_POSITIONS[req.deptHead][1]);
+
+        const waypoints = findPathWithGraph(
+          { x: curPos.x, z: curPos.z },
+          { x: targetPos.x, z: targetPos.z },
+          currentWalkwayGraphRef.current
+        );
+
+        setDemoStatusMessage(`${req.deptHead} menuju HR untuk mengajukan ${req.label}`);
+
+        choreoEngineRef.current.enqueue(
+          req.deptHead,
+          [
+            { type: "walkTo", waypoints, targetName: "Ruang HR" },
+            { type: "face", angle: Math.PI / 2 },
+          ],
+          () => {
+            if (action.queueIndex === 0) {
+              const speech =
+                req.scenario === "riset"
+                  ? "HERA, butuh tambahan agen Riset Pasar!"
+                  : req.scenario === "iklan"
+                  ? "HERA, butuh tambahan agen kampanye Akun B!"
+                  : "HERA, butuh agen Threads & ekspansi ruangan!";
+              choreoEngineRef.current.say(req.deptHead, speech, isReduced ? 0 : 1500);
+              setTimeout(() => {
+                instanceManagerRef.current.advance(req.id, "diminta");
+              }, isReduced ? 10 : 350);
+            }
+          }
+        );
+        break;
+      }
+
+      case "hera_nod": {
+        const req = action.request;
+        setDemoStatusMessage(`HERA memverifikasi kapasitas untuk ${req.label}`);
+        const heraReply = req.requiresApproval
+          ? "Kapasitas saat ini penuh. Mengajukan proposal penambahan ke CEO."
+          : req.roomId === "sosmed"
+          ? "Kapasitas Sosmed penuh. Membuka bay_sosmed dan menyiapkan fasilitas!"
+          : "Permintaan disetujui, langsung kami proses ke Operasional!";
+        choreoEngineRef.current.say("HERA", heraReply, isReduced ? 0 : 1500);
+
+        setTimeout(() => {
+          if (req.requiresApproval) {
+            instanceManagerRef.current.advance(req.id, "menunggu_persetujuan");
+          } else {
+            instanceManagerRef.current.advance(req.id, "menyiapkan");
+          }
+        }, isReduced ? 10 : 350);
+        break;
+      }
+
+      case "show_approval_card": {
+        setShowCeoApprovalCard(true);
+        setCeoApprovalStatus("pending");
+        setDemoStatusMessage("Menunggu Persetujuan CEO untuk Penambahan Agent");
+        choreoEngineRef.current.say(
+          MANAGER_AGENT_NAME,
+          "Permintaan agen diterima. Menunggu tanda tangan CEO...",
+          isReduced ? 0 : 1500
+        );
+        if (autoApproveNextRef.current) {
+          autoApproveNextRef.current = false;
+          setTimeout(() => {
+            handleApproveCeo();
+          }, isReduced ? 10 : 800);
+        }
+        break;
+      }
+
+      case "dept_head_rejected": {
+        setShowCeoApprovalCard(false);
+        setCeoApprovalStatus("rejected");
+        setDemoStatusMessage("Permohonan penambahan agen ditolak oleh CEO.");
+        break;
+      }
+
+      case "ops_prepare": {
+        const req = action.request;
+        setDemoStatusMessage(`HEPHAESTUS (Operasional) menyiapkan fasilitas untuk ${req.label}`);
+        const opsSpeech = action.needsExpansion
+          ? "Siap! Membuka sekat bay_sosmed dan menyiapkan meja kerja baru..."
+          : `Siap! Menyiapkan meja kerja baru di Ruang ${req.roomId.toUpperCase()}...`;
+        choreoEngineRef.current.say("HEPHAESTUS", opsSpeech, isReduced ? 0 : 1500);
+
+        const startDeskPlacement = () => {
+          const roomConfig = ROOMS.find(
+            (r) => r.id === req.roomId || (r.id === "ads" && req.roomId === "advertiser")
+          )!;
+          const slotIdx = req.roomId === "sosmed" ? 1 : 3;
+          const isExp = instanceManagerRef.current.isExpanded(req.roomId);
+          const deskRes = createDeskMesh(roomConfig, slotIdx, "disiapkan", isExp);
+          dynamicDesksRef.current.push(deskRes);
+          const roomRec =
+            roomRecordsRef.current[roomConfig.id] ||
+            roomRecordsRef.current["advertiser"] ||
+            roomRecordsRef.current["ads"];
+          if (roomRec) {
+            roomRec.group.add(deskRes.group);
+          } else {
+            sceneRef.current?.add(deskRes.group);
+          }
+
+          if (isReduced) {
+            setTimeout(() => {
+              instanceManagerRef.current.advance(req.id, "siap");
+            }, 10);
+            return;
+          }
+
+          // HEPHAESTUS walks from Operasional to the new desk to prepare it
+          const hephActor = choreoEngineRef.current.getActor("HEPHAESTUS");
+          const curPos = hephActor
+            ? hephActor.group.position
+            : new THREE.Vector3(HOME_POSITIONS["HEPHAESTUS"][0], 0, HOME_POSITIONS["HEPHAESTUS"][1]);
+
+          const deskPos = deskRes.slotPos.world;
+          const hephTarget = { x: deskPos.x, z: deskPos.z };
+
+          const waypoints = findPathWithGraph(
+            { x: curPos.x, z: curPos.z },
+            hephTarget,
+            currentWalkwayGraphRef.current
+          );
+
+          choreoEngineRef.current.enqueue(
+            "HEPHAESTUS",
+            [
+              { type: "walkTo", waypoints, targetName: "Menyiapkan Meja Kerja" },
+              { type: "face", angle: 0 },
+              { type: "pose", name: "handover", ms: 400 },
+              { type: "wait", ms: 50 },
+            ],
+            () => {
+              instanceManagerRef.current.advance(req.id, "siap");
+              const returnWaypoints = findPathWithGraph(
+                hephTarget,
+                { x: HOME_POSITIONS["HEPHAESTUS"][0], z: HOME_POSITIONS["HEPHAESTUS"][1] },
+                currentWalkwayGraphRef.current
+              );
+              choreoEngineRef.current.enqueue("HEPHAESTUS", [
+                { type: "walkTo", waypoints: returnWaypoints, targetName: "Kembali ke Operasional" },
+                { type: "face", angle: 0 },
+              ]);
+            }
+          );
+        };
+
+        if (action.needsExpansion) {
+          const boundaryWall = boundaryWallMeshesRef.current[req.roomId] || null;
+          const outerWalls = outerBayWallsRef.current[req.roomId] || null;
+          const bayFloor = bayFloorMeshesRef.current[req.roomId] || null;
+          const room = ROOMS.find((r) => r.id === req.roomId);
+          const roomColor = room ? room.color : "#fb923c";
+          if (!bayExpansionMatsRef.current[req.roomId]) {
+            bayExpansionMatsRef.current[req.roomId] = new THREE.MeshStandardMaterial({
+              color: softenColor(roomColor),
+              roughness: THEME.roomFloor.roughness,
+              metalness: THEME.roomFloor.metalness,
+            });
+          }
+          const targetMat = bayExpansionMatsRef.current[req.roomId];
+
+          activeExpansionAnimRef.current = {
+            roomId: req.roomId,
+            startTime: performance.now(),
+            duration: isReduced ? 0 : 2200,
+            boundaryWall,
+            outerWalls,
+            bayFloor,
+            targetMat,
+            originalMat: bayHatchedMatRef.current || targetMat,
+            onComplete: () => {
+              instanceManagerRef.current.setExpanded(req.roomId, true);
+              currentWalkwayGraphRef.current = generateWalkwayGraph(
+                Array.from(instanceManagerRef.current.getExpandedRooms())
+              );
+              startDeskPlacement();
+            },
+          };
+        } else {
+          startDeskPlacement();
+        }
+        break;
+      }
+
+      case "ops_ready": {
+        const req = action.request;
+        setDemoStatusMessage(`Meja siap. Deploying Agent: ${req.label}`);
+        const desk = dynamicDesksRef.current[dynamicDesksRef.current.length - 1];
+        if (desk) {
+          if (desk.setDeskState) {
+            desk.setDeskState("siap");
+          } else {
+            if (desk.prepGlow) desk.prepGlow.visible = false;
+            if (desk.prepTag?.element.parentNode) {
+              desk.prepTag.element.parentNode.removeChild(desk.prepTag.element);
+            }
+          }
+        }
+        setTimeout(() => {
+          instanceManagerRef.current.advance(req.id, "datang");
+        }, isReduced ? 10 : 150);
+        break;
+      }
+
+      case "agent_spawn_and_walk": {
+        const req = action.request;
+        setDemoStatusMessage(`Deploying Agent: ${req.label} via Portal HR`);
+
+        const roomConfig = ROOMS.find(
+          (r) => r.id === req.roomId || (r.id === "ads" && req.roomId === "advertiser")
+        )!;
+        const slotIdx = req.roomId === "sosmed" ? 1 : 3;
+        const isExp = instanceManagerRef.current.isExpanded(req.roomId);
+        const slotPos = calculateRoomSlotPosition(roomConfig, slotIdx, isExp);
+
+        const instId = `inst_${req.id}`;
+        const agentRes = createAgentCharacter({
+          instanceId: instId,
+          label: req.label,
+          role: req.role,
+          color: req.color,
+          initialPos: { x: HR_PORTAL_POS[0], y: 0, z: HR_PORTAL_POS[1] },
+          status: "working",
+          onClick: () => {
+            setSelected({ type: "agent_instance", id: instId });
+          },
+        });
+        dynamicAgentsRef.current.push(agentRes);
+        sceneRef.current?.add(agentRes.group);
+        raycastHitMeshesRef.current.push(agentRes.hitMesh);
+
+        choreoEngineRef.current.registerActor({
+          id: instId,
+          group: agentRes.group,
+          bodyMesh: agentRes.bodyMesh,
+          headMesh: agentRes.headMesh,
+          bubbleDiv: agentRes.bubbleDiv,
+          homePos: new THREE.Vector3(slotPos.world.x, 0, slotPos.world.z),
+          targetPos: agentRes.targetPos,
+          isDynamic: true,
+        });
+
+        const waypoints = findPathWithGraph(
+          { x: HR_PORTAL_POS[0], z: HR_PORTAL_POS[1] },
+          { x: slotPos.world.x, z: slotPos.world.z },
+          currentWalkwayGraphRef.current
+        );
+
+        const lastWp = waypoints[waypoints.length - 1];
+        if (!lastWp || Math.hypot(lastWp.x - slotPos.world.x, lastWp.z - slotPos.world.z) > 0.05) {
+          waypoints.push(new THREE.Vector3(slotPos.world.x, 0, slotPos.world.z));
+        }
+
+        choreoEngineRef.current.enqueue(
+          instId,
+          [
+            { type: "say", text: `Instance ${req.label} aktif! Siap kerja.`, ms: isReduced ? 0 : 400 },
+            { type: "walkTo", waypoints, targetName: req.label },
+          ],
+          () => {
+            instanceManagerRef.current.advance(req.id, "duduk");
+          }
+        );
+        break;
+      }
+
+      case "agent_seated": {
+        const req = action.request;
+        const instId = `inst_${req.id}`;
+        const dynAgent = dynamicAgentsRef.current.find(
+          (a) => a.group.name === instId || a.labelDiv.textContent?.includes(req.label)
+        );
+        const roomConfig = ROOMS.find(
+          (r) => r.id === req.roomId || (r.id === "ads" && req.roomId === "advertiser")
+        );
+        if (roomConfig && dynAgent) {
+          const slotIdx = req.roomId === "sosmed" ? 1 : 3;
+          const isExp = instanceManagerRef.current.isExpanded(req.roomId);
+          const slotPos = calculateRoomSlotPosition(roomConfig, slotIdx, isExp);
+          dynAgent.group.position.set(slotPos.world.x, 0, slotPos.world.z);
+          dynAgent.targetPos.set(slotPos.world.x, 0, slotPos.world.z);
+        }
+        if (dynAgent) {
+          if (dynAgent.leftLeg) dynAgent.leftLeg.rotation.x = -1.5;
+          if (dynAgent.rightLeg) dynAgent.rightLeg.rotation.x = -1.5;
+          if (dynAgent.leftArm) dynAgent.leftArm.rotation.x = -0.5;
+          if (dynAgent.rightArm) dynAgent.rightArm.rotation.x = -0.5;
+        }
+        instanceManagerRef.current.advance(req.id, "selesai");
+        break;
+      }
+
+      case "dept_head_return": {
+        const req = action.request;
+        const deptHead = req.deptHead;
+        const hp = HOME_POSITIONS[deptHead];
+        if (hp) {
+          const actor = choreoEngineRef.current.getActor(deptHead);
+          const curPos = actor ? actor.group.position : new THREE.Vector3(3.2, 0, 23.0);
+          const returnWaypoints = findPathWithGraph(
+            { x: curPos.x, z: curPos.z },
+            { x: hp[0], z: hp[1] },
+            currentWalkwayGraphRef.current
+          );
+          choreoEngineRef.current.enqueue(
+            deptHead,
+            [
+              { type: "walkTo", waypoints: returnWaypoints, targetName: "Kembali ke meja" },
+              { type: "face", angle: 0 },
+            ],
+            () => {
+              const rec = agentRecordsRef.current[deptHead];
+              if (rec) {
+                rec.leftLeg.rotation.x = -1.5;
+                rec.rightLeg.rotation.x = -1.5;
+                rec.leftArm.rotation.x = -0.5;
+                rec.rightArm.rotation.x = -0.5;
+              }
+            }
+          );
+        }
+        break;
+      }
+
+      case "request_completed": {
+        setDemoStatusMessage(`Instance ${action.request.label} aktif bekerja (Selesai)`);
+        setActiveRequest(instanceManagerRef.current.getActiveRequest());
+        setInstanceRequests(instanceManagerRef.current.getRequests());
+        setQueueLength(instanceManagerRef.current.getQueueLength());
+        updateQueueBadge(instanceManagerRef.current.getQueueLength());
+        break;
+      }
+
+      case "reset": {
+        break;
+      }
+    }
+  }, [handleApproveCeo]);
+
+  useEffect(() => {
+    const unsub = instanceManagerRef.current.subscribe((action) => {
+      handleInstanceAction(action);
+    });
+    return unsub;
+  }, [handleInstanceAction]);
 
   const startInstanceDemo = useCallback(
     (opts?: { autoApprove?: boolean }) => {
-      if (isInstanceDemoRunningRef.current) {
-        demoQueueRef.current.push(() => startInstanceDemoRef.current(opts));
-        setDemoStatusMessage(
-          "Permintaan diantrekan (Antrean #" + demoQueueRef.current.length + ")"
-        );
-        return;
-      }
-
-      handleResetInstanceDemo();
-      isInstanceDemoRunningRef.current = true;
-
-      // LANGKAH 1: Permintaan diajukan ke HR
-      setDemoInstanceStep(1);
-      setDemoStatusMessage("Langkah 1/7: Kebutuhan Kapasitas Tim Iklan diajukan ke HR");
-      choreoEngineRef.current.say(
-        "HERA",
-        "Menerima permohonan agen baru untuk Tim Iklan (Akun B)...",
-        2000
-      );
-
-      demoTimerRef.current = setTimeout(() => {
-        // LANGKAH 2: HERA Verifikasi
-        setDemoInstanceStep(2);
-        setDemoStatusMessage(
-          "Langkah 2/7: HERA memverifikasi kapasitas ruangan & beban kerja"
-        );
-        choreoEngineRef.current.say(
-          "HERA",
-          "Kapasitas saat ini penuh. Mengajukan proposal penambahan ke CEO.",
-          2000
-        );
-
-        demoTimerRef.current = setTimeout(() => {
-          // LANGKAH 3: Muncul Kartu Approval CEO
-          setDemoInstanceStep(3);
-          setDemoStatusMessage(
-            "Langkah 3/7: Menunggu Persetujuan CEO untuk Penambahan Agent"
-          );
-          setShowCeoApprovalCard(true);
-          setCeoApprovalStatus("pending");
-          choreoEngineRef.current.say(
-            MANAGER_AGENT_NAME,
-            "Permintaan agen diterima. Menunggu tanda tangan CEO...",
-            2600
-          );
-
-          if (opts?.autoApprove) {
-            demoTimerRef.current = setTimeout(() => {
-              handleApproveCeo();
-            }, 800);
-          }
-        }, 2000);
-      }, 2000);
+      autoApproveNextRef.current = !!opts?.autoApprove;
+      handleRequestInstance("iklan");
     },
-    [handleApproveCeo, handleResetInstanceDemo]
+    [handleRequestInstance]
   );
+  const startInstanceDemoRef = useRef(startInstanceDemo);
   useEffect(() => {
     startInstanceDemoRef.current = startInstanceDemo;
   }, [startInstanceDemo]);
@@ -585,11 +1025,12 @@ export function OfficeStage3D({
           rec.statusLightMat.color.setHex(hex);
           rec.statusLightMat.emissive.setHex(hex);
           rec.dotSpan.className = `agent-dot3d st-${nextStatus}`;
+          const isMini = rec.labelDiv.classList.contains("is-mini");
           rec.labelDiv.className = `agent-tag3d st-${nextStatus}${
             selectedRef.current?.type === "agent" && selectedRef.current.id === a.nama
               ? " sel"
               : ""
-          }`;
+          }${isMini ? " is-mini" : ""}`;
           rec.labelDiv.setAttribute("data-status", nextStatus);
         }
       }
@@ -700,6 +1141,7 @@ export function OfficeStage3D({
         antialias: true,
         alpha: true,
         powerPreference: "high-performance",
+        preserveDrawingBuffer: true,
       });
     } catch {
       queueMicrotask(() => setWebglInitError(true));
@@ -749,9 +1191,7 @@ export function OfficeStage3D({
     cssRenderer.domElement.style.zIndex = "10";
     cssRenderer.domElement.className = "stage-3d-css-layer";
     container.appendChild(cssRenderer.domElement);
-    if (shotModeRef.current) {
-      cssRenderer.domElement.style.display = "none";
-    }
+    cssRenderer.domElement.style.display = "block";
     cssRendererRef.current = cssRenderer;
 
     // Controls
@@ -857,24 +1297,36 @@ export function OfficeStage3D({
         }
       });
 
-    // Bays (hatched floor)
-    FLOORPLAN.bays.forEach((b) => {
-      const geo = new THREE.BoxGeometry(b.w, 0.06, b.d);
-      geo.translate(b.x + b.w / 2, -0.035, b.z + b.d / 2);
-      bayGeos.push(geo);
-    });
-
     // Walls & door sills for enclosed rooms
     const enclosedRooms = FLOORPLAN.rooms.filter(
       (r) => r.kind === "dept" || r.doors.length > 0
     );
+
+    const boundaryWallGeosByRoom: Record<string, THREE.BufferGeometry[]> = {};
+    const boundaryIsHighByRoom: Record<string, boolean> = {};
 
     enclosedRooms.forEach((r) => {
       const sides: WallSide[] = ["N", "W", "S", "E"];
       sides.forEach((side) => {
         const isHigh = side === "N" || side === "W";
         const wallH = isHigh ? WALL_HIGH : WALL_LOW;
-        const targetGeos = isHigh ? highWallGeos : lowWallGeos;
+
+        const attachedBay = FLOORPLAN.bays.find(
+          (b) => b.roomId === r.id && b.side === side
+        );
+        const isBoundary = !!attachedBay;
+
+        let targetGeos: THREE.BufferGeometry[];
+        if (isBoundary) {
+          if (!boundaryWallGeosByRoom[r.id]) {
+            boundaryWallGeosByRoom[r.id] = [];
+            boundaryIsHighByRoom[r.id] = isHigh;
+          }
+          targetGeos = boundaryWallGeosByRoom[r.id];
+        } else {
+          targetGeos = isHigh ? highWallGeos : lowWallGeos;
+        }
+
         const sideDoors = r.doors
           .filter((d) => d.side === side)
           .sort((a, b) => a.offset - b.offset);
@@ -951,12 +1403,23 @@ export function OfficeStage3D({
       roughness: 0.45,
       metalness: 0.1,
     });
+    bayHatchedMatRef.current = bayMat;
+
+    // Individual bay floors per room
+    FLOORPLAN.bays.forEach((b) => {
+      const geo = new THREE.BoxGeometry(b.w, 0.06, b.d);
+      geo.translate(b.x + b.w / 2, -0.035, b.z + b.d / 2);
+      const mesh = new THREE.Mesh(geo, bayMat);
+      mesh.name = `bayFloor_${b.roomId}`;
+      mesh.userData.isStatic = true;
+      scene.add(mesh);
+      bayFloorMeshesRef.current[b.roomId] = mesh;
+    });
 
     let highWallMesh: THREE.Mesh | null = null;
     let lowWallMesh: THREE.Mesh | null = null;
     let sillMesh: THREE.Mesh | null = null;
     let corridorMesh: THREE.Mesh | null = null;
-    let bayMesh: THREE.Mesh | null = null;
 
     if (highWallGeos.length > 0) {
       const merged = BufferGeometryUtils.mergeGeometries(highWallGeos, false);
@@ -994,15 +1457,104 @@ export function OfficeStage3D({
         scene.add(corridorMesh);
       }
     }
-    if (bayGeos.length > 0) {
-      const merged = BufferGeometryUtils.mergeGeometries(bayGeos, false);
-      if (merged) {
-        bayMesh = new THREE.Mesh(merged, bayMat);
-        bayMesh.name = "expansionBays";
-        bayMesh.userData.isStatic = true;
-        scene.add(bayMesh);
+
+    // Boundary walls per room
+    Object.entries(boundaryWallGeosByRoom).forEach(([roomId, geos]) => {
+      if (geos.length > 0) {
+        const merged = BufferGeometryUtils.mergeGeometries(geos, false);
+        if (merged) {
+          const isHigh = boundaryIsHighByRoom[roomId];
+          const mesh = new THREE.Mesh(merged, isHigh ? highWallMat : lowWallMat);
+          mesh.name = `boundaryWall_${roomId}`;
+          scene.add(mesh);
+          boundaryWallMeshesRef.current[roomId] = mesh;
+        }
       }
-    }
+    });
+
+    // Outer bay walls per room
+    FLOORPLAN.bays.forEach((b) => {
+      const outerHighGeos: THREE.BufferGeometry[] = [];
+      const outerLowGeos: THREE.BufferGeometry[] = [];
+
+      const boundaryEdge = b.side === "S" ? "N" : b.side === "N" ? "S" : b.side === "W" ? "E" : "W";
+      const outerSides: WallSide[] = (["N", "S", "E", "W"] as WallSide[]).filter((s) => s !== boundaryEdge);
+
+      outerSides.forEach((side) => {
+        const isHigh = side === "N" || side === "W";
+        const wallH = isHigh ? WALL_HIGH : WALL_LOW;
+        const targetGeos = isHigh ? outerHighGeos : outerLowGeos;
+
+        if (side === "N" || side === "S") {
+          const zCoord = side === "N" ? b.z : b.z + b.d;
+          const geo = new THREE.BoxGeometry(b.w, wallH, WALL_THICKNESS);
+          geo.translate(b.x + b.w / 2, wallH / 2, zCoord);
+          targetGeos.push(geo);
+        } else {
+          const xCoord = side === "W" ? b.x : b.x + b.w;
+          const geo = new THREE.BoxGeometry(WALL_THICKNESS, wallH, b.d);
+          geo.translate(xCoord, wallH / 2, b.z + b.d / 2);
+          targetGeos.push(geo);
+        }
+      });
+
+      const bayOuterGroup = new THREE.Group();
+      bayOuterGroup.name = `outerBayWalls_${b.roomId}`;
+      if (outerHighGeos.length > 0) {
+        const mergedHigh = BufferGeometryUtils.mergeGeometries(outerHighGeos, false);
+        if (mergedHigh) {
+          const m = new THREE.Mesh(mergedHigh, highWallMat);
+          bayOuterGroup.add(m);
+        }
+      }
+      if (outerLowGeos.length > 0) {
+        const mergedLow = BufferGeometryUtils.mergeGeometries(outerLowGeos, false);
+        if (mergedLow) {
+          const m = new THREE.Mesh(mergedLow, lowWallMat);
+          bayOuterGroup.add(m);
+        }
+      }
+      bayOuterGroup.position.y = -WALL_HIGH;
+      bayOuterGroup.visible = false;
+      scene.add(bayOuterGroup);
+      outerBayWallsRef.current[b.roomId] = bayOuterGroup;
+    });
+
+    // Mount HR Queue Badge at HERA's desk
+    const qDiv = document.createElement("div");
+    qDiv.className = "hr-queue-badge";
+    qDiv.style.display = "none";
+    hrQueueBadgeDivRef.current = qDiv;
+    const qObj = new CSS2DObject(qDiv);
+    qObj.position.set(4.5, 1.8, 23.0);
+    qObj.visible = false;
+    scene.add(qObj);
+    hrQueueBadgeObjRef.current = qObj;
+
+    // Mount HR Queue Badge 3D Sprite on Three.js Canvas
+    const qCanvas = document.createElement("canvas");
+    qCanvas.width = 256;
+    qCanvas.height = 64;
+    const qCtx = qCanvas.getContext("2d")!;
+    const qTex = new THREE.CanvasTexture(qCanvas);
+    qTex.minFilter = THREE.LinearFilter;
+    const qSpriteMat = new THREE.SpriteMaterial({
+      map: qTex,
+      depthTest: false,
+      transparent: true,
+    });
+    const qSprite = new THREE.Sprite(qSpriteMat);
+    qSprite.scale.set(3.2, 0.8, 1);
+    qSprite.position.set(4.5, 2.3, 23.0);
+    qSprite.visible = false;
+    scene.add(qSprite);
+    hrQueueBadgeSpriteRef.current = {
+      sprite: qSprite,
+      canvas: qCanvas,
+      ctx: qCtx,
+      tex: qTex,
+      mat: qSpriteMat,
+    };
 
     // Build Rooms
     const roomRecords: Record<string, Room3DRecord> = {};
@@ -1582,181 +2134,17 @@ export function OfficeStage3D({
       }
     });
 
-    // Build Agents (Robots) dengan geometri bersama (shared geometries)
+    // =========================================================================
+    // TAHAP 3: KARAKTER MANUSIA VOXEL HIDUP (19 AGEN)
+    // =========================================================================
     const agentRecords: Record<string, Agent3DRecord> = {};
-    const shadowGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.01, 16);
-    const shadowMat = new THREE.MeshBasicMaterial({
-      color: 0x000000,
-      transparent: true,
-      opacity: THEME.character.shadowOpacity,
-    });
-    const bodyGeo = new THREE.BoxGeometry(0.5, 0.44, 0.38);
-    const headGeo = new THREE.BoxGeometry(0.56, 0.42, 0.42);
-    const visorGeo = new THREE.BoxGeometry(0.44, 0.2, 0.04);
-    const visorMat = new THREE.MeshBasicMaterial({ color: 0x1e293b });
-    const eyeGeo = new THREE.BoxGeometry(0.08, 0.08, 0.02);
-    const antennaGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.18);
-    const tipGeo = new THREE.SphereGeometry(0.07, 12, 12);
-    const starGeo = new THREE.OctahedronGeometry(0.12, 0);
-    const starMat = new THREE.MeshStandardMaterial({
-      color: 0xffd700,
-      emissive: 0xffb800,
-      emissiveIntensity: 0.8,
-      roughness: 0.2,
-      metalness: 0.8,
-    });
-    const armGeo = new THREE.BoxGeometry(0.08, 0.20, 0.08);
-    const robotHitGeo = new THREE.BoxGeometry(0.85, 1.25, 0.85);
 
     AGENT_RENDER_ORDER.forEach((name, i) => {
-      const group = new THREE.Group();
       const cfg = AGENTS[name];
       const agentColor = colorOfAgent(name);
-      const agentHex = new THREE.Color(agentColor).getHex();
       const currentAgents = agentsRef.current;
       const agentRow = currentAgents.find((a) => a.nama === name);
       const currentStatus: AgentStatus = (agentRow?.status as AgentStatus) ?? "idle";
-      const statusHex = getStatusColor(currentStatus);
-
-      // Floor Shadow
-      const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
-      shadowMesh.position.set(0, 0.005, 0);
-      group.add(shadowMesh);
-
-      // Robot Body
-      const bodyMat = new THREE.MeshStandardMaterial({
-        color: 0xdfe3ff,
-        roughness: 0.35,
-        metalness: 0.2,
-      });
-      const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-      bodyMesh.position.set(0, 0.34, 0);
-      group.add(bodyMesh);
-
-      // Chest plate badge with agent color
-      const chestGeo = new THREE.BoxGeometry(0.24, 0.14, 0.02);
-      const chestMat = new THREE.MeshBasicMaterial({ color: agentHex });
-      const chestMesh = new THREE.Mesh(chestGeo, chestMat);
-      chestMesh.position.set(0, 0.34, 0.2);
-      group.add(chestMesh);
-
-      // Two arms for working animation (lengan mengetuk meja)
-      const armMat = new THREE.MeshStandardMaterial({
-        color: 0xdfe3ff,
-        roughness: 0.35,
-        metalness: 0.2,
-      });
-      const leftArm = new THREE.Mesh(armGeo, armMat);
-      leftArm.position.set(-0.29, 0.32, 0.08);
-      group.add(leftArm);
-
-      const rightArm = new THREE.Mesh(armGeo, armMat);
-      rightArm.position.set(0.29, 0.32, 0.08);
-      group.add(rightArm);
-
-      // Head Group (agar visor, mata, antena, bintang ikut berputar/menoleh bersama kepala)
-      const headGroup = new THREE.Group();
-      headGroup.position.set(0, 0.77, 0);
-
-      const headMat = new THREE.MeshStandardMaterial({
-        color: 0xeef0ff,
-        roughness: 0.35,
-        metalness: 0.2,
-      });
-      const headMesh = new THREE.Mesh(headGeo, headMat);
-      headMesh.position.set(0, 0, 0);
-      headGroup.add(headMesh);
-
-      // Visor
-      const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-      visorMesh.position.set(0, 0, 0.22);
-      headGroup.add(visorMesh);
-
-      // Eyes
-      const eyeMat = new THREE.MeshBasicMaterial({ color: agentHex });
-      const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-      leftEye.position.set(-0.11, 0, 0.24);
-      headGroup.add(leftEye);
-      const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-      rightEye.position.set(0.11, 0, 0.24);
-      headGroup.add(rightEye);
-
-      // Antenna
-      const antMat = new THREE.MeshBasicMaterial({ color: 0xeef0ff });
-      const antennaMesh = new THREE.Mesh(antennaGeo, antMat);
-      antennaMesh.position.set(0, 0.30, 0);
-      headGroup.add(antennaMesh);
-
-      // Status Light indicator tip
-      const statusLightMat = new THREE.MeshStandardMaterial({
-        color: statusHex,
-        emissive: statusHex,
-        emissiveIntensity: 1.2,
-        roughness: 0.2,
-      });
-      const statusLightMesh = new THREE.Mesh(tipGeo, statusLightMat);
-      statusLightMesh.position.set(0, 0.43, 0);
-      headGroup.add(statusLightMesh);
-
-      // Lead agent star
-      if (cfg.lead) {
-        const starMesh = new THREE.Mesh(starGeo, starMat);
-        starMesh.position.set(0, 0.57, 0);
-        headGroup.add(starMesh);
-      }
-
-      group.add(headGroup);
-
-      // Balon teks CSS2D khusus untuk ATLAS
-      let bubbleDiv: HTMLDivElement | undefined;
-      if (name === MANAGER_AGENT_NAME) {
-        bubbleDiv = document.createElement("div");
-        bubbleDiv.className = "atlas-speech-bubble";
-        bubbleDiv.setAttribute("aria-hidden", "true");
-        const bubbleObj = new CSS2DObject(bubbleDiv);
-        bubbleObj.position.set(0, 2.05, 0);
-        group.add(bubbleObj);
-      }
-
-      // Invisible Hitbox
-      const hitMat = new THREE.MeshBasicMaterial({ visible: false });
-      const hitMesh = new THREE.Mesh(robotHitGeo, hitMat);
-      hitMesh.position.set(0, 0.62, 0);
-      hitMesh.userData = { type: "agent", id: name };
-      group.add(hitMesh);
-      raycastHitMeshes.push(hitMesh);
-
-      // CSS2D Tag Label
-      const labelDiv = document.createElement("div");
-      labelDiv.className = `agent-tag3d st-${currentStatus}`;
-      labelDiv.style.setProperty("--c", agentColor);
-      labelDiv.setAttribute("role", "button");
-      labelDiv.setAttribute("tabindex", "0");
-      labelDiv.setAttribute("aria-label", `${name}, ${cfg.role}`);
-
-      const dotSpan = document.createElement("span");
-      dotSpan.className = `agent-dot3d st-${currentStatus}`;
-      labelDiv.appendChild(dotSpan);
-
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "agent-name3d";
-      nameSpan.textContent = (cfg.lead ? "★ " : "") + name;
-      labelDiv.appendChild(nameSpan);
-
-      labelDiv.addEventListener("click", (e) => {
-        e.stopPropagation();
-        handlersRef.current.selectAgent(name);
-      });
-      labelDiv.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handlersRef.current.selectAgent(name);
-        }
-      });
-
-      const labelObj = new CSS2DObject(labelDiv);
-      labelObj.position.set(0, 1.48, 0);
-      group.add(labelObj);
 
       // Initial position
       const isGatheredNow = gatheredRef.current;
@@ -1777,28 +2165,49 @@ export function OfficeStage3D({
         startX = hp[0];
         startZ = hp[1];
       }
-      group.position.set(startX, 0, startZ);
 
-      scene.add(group);
+      const dept = roomOfAgent(name)?.id ?? "manager";
+      const vHuman = createVoxelHuman({
+        name,
+        department: dept,
+        lead: cfg.lead ?? false,
+        status: currentStatus,
+        color: agentColor,
+        initialPos: { x: startX, y: 0, z: startZ },
+        role: cfg.role,
+        onClick: () => {
+          handlersRef.current.selectAgent(name);
+        },
+      });
+
+      scene.add(vHuman.group);
+      raycastHitMeshes.push(vHuman.hitMesh);
 
       const record: Agent3DRecord = {
-        group,
-        bodyMesh,
-        headGroup,
-        headMesh,
-        leftArm,
-        rightArm,
-        statusLightMesh,
-        statusLightMat,
-        hitMesh,
-        labelObj,
-        labelDiv,
-        dotSpan,
+        group: vHuman.group,
+        bodyMesh: vHuman.bodyMesh,
+        headGroup: vHuman.headGroup,
+        headMesh: vHuman.headMesh,
+        leftArm: vHuman.leftArm,
+        rightArm: vHuman.rightArm,
+        leftLeg: vHuman.leftLeg,
+        rightLeg: vHuman.rightLeg,
+        shadowMesh: vHuman.shadowMesh,
+        statusLightMesh: vHuman.statusLightMesh,
+        statusLightMat: vHuman.statusLightMat,
+        hitMesh: vHuman.hitMesh,
+        labelObj: vHuman.labelObj,
+        labelDiv: vHuman.labelDiv,
+        dotSpan: vHuman.dotSpan,
+        bubbleDiv: vHuman.bubbleDiv,
         targetPos: new THREE.Vector3(startX, 0, startZ),
         currentPos: new THREE.Vector3(startX, 0, startZ),
         baseY: 0,
         phase: i * 0.45,
         status: currentStatus,
+        appearance: vHuman.appearance,
+        characterType: vHuman.characterType,
+        dispose: vHuman.dispose,
       };
       agentRecords[name] = record;
 
@@ -1807,10 +2216,10 @@ export function OfficeStage3D({
       const homeZ = HOME_POSITIONS[name][1];
       choreo.registerActor({
         id: name,
-        group,
-        bodyMesh,
-        headMesh,
-        bubbleDiv,
+        group: vHuman.group,
+        bodyMesh: vHuman.bodyMesh,
+        headMesh: vHuman.headMesh,
+        bubbleDiv: vHuman.bubbleDiv,
         homePos: new THREE.Vector3(homeX, 0, homeZ),
         targetPos: record.targetPos,
       });
@@ -2027,11 +2436,30 @@ export function OfficeStage3D({
             props,
             FLOORPLAN.bays
           ),
-        focusRoom: (roomId: string) => {
+        focusRoom: (roomId: string, includeBay: boolean = false) => {
           const room = FLOORPLAN.rooms.find((r) => r.id === roomId);
           if (!room) return false;
-          const cx = room.x + room.w / 2;
-          const cz = room.z + room.d / 2;
+          let rx = room.x;
+          let rz = room.z;
+          let rw = room.w;
+          let rd = room.d;
+
+          if (includeBay) {
+            const bay = FLOORPLAN.bays.find((b) => b.roomId === roomId);
+            if (bay) {
+              const minX = Math.min(rx, bay.x);
+              const maxX = Math.max(rx + rw, bay.x + bay.w);
+              const minZ = Math.min(rz, bay.z);
+              const maxZ = Math.max(rz + rd, bay.z + bay.d);
+              rx = minX;
+              rz = minZ;
+              rw = maxX - minX;
+              rd = maxZ - minZ;
+            }
+          }
+
+          const cx = rx + rw / 2;
+          const cz = rz + rd / 2;
           const cy = 1.0;
           controls.target.set(cx, cy, cz);
           camera.position.set(cx + 45.0, cy + 38.0, cz + 45.0);
@@ -2039,14 +2467,14 @@ export function OfficeStage3D({
           camera.updateMatrixWorld();
 
           const corners = [
-            new THREE.Vector3(room.x, 0, room.z),
-            new THREE.Vector3(room.x + room.w, 0, room.z),
-            new THREE.Vector3(room.x, 0, room.z + room.d),
-            new THREE.Vector3(room.x + room.w, 0, room.z + room.d),
-            new THREE.Vector3(room.x, 2.5, room.z),
-            new THREE.Vector3(room.x + room.w, 2.5, room.z),
-            new THREE.Vector3(room.x, 2.5, room.z + room.d),
-            new THREE.Vector3(room.x + room.w, 2.5, room.z + room.d),
+            new THREE.Vector3(rx, 0, rz),
+            new THREE.Vector3(rx + rw, 0, rz),
+            new THREE.Vector3(rx, 0, rz + rd),
+            new THREE.Vector3(rx + rw, 0, rz + rd),
+            new THREE.Vector3(rx, 2.5, rz),
+            new THREE.Vector3(rx + rw, 2.5, rz),
+            new THREE.Vector3(rx, 2.5, rz + rd),
+            new THREE.Vector3(rx + rw, 2.5, rz + rd),
           ];
 
           let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -2101,8 +2529,17 @@ export function OfficeStage3D({
         },
         getSelected: () => selectedRef.current,
         getActivePointerCount: () => activePointers.size,
-        getAgentPosition: (nama: string) =>
-          agentRecords[nama]?.group.position.clone(),
+        getAgentPosition: (nama: string) => {
+          const rec = agentRecords[nama];
+          if (rec) return rec.group.position.clone();
+          const dyn = dynamicAgentsRef.current.find((a) => a.id === nama || a.id.includes(nama));
+          if (dyn) return dyn.group.position.clone();
+          const dynFirst = dynamicAgentsRef.current[0];
+          if (dynFirst && (nama.startsWith("inst_") || nama === "dynamic" || nama === "new_agent")) {
+            return dynFirst.group.position.clone();
+          }
+          return null;
+        },
         getAgentTargetPosition: (nama: string) =>
           agentRecords[nama]?.targetPos.clone(),
         getAgentRotation: (nama: string) => {
@@ -2144,21 +2581,54 @@ export function OfficeStage3D({
           to: string,
           customAllowed?: string[],
           customGraph?: Record<string, WaypointNode>
-        ) => findPath(from, to, customAllowed, customGraph),
+        ) => findPath(from, to, customAllowed, customGraph ?? currentWalkwayGraphRef.current),
         findPathNodes: (
           from: string,
           to: string,
           customAllowed?: string[],
           customGraph?: Record<string, WaypointNode>
-        ) => findPathNodes(from, to, customAllowed, customGraph),
+        ) => findPathNodes(from, to, customAllowed, customGraph ?? currentWalkwayGraphRef.current),
+        getWalkwayGraph: () => currentWalkwayGraphRef.current,
         resetCamera: () => handleResetCamera(),
-        setShotMode: (val: boolean) => {
+        setShotMode: (val: boolean, hideCss2D: boolean = false) => {
           setShotMode(val);
           shotModeRef.current = val;
           if (cssRendererRef.current) {
-            cssRendererRef.current.domElement.style.display = val ? "none" : "block";
+            cssRendererRef.current.domElement.style.display = val && hideCss2D ? "none" : "block";
           }
         },
+        getResourceCounts: () => {
+          const uniqueMats = new Set<string>();
+          const uniqueGeos = new Set<string>();
+          scene.traverse((obj: any) => {
+            if (obj.geometry) uniqueGeos.add(obj.geometry.uuid);
+            if (obj.material) {
+              if (Array.isArray(obj.material)) {
+                obj.material.forEach((m: any) => uniqueMats.add(m.uuid));
+              } else {
+                uniqueMats.add(obj.material.uuid);
+              }
+            }
+          });
+          return {
+            geometries: renderer.info.memory.geometries,
+            textures: renderer.info.memory.textures,
+            uniqueGeometries: uniqueGeos.size,
+            uniqueMaterials: uniqueMats.size,
+          };
+        },
+        getDynamicDesks: () =>
+          dynamicDesksRef.current.map((d) => ({
+            state: d.getDeskState(),
+            slotPos: d.slotPos,
+            chairPos: d.chairPos ?? { x: d.slotPos.world.x, y: 0, z: d.slotPos.world.z },
+            position: d.group.position.clone(),
+          })),
+        getDynamicAgents: () =>
+          dynamicAgentsRef.current.map((a) => ({
+            id: a.id,
+            position: a.group.position.clone(),
+          })),
         isShotMode: () => shotModeRef.current,
         getAgentMeetingWaypoints: (nama: string) => {
           const seat = SEAT_BY_AGENT[nama];
@@ -2198,20 +2668,66 @@ export function OfficeStage3D({
         },
         getStatusOverride: (nama: string) =>
           statusOverridesRef.current[nama] ?? null,
+        requestInstance: (scenario: InstanceScenario) =>
+          handleRequestInstance(scenario),
+        approveCeo: () => handleApproveCeo(),
+        rejectCeo: () => handleRejectCeo(),
+        getInstanceRequests: () => instanceManagerRef.current.getRequests(),
+        getQueueLength: () => instanceManagerRef.current.getQueueLength(),
+        isExpanded: (roomId: string) => instanceManagerRef.current.isExpanded(roomId),
         startInstanceDemo: (opts?: { autoApprove?: boolean }) =>
           startInstanceDemo(opts),
         approveInstanceRequest: () => handleApproveCeo(),
         rejectInstanceRequest: () => handleRejectCeo(),
         resetInstanceDemo: () => handleResetInstanceDemo(),
-        getInstanceDemoState: () => ({
-          step: demoStateRef.current.step,
-          statusMessage: demoStateRef.current.statusMessage,
-          showApprovalCard: demoStateRef.current.showApprovalCard,
-          approvalStatus: demoStateRef.current.approvalStatus,
-          dynamicDesksCount: dynamicDesksRef.current.length,
-          dynamicAgentsCount: dynamicAgentsRef.current.length,
-          isRunning: isInstanceDemoRunningRef.current,
-        }),
+        getInstanceDemoState: () => {
+          const act = instanceManagerRef.current.getActiveRequest();
+          return {
+            step: demoStateRef.current.step,
+            statusMessage: demoStateRef.current.statusMessage,
+            showApprovalCard: demoStateRef.current.showApprovalCard,
+            approvalStatus: demoStateRef.current.approvalStatus,
+            dynamicDesksCount: dynamicDesksRef.current.length,
+            dynamicAgentsCount: dynamicAgentsRef.current.length,
+            isRunning:
+              act !== null &&
+              act.state !== "selesai" &&
+              act.state !== "ditolak",
+            requests: instanceManagerRef.current.getRequests(),
+            queueLength: instanceManagerRef.current.getQueueLength(),
+            activeRequest: act,
+          };
+        },
+        getAgents: () =>
+          Object.entries(agentRecords).map(([name, rec]) => ({
+            name,
+            department: rec.appearance.department,
+            status: rec.status,
+            role: AGENTS[name]?.role,
+            lead: rec.appearance.lead,
+            appearance: rec.appearance,
+            position: rec.group.position.clone(),
+            characterType: rec.characterType,
+          })),
+        getAgentRecord: (nama: string) => agentRecords[nama] ?? null,
+        getAgentPose: (nama: string) => {
+          const rec = agentRecords[nama];
+          if (!rec) return null;
+          return {
+            status: statusOverridesRef.current[nama] ?? rec.status,
+            isSitting: rec.leftLeg.rotation.x < -1.0,
+            leftArmRotX: rec.leftArm.rotation.x,
+            rightArmRotX: rec.rightArm.rotation.x,
+            leftLegRotX: rec.leftLeg.rotation.x,
+            rightLegRotX: rec.rightLeg.rotation.x,
+            headRot: { x: rec.headGroup.rotation.x, y: rec.headGroup.rotation.y, z: rec.headGroup.rotation.z },
+            bodyRot: { x: rec.bodyMesh.rotation.x, y: rec.bodyMesh.rotation.y, z: rec.bodyMesh.rotation.z },
+          };
+        },
+        getDrawCalls: () => renderer.info.render.calls,
+        getHrPortalPos: () => HR_PORTAL_POS,
+        getCharacterType: (nama: string) => agentRecords[nama]?.characterType ?? "voxelHuman",
+        getAgentAppearance: (nama: string) => agentRecords[nama]?.appearance ?? null,
         controls,
       };
     }
@@ -2257,6 +2773,34 @@ export function OfficeStage3D({
         }
       }
 
+      // Handle Bay Expansion Animation (V1b-REDO)
+      if (activeExpansionAnimRef.current) {
+        const anim = activeExpansionAnimRef.current;
+        const now = performance.now();
+        const progress = anim.duration <= 0 ? 1 : Math.min(1, (now - anim.startTime) / anim.duration);
+
+        if (anim.boundaryWall) {
+          anim.boundaryWall.position.y = -WALL_HIGH * progress;
+          if (progress >= 1) anim.boundaryWall.visible = false;
+        }
+        if (anim.outerWalls) {
+          anim.outerWalls.visible = true;
+          anim.outerWalls.position.y = -WALL_HIGH * (1 - progress);
+        }
+        if (anim.bayFloor && progress >= 0.5) {
+          anim.bayFloor.material = anim.targetMat;
+        }
+
+        if (progress >= 1) {
+          if (anim.boundaryWall) anim.boundaryWall.visible = false;
+          if (anim.outerWalls) anim.outerWalls.position.y = 0;
+          if (anim.bayFloor) anim.bayFloor.material = anim.targetMat;
+          const cb = anim.onComplete;
+          activeExpansionAnimRef.current = null;
+          cb?.();
+        }
+      }
+
       controls.update();
 
       // Siklus pencahayaan jam nyata (daylight)
@@ -2299,23 +2843,35 @@ export function OfficeStage3D({
           rec.headGroup.rotation.set(0, 0, 0);
           rec.leftArm.rotation.set(0, 0, 0);
           rec.rightArm.rotation.set(0, 0, 0);
+          rec.leftLeg.rotation.set(-1.45, 0, 0);
+          rec.rightLeg.rotation.set(-1.45, 0, 0);
           rec.statusLightMat.emissiveIntensity =
             activeStatus === "idle" ? 0.3 : 1.2;
         } else if (isActorUnderChoreo) {
-          // Sedang berjalan dalam koreografi (bobbing & rotasi sudah ditangani choreo)
-          rec.leftArm.rotation.set(0, 0, 0);
-          rec.rightArm.rotation.set(0, 0, 0);
+          // Sedang berjalan dalam koreografi: ayunan lengan & kaki berlawanan
+          const speed = choreo.getEffectiveSpeed(name);
+          const walkPhase = time * 10 * Math.max(0.8, speed / 4.0) + rec.phase;
+          rec.leftLeg.rotation.x = Math.sin(walkPhase) * 0.6;
+          rec.rightLeg.rotation.x = -Math.sin(walkPhase) * 0.6;
+          rec.leftArm.rotation.x = -Math.sin(walkPhase) * 0.5;
+          rec.rightArm.rotation.x = Math.sin(walkPhase) * 0.5;
+          rec.bodyMesh.rotation.y = Math.sin(walkPhase) * 0.05;
+          rec.bodyMesh.rotation.x = 0;
+          rec.bodyMesh.scale.set(1, 1, 1);
+          rec.headGroup.rotation.set(0, 0, 0);
           rec.statusLightMat.emissiveIntensity = 0.9;
         } else if (isGathered) {
           // POSE KHUSUS DI RUANG MEETING:
-          // Berdiri menghadap ke tengah meja rapat, tangan rileks, menyimak dengan napas halus
+          // Duduk menghadap ke tengah meja rapat (7.5, 4.5), menyimak dengan napas halus
           rec.group.position.y = rec.baseY;
-          rec.leftArm.rotation.set(0, 0, 0);
-          rec.rightArm.rotation.set(0, 0, 0);
+          rec.leftLeg.rotation.x = -1.45;
+          rec.rightLeg.rotation.x = -1.45;
+          rec.leftArm.rotation.set(-0.4, 0, 0);
+          rec.rightArm.rotation.set(-0.4, 0, 0);
           rec.bodyMesh.rotation.set(0, 0, 0);
 
-          // Orientasi menghadap ke tengah meja rapat (0.0, -2.9)
-          const meetingCenter = { x: 0.0, z: -2.9 };
+          // Orientasi menghadap ke tengah meja rapat (7.5, 4.5)
+          const meetingCenter = { x: 7.5, z: 4.5 };
           const dx = meetingCenter.x - rec.group.position.x;
           const dz = meetingCenter.z - rec.group.position.z;
           rec.group.rotation.y = Math.atan2(dx, dz);
@@ -2329,80 +2885,95 @@ export function OfficeStage3D({
           rec.headGroup.rotation.z = 0;
           rec.statusLightMat.emissiveIntensity = 0.6;
         } else {
-          // Di meja: status visual halus
+          // Di meja kerja: duduk menghadap meja
+          const deskRot = [
+            "THEIA", "LYRA", "IRIS", "CLIO", "ERATO", "DAPHNE", "HERMES", "THEMIS", "TALOS"
+          ].includes(name)
+            ? Math.PI
+            : 0;
+          rec.group.rotation.y = deskRot;
+          rec.leftLeg.rotation.x = -1.45;
+          rec.rightLeg.rotation.x = -1.45;
+
           if (activeStatus === "working") {
-            // working: kepala miring & mengetuk, badan goyang mikro, lengan mengetuk meja
-            const bobY = Math.sin(time * 5.2 + rec.phase) * 0.055;
+            // working: duduk membungkuk ke meja, mengetik (lengan bergerak), kepala miring
+            const bobY = Math.sin(time * 5.2 + rec.phase) * 0.035;
             rec.group.position.y = rec.baseY + bobY;
             rec.statusLightMat.emissiveIntensity =
               1.1 + Math.sin(time * 6.5 + rec.phase) * 0.7;
 
-            rec.leftArm.rotation.x = Math.sin(time * 12 + rec.phase) * 0.28;
-            rec.rightArm.rotation.x = Math.cos(time * 12 + rec.phase) * 0.28;
+            rec.leftArm.rotation.x = -0.45 + Math.sin(time * 12 + rec.phase) * 0.28;
+            rec.rightArm.rotation.x = -0.45 + Math.cos(time * 12 + rec.phase) * 0.28;
 
             rec.headGroup.rotation.z = Math.sin(time * 3.2 + rec.phase) * 0.06;
-            rec.headGroup.rotation.x = Math.abs(Math.sin(time * 6.5 + rec.phase)) * 0.08;
+            rec.headGroup.rotation.x = 0.12 + Math.abs(Math.sin(time * 6.5 + rec.phase)) * 0.08;
             rec.headGroup.rotation.y = 0;
 
-            rec.bodyMesh.rotation.y = Math.sin(time * 4.0 + rec.phase) * 0.03;
+            rec.bodyMesh.rotation.x = 0.08 + Math.sin(time * 4.0 + rec.phase) * 0.02;
+            rec.bodyMesh.rotation.y = Math.sin(time * 3.8 + rec.phase) * 0.03;
             rec.bodyMesh.scale.set(1, 1, 1);
           } else if (activeStatus === "review") {
-            // review: kepala mengangguk lambat seolah menunggu
-            const bobY = Math.sin(time * 2.8 + rec.phase) * 0.025;
-            rec.group.position.y = rec.baseY + bobY;
+            // review: kepala mengangguk lambat, tangan di dagu
+            rec.group.position.y = rec.baseY;
             rec.statusLightMat.emissiveIntensity =
               1.0 + Math.sin(time * 3.5 + rec.phase) * 0.4;
 
-            rec.leftArm.rotation.set(0, 0, 0);
-            rec.rightArm.rotation.set(0, 0, 0);
-            rec.headGroup.rotation.x = Math.abs(Math.sin(time * 3.0 + rec.phase)) * 0.18;
+            rec.leftArm.rotation.set(-0.35, 0, 0);
+            rec.rightArm.rotation.set(-1.15, 0, -0.22); // tangan di dagu
+            rec.headGroup.rotation.x = 0.08 + Math.abs(Math.sin(time * 3.0 + rec.phase)) * 0.18;
             rec.headGroup.rotation.y = 0;
             rec.headGroup.rotation.z = 0;
             rec.bodyMesh.rotation.set(0, 0, 0);
             rec.bodyMesh.scale.set(1, 1, 1);
           } else {
-            // idle: napas pelan (skala Y ±1-1.5%) dan sesekali menoleh
+            // idle: napas pelan (skala Y), tangan rileks di meja, toleh 4-9s
             rec.group.position.y = rec.baseY;
             rec.statusLightMat.emissiveIntensity = 0.3;
-            rec.leftArm.rotation.set(0, 0, 0);
-            rec.rightArm.rotation.set(0, 0, 0);
+            rec.leftArm.rotation.set(-0.25, 0, 0);
+            rec.rightArm.rotation.set(-0.25, 0, 0);
             rec.bodyMesh.rotation.set(0, 0, 0);
 
             rec.bodyMesh.scale.y = 1.0 + Math.sin(time * 2.6 + rec.phase) * 0.022;
-            const turnPhase = Math.sin(time * 0.4 + rec.phase);
+            const turnPhase = Math.sin(time * 0.35 + rec.phase);
             rec.headGroup.rotation.y =
-              turnPhase > 0.6 ? Math.sin(time * 1.8 + rec.phase) * 0.22 : 0;
+              turnPhase > 0.6 ? Math.sin(time * 1.5 + rec.phase) * 0.22 : 0;
             rec.headGroup.rotation.x = 0;
             rec.headGroup.rotation.z = 0;
           }
         }
+      });
 
-        // Label distance fading & gather occlusion
-        const dist = camPos.distanceTo(rec.group.position);
-        const isHovered =
-          hoveredRef.current?.type === "agent" && hoveredRef.current.id === name;
-        const isSelected =
-          currentSel?.type === "agent" && currentSel.id === name;
+      // Animasi Agen Dinamis (Instance)
+      dynamicAgentsRef.current.forEach((dynAgent) => {
+        const isSel =
+          currentSel?.type === "agent_instance" &&
+          currentSel.id === (dynAgent.hitMesh.userData.id as string);
+        const isHov =
+          hoveredRef.current?.type === "agent_instance" &&
+          hoveredRef.current.id === (dynAgent.hitMesh.userData.id as string);
 
-        // Dalam mode kumpul ruang meeting, sembunyikan label agent lain yang tidak dipilih
-        if (isGathered && !isHovered && !isSelected) {
-          if (rec.labelDiv.style.display !== "none") {
-            rec.labelDiv.style.display = "none";
+        const isWalking = choreo.isBusy(dynAgent.group.name);
+        if (!isWalking) {
+          if (dynAgent.leftLeg && dynAgent.rightLeg) {
+            dynAgent.leftLeg.rotation.x = -1.45;
+            dynAgent.rightLeg.rotation.x = -1.45;
           }
+          dynAgent.leftArm.rotation.x = -0.45 + Math.sin(time * 12) * 0.28;
+          dynAgent.rightArm.rotation.x = -0.45 + Math.cos(time * 12) * 0.28;
+          dynAgent.headGroup.rotation.z = Math.sin(time * 3.2) * 0.06;
+          dynAgent.headGroup.rotation.x = 0.12 + Math.abs(Math.sin(time * 6.5)) * 0.08;
+        }
+
+        if (isSel || isHov) {
+          dynAgent.labelDiv.classList.remove("is-mini");
+          dynAgent.labelDiv.style.display = "inline-flex";
+          dynAgent.labelDiv.style.opacity = "1.0";
+          dynAgent.labelDiv.style.zIndex = isSel ? "30" : "20";
         } else {
-          if (rec.labelDiv.style.display !== "inline-flex") {
-            rec.labelDiv.style.display = "inline-flex";
-          }
-          const maxDist = 52;
-          const minDist = 16;
-          const alpha = Math.min(
-            1.0,
-            Math.max(0.35, 1.0 - (dist - minDist) / (maxDist - minDist))
-          );
-          const alphaStr = alpha.toFixed(2);
-          if (rec.labelDiv.style.opacity !== alphaStr) {
-            rec.labelDiv.style.opacity = alphaStr;
-          }
+          dynAgent.labelDiv.classList.add("is-mini");
+          dynAgent.labelDiv.style.display = "inline-flex";
+          dynAgent.labelDiv.style.opacity = "0.85";
+          dynAgent.labelDiv.style.zIndex = "10";
         }
       });
 
@@ -2418,6 +2989,66 @@ export function OfficeStage3D({
 
       renderer.render(scene, camera);
       cssRenderer.render(scene, camera);
+
+      // Label CSS2D Teroptimasi pasca-CSS2DRenderer:
+      // default tersembunyi (display: none), mini badge untuk aktif (working/review), penuh untuk hover/selected
+      Object.entries(agentRecords).forEach(([name, rec]) => {
+        const isHovered =
+          hoveredRef.current?.type === "agent" && hoveredRef.current.id === name;
+        const isSelected =
+          currentSel?.type === "agent" && currentSel.id === name;
+        const override = statusOverridesRef.current[name];
+        const activeStatus = override ?? rec.status;
+        const isActorUnderChoreo = choreo.isBusy(name);
+        const isActive =
+          isActorUnderChoreo || activeStatus === "working" || activeStatus === "review";
+
+        if (isSelected || isHovered) {
+          rec.labelDiv.classList.remove("is-mini");
+          rec.labelDiv.style.display = "inline-flex";
+          rec.labelDiv.style.opacity = "1.0";
+          rec.labelDiv.style.zIndex = isSelected ? "30" : "20";
+        } else if (isGathered) {
+          if (isActive) {
+            rec.labelDiv.classList.add("is-mini");
+            rec.labelDiv.style.display = "inline-flex";
+            rec.labelDiv.style.opacity = "0.85";
+            rec.labelDiv.style.zIndex = "10";
+          } else {
+            rec.labelDiv.style.display = "none";
+          }
+        } else if (isActive) {
+          rec.labelDiv.classList.add("is-mini");
+          rec.labelDiv.style.display = "inline-flex";
+          const dist = camPos.distanceTo(rec.group.position);
+          const alpha = Math.min(1.0, Math.max(0.4, 1.0 - (dist - 16) / 36));
+          rec.labelDiv.style.opacity = alpha.toFixed(2);
+          rec.labelDiv.style.zIndex = "10";
+        } else {
+          rec.labelDiv.style.display = "none";
+        }
+      });
+
+      dynamicAgentsRef.current.forEach((dynAgent) => {
+        const isSel =
+          currentSel?.type === "agent_instance" &&
+          currentSel.id === (dynAgent.hitMesh.userData.id as string);
+        const isHov =
+          hoveredRef.current?.type === "agent_instance" &&
+          hoveredRef.current.id === (dynAgent.hitMesh.userData.id as string);
+
+        if (isSel || isHov) {
+          dynAgent.labelDiv.classList.remove("is-mini");
+          dynAgent.labelDiv.style.display = "inline-flex";
+          dynAgent.labelDiv.style.opacity = "1.0";
+          dynAgent.labelDiv.style.zIndex = isSel ? "30" : "20";
+        } else {
+          dynAgent.labelDiv.classList.add("is-mini");
+          dynAgent.labelDiv.style.display = "inline-flex";
+          dynAgent.labelDiv.style.opacity = "0.85";
+          dynAgent.labelDiv.style.zIndex = "10";
+        }
+      });
     }
 
     animate();
@@ -2441,6 +3072,11 @@ export function OfficeStage3D({
       gl.canvas.removeEventListener("webglcontextrestored", onContextRestored);
 
       controls.dispose();
+
+      // Dispose all agent records
+      Object.values(agentRecordsRef.current).forEach((rec) => {
+        rec.dispose?.();
+      });
 
       // Dispose all geometries, materials, textures
       scene.traverse((obj) => {
@@ -2644,11 +3280,11 @@ export function OfficeStage3D({
 
   return (
     <section
-      className={`card stage-card ${fullFrame ? "is-full-frame" : ""}`}
+      className={`card stage-card ${fullFrame ? "is-full-frame" : ""} ${shotMode ? "is-shot-mode" : ""}`}
       aria-label="Peta kantor 3D"
     >
       {/* Normal Mode Stats Header */}
-      {!fullFrame && (
+      {!fullFrame && !shotMode && (
         <div className="stats">
           <span>
             <i className="pip w" /> <b>{stats.working}</b>bekerja
@@ -2678,7 +3314,7 @@ export function OfficeStage3D({
         />
 
         {/* Kartu Persetujuan CEO (Floating Demo Modal V1b) */}
-        {!shotMode && showCeoApprovalCard && (
+        {showCeoApprovalCard && (
           <div
             className="ceo-approval-demo-card"
             role="dialog"
@@ -2687,13 +3323,13 @@ export function OfficeStage3D({
             <div className="ceo-card-badge">PERSETUJUAN CEO · DEMO</div>
             <h4>Permohonan Penambahan Agen</h4>
             <p className="ceo-card-desc">
-              <b>Ruang:</b> Advertisers (Iklan)
+              <b>Ruang:</b> {activeRequest?.roomId === "advertiser" ? "Advertisers (Iklan)" : activeRequest?.roomId || "Advertisers (Iklan)"}
               <br />
               <b>Departemen:</b> Pemasaran & Meta Ads
               <br />
-              <b>Template Agen:</b> ARTEMIS · Pengelola Kampanye
+              <b>Template Agen:</b> {activeRequest?.label || "ARTEMIS · Akun B (demo)"}
               <br />
-              <b>Konteks:</b> Penanganan Campaign Akun B (beban tinggi)
+              <b>Konteks:</b> {activeRequest?.context || "Penanganan Campaign Akun B"}
               <br />
               <b>Peralatan:</b> 1 Meja & Workstation Baru (disiapkan Operasional)
             </p>
@@ -2782,34 +3418,56 @@ export function OfficeStage3D({
               </button>
             </div>
 
-            {/* Bagian Simulasi Penambahan Instance Agen (V1b) */}
-            <div className="stage-demo-section-title">Demo Instance Agen</div>
+            {/* Bagian Simulasi Penambahan Instance Agen (V1b-REDO) */}
+            <div className="stage-demo-section-title">Demo Instance Agen (V1b)</div>
             <div className="stage-demo-btns">
               <button
                 type="button"
                 className="stage-demo-btn is-highlight"
-                aria-label="Jalankan Simulasi Tambah Agen (7 Langkah)"
-                onClick={() => startInstanceDemo()}
-                disabled={demoInstanceStep > 0 && demoInstanceStep < 7}
+                aria-label="Tambah Agent Riset (Skenario A)"
+                onClick={() => handleRequestInstance("riset")}
               >
-                {demoInstanceStep > 0
-                  ? `Simulasi (${demoInstanceStep}/7)`
-                  : "+ Tambah Agen (7 Langkah)"}
+                + Riset (A)
               </button>
-              {demoInstanceStep > 0 && (
-                <button
-                  type="button"
-                  className="stage-demo-btn"
-                  style={{
-                    color: "var(--amber)",
-                    borderColor: "rgba(245, 166, 35, 0.4)",
-                  }}
-                  aria-label="Reset Simulasi Instance"
-                  onClick={handleResetInstanceDemo}
-                >
-                  Reset Instance
-                </button>
-              )}
+              <button
+                type="button"
+                className="stage-demo-btn is-highlight"
+                aria-label="Tambah Agent Iklan (Skenario B)"
+                onClick={() => handleRequestInstance("iklan")}
+              >
+                + Iklan (B)
+              </button>
+              <button
+                type="button"
+                className="stage-demo-btn is-highlight"
+                aria-label="Tambah Agent Sosmed Ekspansi Bay (Skenario C)"
+                onClick={() => handleRequestInstance("sosmed")}
+              >
+                + Sosmed (C)
+              </button>
+              <button
+                type="button"
+                className="stage-demo-btn"
+                aria-label="Banjir Permintaan (2)"
+                onClick={() => {
+                  handleRequestInstance("riset");
+                  handleRequestInstance("iklan");
+                }}
+              >
+                Banjir (2)
+              </button>
+              <button
+                type="button"
+                className="stage-demo-btn"
+                style={{
+                  color: "var(--amber)",
+                  borderColor: "rgba(245, 166, 35, 0.4)",
+                }}
+                aria-label="Reset Simulasi Instance"
+                onClick={handleResetInstanceDemo}
+              >
+                Reset Instance
+              </button>
             </div>
             {demoStatusMessage && (
               <div className="stage-demo-status-pill">{demoStatusMessage}</div>

@@ -1234,6 +1234,30 @@ pre.json {
 .agent-tag3d.sel .agent-name3d {
   color: #0f172a;
 }
+.agent-initial3d {
+  display: none;
+}
+.agent-tag3d.is-mini {
+  padding: 1px 4px;
+  font-size: 9px;
+  gap: 3px;
+  border-width: 1px;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+.agent-tag3d.is-mini .agent-name3d {
+  display: none;
+}
+.agent-tag3d.is-mini .agent-initial3d {
+  display: inline;
+  font-weight: 700;
+  font-size: 9px;
+}
+@media (max-width: 480px) {
+  .agent-tag3d:not(.sel) {
+    display: none !important;
+  }
+}
 .agent-dot3d {
   display: inline-block;
   width: 6px;
@@ -2132,6 +2156,8 @@ pre.json {
   .brief-modal-body {
     padding: 12px 14px;
   }
+}
+
 /* ==========================================================================
    KARTU PERSATUJUAN CEO (DEMO CLIENT-SIDE V1b) & TAG INSTANCE
    ========================================================================== */
@@ -2296,6 +2322,90 @@ pre.json {
 .agent-tag3d.is-instance {
   border-style: dashed;
 }
+
+/* ==========================================================================
+   V1b-REDO: SHOT MODE (TRUE 1280x800) & HR QUEUE BADGE
+   ========================================================================== */
+
+.stage-card.is-shot-mode {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 1280px !important;
+  height: 800px !important;
+  max-width: 1280px !important;
+  max-height: 800px !important;
+  min-width: 1280px !important;
+  min-height: 800px !important;
+  z-index: 999999 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+}
+
+.stage-card.is-shot-mode .stats {
+  display: none !important;
+}
+
+.stage-card.is-shot-mode .stage-map-area {
+  flex: 1 1 100% !important;
+  width: 1280px !important;
+  height: 800px !important;
+  max-width: 1280px !important;
+  max-height: 800px !important;
+  min-width: 1280px !important;
+  min-height: 800px !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+}
+
+.stage-card.is-shot-mode canvas {
+  width: 1280px !important;
+  height: 800px !important;
+  display: block !important;
+}
+
+.stage-card.is-shot-mode .stage-3d-css-layer .agent-tag3d,
+.stage-card.is-shot-mode .stage-3d-css-layer .room-label,
+.stage-card.is-shot-mode .stage-3d-css-layer .agent-speech-bubble,
+.stage-card.is-shot-mode .stage-3d-css-layer .desk-prep-tag {
+  display: none !important;
+}
+
+.stage-card.is-shot-mode .stage-3d-css-layer .hr-queue-badge {
+  display: block !important;
+}
+
+.hr-queue-badge {
+  background: rgba(232, 121, 249, 0.95);
+  color: #0b0a1a;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 1px solid #ffffff;
+  box-shadow: 0 4px 12px rgba(232, 121, 249, 0.4), 0 2px 4px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: pulseQueue 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes pulseQueue {
+  from {
+    transform: scale(1);
+    box-shadow: 0 4px 12px rgba(232, 121, 249, 0.4);
+  }
+  to {
+    transform: scale(1.08);
+    box-shadow: 0 6px 16px rgba(232, 121, 249, 0.7);
+  }
+}
+
 
 
 

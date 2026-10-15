@@ -9,9 +9,10 @@ import {
 } from "@/lib/officeConfig";
 import { FLOORPLAN } from "./floorplan";
 import { THEME } from "./theme";
+import { createVoxelHuman } from "./characters/voxelHuman";
 import type { AgentStatus } from "@/lib/types";
 
-export type DeskState = "kosong" | "disiapkan" | "terisi";
+export type DeskState = "kosong" | "disiapkan" | "siap" | "terisi";
 export type ExpansionSide = "west" | "east" | "north" | "south" | "compact";
 
 export interface RoomSlot {
@@ -76,7 +77,7 @@ export function calculateRoomSlotPosition(
       : room.agents?.length || 3;
 
   // Jika slot ekspansi (slotIndex >= baseSlotsCount) dan bay tersedia: tempatkan tersebar di dalam bay
-  if (slotIndex >= baseSlotsCount && bay && (isExpanded || true)) {
+  if (slotIndex >= baseSlotsCount && bay && isExpanded) {
     const bayIndex = slotIndex - baseSlotsCount;
     let wx: number;
     let wz: number;
@@ -104,7 +105,7 @@ export function calculateRoomSlotPosition(
     };
   }
 
-  // Posisi slot standar di dalam ruangan (untuk slotIndex < baseSlotsCount)
+  // Posisi slot standar di dalam ruangan (untuk slotIndex < baseSlotsCount atau ruangan dengan slot kosong)
   let relX: number;
   let relY: number;
 
@@ -122,7 +123,11 @@ export function calculateRoomSlotPosition(
     relY = 3.5;
   } else if (normRoomId === "advertiser") {
     relX = 3.5 + (slotIndex % 3) * 3.0;
-    relY = 4.5;
+    relY = slotIndex >= 3 ? 6.5 : 4.5;
+  } else if (normRoomId === "riset") {
+    // Ruang riset: meja internal ke-4 (slotIndex 3) di sebelah timur METIS
+    relX = 7.5;
+    relY = 5.5;
   } else {
     // Ruang lainnya
     relX = Math.min(room.w - 1.5, Math.max(1.5, 2.5 + (slotIndex % 3) * 2.5));
@@ -147,6 +152,11 @@ export interface DynamicDeskResult {
   monMesh: THREE.Mesh;
   prepGlow?: THREE.Mesh;
   prepTag?: CSS2DObject;
+  slotPos: { rel: [number, number]; world: { x: number; y: number; z: number } };
+  chairPos: { x: number; y: number; z: number };
+  deskState: DeskState;
+  getDeskState: () => DeskState;
+  setDeskState: (state: DeskState) => void;
   dispose: () => void;
 }
 
@@ -154,11 +164,12 @@ export interface DynamicDeskResult {
 export function createDeskMesh(
   room: RoomConfig,
   slotIndex: number,
-  deskState: DeskState = "kosong"
+  deskState: DeskState = "kosong",
+  isExpanded: boolean = false
 ): DynamicDeskResult {
   const group = new THREE.Group();
   const roomColorHex = new THREE.Color(room.color).getHex();
-  const slotPos = calculateRoomSlotPosition(room, slotIndex, true);
+  const slotPos = calculateRoomSlotPosition(room, slotIndex, isExpanded);
 
   const deskGeo = new THREE.BoxGeometry(1.8, 0.44, 0.7);
   const deskTopEdgeGeo = new THREE.EdgesGeometry(deskGeo);
@@ -194,6 +205,16 @@ export function createDeskMesh(
   monMesh.position.set(slotPos.world.x, 0.56, slotPos.world.z + 0.9);
   group.add(monMesh);
 
+  // Kursi meja kerja baru
+  const chairGeo = new THREE.BoxGeometry(0.5, 0.08, 0.5);
+  const chairMat = new THREE.MeshStandardMaterial({
+    color: 0x243248,
+    roughness: 0.5,
+  });
+  const chairMesh = new THREE.Mesh(chairGeo, chairMat);
+  chairMesh.position.set(slotPos.world.x, 0.2, slotPos.world.z);
+  group.add(chairMesh);
+
   let prepGlow: THREE.Mesh | undefined;
   let prepTag: CSS2DObject | undefined;
 
@@ -220,6 +241,24 @@ export function createDeskMesh(
     group.add(prepTag);
   }
 
+  let currentDeskState: DeskState = deskState;
+
+  const setDeskState = (newState: DeskState) => {
+    currentDeskState = newState;
+    if (newState === "terisi" || newState === "siap") {
+      deskMat.color.setHex(new THREE.Color(THEME.furniture.desk).getHex());
+      deskEdgeMat.color.setHex(roomColorHex);
+      deskEdgeMat.opacity = 0.5;
+      monMat.color.setHex(roomColorHex);
+      monMat.emissive.setHex(roomColorHex);
+      monMat.emissiveIntensity = 0.4;
+      if (prepGlow) prepGlow.visible = false;
+      if (prepTag && prepTag.element.parentNode) {
+        prepTag.element.parentNode.removeChild(prepTag.element);
+      }
+    }
+  };
+
   const dispose = () => {
     deskGeo.dispose();
     deskTopEdgeGeo.dispose();
@@ -227,6 +266,8 @@ export function createDeskMesh(
     deskEdgeMat.dispose();
     monGeo.dispose();
     monMat.dispose();
+    chairGeo.dispose();
+    chairMat.dispose();
     if (prepGlow) {
       (prepGlow.geometry as THREE.BufferGeometry).dispose();
       (prepGlow.material as THREE.Material).dispose();
@@ -243,29 +284,44 @@ export function createDeskMesh(
     monMesh,
     prepGlow,
     prepTag,
+    slotPos,
+    chairPos: { x: slotPos.world.x, y: 0.2, z: slotPos.world.z },
+    deskState: currentDeskState,
+    getDeskState: () => currentDeskState,
+    setDeskState,
     dispose,
   };
 }
 
 export interface DynamicAgentResult {
+  id: string;
   group: THREE.Group;
   bodyMesh: THREE.Mesh;
   headGroup: THREE.Group;
   headMesh: THREE.Mesh;
   leftArm: THREE.Mesh;
   rightArm: THREE.Mesh;
-  statusLightMesh: THREE.Mesh;
+  leftLeg?: THREE.Mesh;
+  rightLeg?: THREE.Mesh;
+  statusLightMesh?: THREE.Mesh;
   statusLightMat: THREE.MeshStandardMaterial;
   hitMesh: THREE.Mesh;
   labelObj: CSS2DObject;
   labelDiv: HTMLDivElement;
   dotSpan: HTMLSpanElement;
-  bubbleDiv: HTMLDivElement;
+  bubbleDiv?: HTMLDivElement;
   targetPos: THREE.Vector3;
+  appearance?: {
+    skin: string;
+    hair: string;
+    department: string;
+    lead: boolean;
+  };
+  characterType?: string;
   dispose: () => void;
 }
 
-// Buat karakter robot agen dinamis (createAgentCharacter)
+// Buat karakter manusia voxel agen dinamis (createAgentCharacter)
 export function createAgentCharacter(config: {
   instanceId: string;
   label: string;
@@ -274,197 +330,54 @@ export function createAgentCharacter(config: {
   initialPos: { x: number; y: number; z: number };
   status?: AgentStatus;
   onClick?: () => void;
+  department?: string;
 }): DynamicAgentResult {
-  const group = new THREE.Group();
-  const agentColor = config.color;
-  const agentHex = new THREE.Color(agentColor).getHex();
-  const status = config.status ?? "idle";
-
-  const shadowGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.01, 16);
-  const shadowMat = new THREE.MeshBasicMaterial({
-    color: 0x000000,
-    transparent: true,
-    opacity: 0.45,
-  });
-  const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
-  shadowMesh.position.set(0, 0.005, 0);
-  group.add(shadowMesh);
-
-  const bodyGeo = new THREE.BoxGeometry(0.5, 0.44, 0.38);
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0xdfe3ff,
-    roughness: 0.35,
-    metalness: 0.2,
-  });
-  const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-  bodyMesh.position.set(0, 0.34, 0);
-  group.add(bodyMesh);
-
-  const chestGeo = new THREE.BoxGeometry(0.24, 0.14, 0.02);
-  const chestMat = new THREE.MeshBasicMaterial({ color: agentHex });
-  const chestMesh = new THREE.Mesh(chestGeo, chestMat);
-  chestMesh.position.set(0, 0.34, 0.2);
-  group.add(chestMesh);
-
-  const armGeo = new THREE.BoxGeometry(0.08, 0.2, 0.08);
-  const armMat = new THREE.MeshStandardMaterial({
-    color: 0xdfe3ff,
-    roughness: 0.35,
-    metalness: 0.2,
-  });
-  const leftArm = new THREE.Mesh(armGeo, armMat);
-  leftArm.position.set(-0.29, 0.32, 0.08);
-  group.add(leftArm);
-
-  const rightArm = new THREE.Mesh(armGeo, armMat);
-  rightArm.position.set(0.29, 0.32, 0.08);
-  group.add(rightArm);
-
-  const headGroup = new THREE.Group();
-  headGroup.position.set(0, 0.77, 0);
-
-  const headGeo = new THREE.BoxGeometry(0.56, 0.42, 0.42);
-  const headMat = new THREE.MeshStandardMaterial({
-    color: 0xeef0ff,
-    roughness: 0.35,
-    metalness: 0.2,
-  });
-  const headMesh = new THREE.Mesh(headGeo, headMat);
-  headMesh.position.set(0, 0, 0);
-  headGroup.add(headMesh);
-
-  const visorGeo = new THREE.BoxGeometry(0.44, 0.2, 0.04);
-  const visorMat = new THREE.MeshBasicMaterial({ color: 0x14122b });
-  const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-  visorMesh.position.set(0, 0, 0.22);
-  headGroup.add(visorMesh);
-
-  const eyeGeo = new THREE.BoxGeometry(0.08, 0.08, 0.02);
-  const eyeMat = new THREE.MeshBasicMaterial({ color: agentHex });
-  const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-  leftEye.position.set(-0.11, 0, 0.24);
-  headGroup.add(leftEye);
-  const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
-  rightEye.position.set(0.11, 0, 0.24);
-  headGroup.add(rightEye);
-
-  const antennaGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.18);
-  const antMat = new THREE.MeshBasicMaterial({ color: 0xeef0ff });
-  const antennaMesh = new THREE.Mesh(antennaGeo, antMat);
-  antennaMesh.position.set(0, 0.3, 0);
-  headGroup.add(antennaMesh);
-
-  const tipGeo = new THREE.SphereGeometry(0.07, 12, 12);
-  const statusHex = status === "working" ? 0x2ee6a8 : status === "review" ? 0xf5a623 : 0x4a4875;
-  const statusLightMat = new THREE.MeshStandardMaterial({
-    color: statusHex,
-    emissive: statusHex,
-    emissiveIntensity: 1.2,
-    roughness: 0.2,
-  });
-  const statusLightMesh = new THREE.Mesh(tipGeo, statusLightMat);
-  statusLightMesh.position.set(0, 0.43, 0);
-  headGroup.add(statusLightMesh);
-
-  group.add(headGroup);
-
-  // Balon ucapan
-  const bubbleDiv = document.createElement("div");
-  bubbleDiv.className = "atlas-speech-bubble";
-  bubbleDiv.setAttribute("aria-hidden", "true");
-  const bubbleObj = new CSS2DObject(bubbleDiv);
-  bubbleObj.position.set(0, 2.05, 0);
-  group.add(bubbleObj);
-
-  // Hitbox
-  const robotHitGeo = new THREE.BoxGeometry(0.85, 1.25, 0.85);
-  const hitMat = new THREE.MeshBasicMaterial({ visible: false });
-  const hitMesh = new THREE.Mesh(robotHitGeo, hitMat);
-  hitMesh.position.set(0, 0.62, 0);
-  hitMesh.userData = { type: "agent_instance", id: config.instanceId };
-  group.add(hitMesh);
-
-  // Label CSS2D dengan tanda (demo)
-  const labelDiv = document.createElement("div");
-  labelDiv.className = `agent-tag3d is-instance st-${status}`;
-  labelDiv.style.setProperty("--c", agentColor);
-  labelDiv.setAttribute("role", "button");
-  labelDiv.setAttribute("tabindex", "0");
-  labelDiv.setAttribute("aria-label", `${config.label}, ${config.role}`);
-
-  const dotSpan = document.createElement("span");
-  dotSpan.className = `agent-dot3d st-${status}`;
-  labelDiv.appendChild(dotSpan);
-
-  const nameSpan = document.createElement("span");
-  nameSpan.className = "agent-name3d";
-  nameSpan.textContent = config.label;
-  labelDiv.appendChild(nameSpan);
-
-  if (config.onClick) {
-    labelDiv.addEventListener("click", (e) => {
-      e.stopPropagation();
-      config.onClick?.();
-    });
+  let dept = config.department;
+  if (!dept) {
+    if (config.instanceId.includes("ads") || config.instanceId.includes("iklan")) dept = "advertiser";
+    else if (config.instanceId.includes("hr")) dept = "hr";
+    else if (config.instanceId.includes("ops")) dept = "operasional";
+    else if (config.instanceId.includes("sosmed")) dept = "sosmed";
+    else if (config.instanceId.includes("creative")) dept = "creative";
+    else if (config.instanceId.includes("copy")) dept = "copy";
+    else if (config.instanceId.includes("lp") || config.instanceId.includes("landing")) dept = "landing_page";
+    else if (config.instanceId.includes("riset")) dept = "riset";
+    else dept = "advertiser";
   }
 
-  const labelObj = new CSS2DObject(labelDiv);
-  labelObj.position.set(0, 1.48, 0);
-  group.add(labelObj);
+  const voxelHuman = createVoxelHuman({
+    name: config.label,
+    department: dept,
+    role: config.role,
+    color: config.color,
+    initialPos: config.initialPos,
+    status: config.status,
+    onClick: config.onClick,
+    isInstance: true,
+  });
 
-  group.position.set(config.initialPos.x, config.initialPos.y, config.initialPos.z);
-
-  const targetPos = new THREE.Vector3(
-    config.initialPos.x,
-    config.initialPos.y,
-    config.initialPos.z
-  );
-
-  const dispose = () => {
-    shadowGeo.dispose();
-    shadowMat.dispose();
-    bodyGeo.dispose();
-    bodyMat.dispose();
-    chestGeo.dispose();
-    chestMat.dispose();
-    armGeo.dispose();
-    armMat.dispose();
-    headGeo.dispose();
-    headMat.dispose();
-    visorGeo.dispose();
-    visorMat.dispose();
-    eyeGeo.dispose();
-    eyeMat.dispose();
-    antennaGeo.dispose();
-    antMat.dispose();
-    tipGeo.dispose();
-    statusLightMat.dispose();
-    robotHitGeo.dispose();
-    hitMat.dispose();
-
-    if (labelDiv.parentNode) {
-      labelDiv.parentNode.removeChild(labelDiv);
-    }
-    if (bubbleDiv.parentNode) {
-      bubbleDiv.parentNode.removeChild(bubbleDiv);
-    }
-  };
+  voxelHuman.group.name = config.instanceId;
 
   return {
-    group,
-    bodyMesh,
-    headGroup,
-    headMesh,
-    leftArm,
-    rightArm,
-    statusLightMesh,
-    statusLightMat,
-    hitMesh,
-    labelObj,
-    labelDiv,
-    dotSpan,
-    bubbleDiv,
-    targetPos,
-    dispose,
+    id: config.instanceId,
+    group: voxelHuman.group,
+    bodyMesh: voxelHuman.bodyMesh,
+    headGroup: voxelHuman.headGroup,
+    headMesh: voxelHuman.headMesh,
+    leftArm: voxelHuman.leftArm,
+    rightArm: voxelHuman.rightArm,
+    leftLeg: voxelHuman.leftLeg,
+    rightLeg: voxelHuman.rightLeg,
+    statusLightMesh: voxelHuman.statusLightMesh,
+    statusLightMat: voxelHuman.statusLightMat,
+    hitMesh: voxelHuman.hitMesh,
+    labelObj: voxelHuman.labelObj,
+    labelDiv: voxelHuman.labelDiv,
+    dotSpan: voxelHuman.dotSpan,
+    bubbleDiv: voxelHuman.bubbleDiv,
+    targetPos: new THREE.Vector3(config.initialPos.x, config.initialPos.y, config.initialPos.z),
+    appearance: voxelHuman.appearance,
+    characterType: voxelHuman.characterType,
+    dispose: voxelHuman.dispose,
   };
 }

@@ -199,6 +199,9 @@ export const AGENTS: Record<string, AgentConfig> = {
   },
 };
 
+// Titik kedatangan agen baru di ruang HR (dinding barat dekat bay_hr)
+export const HR_PORTAL_POS = [1.0, 22.5] as const;
+
 // Posisi meja rumah (Home Desks) 19 agent
 // Koordinat absolut dunia (x, z) di dalam ruangan masing-masing
 function computeHomePositions(): Record<string, [number, number]> {

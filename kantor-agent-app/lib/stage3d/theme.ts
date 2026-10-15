@@ -291,7 +291,105 @@ export const THEME = {
     paper: "#ffffff",
   },
 
-  // Karakter Agen 3D
+  // Karakter Agen 3D Manusia Voxel
+  characters: {
+    // 3 Variasi Warna Kulit (Fair/Light, Warm/Tan, Deep/Dark)
+    skin: [
+      "#ffd1b3", // Light / Fair
+      "#dfa674", // Warm / Medium Tan
+      "#8d5524", // Deep / Rich Brown
+    ],
+    // 4 Variasi Warna Rambut
+    hair: [
+      "#1e293b", // Slate Black
+      "#5c3d2e", // Deep Espresso Brown
+      "#8b4513", // Auburn / Chestnut
+      "#c69255", // Honey Blonde
+    ],
+    eyes: "#1e293b",
+    mouth: "#c2410c",
+    shoes: "#1e293b",
+    leadBadge: {
+      star: "#ffd700",
+      starGlow: "#ffb800",
+    },
+    // Identitas pakaian & aksesori per departemen
+    departments: {
+      manager: {
+        suit: "#7f1d1d",       // Jas merah tua
+        shirt: "#ffffff",      // Kemeja putih
+        tie: "#991b1b",        // Dasi merah marun
+        pants: "#1e293b",
+        headset: "#334155",    // Headset komunikasi
+        headsetMic: "#94a3b8",
+        clipboard: "#8a5a36",  // Papan klip kayu
+        clipboardPaper: "#f8fafc",
+      },
+      riset: {
+        labCoat: "#f8fafc",    // Jas lab putih bersih
+        innerShirt: "#0284c7", // Kemeja biru riset
+        pants: "#475569",
+        glassesFrame: "#0f172a", // Kacamata riset
+        glassesLens: "#38bdf8",
+        tabletBody: "#0f172a", // Tablet data riset
+        tabletScreen: "#38bdf8",
+      },
+      copy: {
+        hoodie: "#38bdf8",     // Hoodie biru langit
+        hoodiePocket: "#0284c7",
+        pants: "#334155",
+        pencilBody: "#facc15", // Pensil kuning di telinga
+        pencilTip: "#1e293b",
+      },
+      creative: {
+        shirt: "#7c3aed",      // Kaus ungu
+        apron: "#f1f5f9",      // Celemek kerja
+        apronPocket: "#cbd5e1",
+        beret: "#6d28d9",      // Topi baret ungu
+        pants: "#1e293b",
+      },
+      landing_page: {
+        shirt: "#10b981",      // Kemeja hijau
+        collar: "#047857",
+        pants: "#334155",
+        headphones: "#1e293b", // Headphone besar
+        headphonesBand: "#047857",
+      },
+      advertiser: {
+        shirt: "#ef4444",      // Kemeja merah
+        vest: "#1e293b",       // Rompi gelap
+        pants: "#334155",
+        earpiece: "#94a3b8",   // Earpiece
+      },
+      hr: {
+        blazer: "#c026d3",     // Blazer magenta
+        blazerLapel: "#a21caf",
+        innerShirt: "#fdf4ff",
+        lanyard: "#f0abfc",    // Lanyard ungu pastel
+        nameTag: "#ffffff",    // Name tag identitas
+        pants: "#4a044e",
+      },
+      operasional: {
+        vest: "#f97316",       // Rompi oranye safety
+        vestReflective: "#fef08a", // Strip reflektif kuning
+        shirt: "#334155",
+        helmet: "#eab308",     // Helm keselamatan kuning/oranye
+        belt: "#451a03",       // Sabuk alat
+        beltTools: "#94a3b8",  // Perkakas di sabuk
+        pants: "#1e293b",
+      },
+      sosmed: {
+        jacket: "#ea580c",     // Jaket oranye
+        jacketZip: "#ffffff",
+        innerShirt: "#ffffff",
+        pants: "#334155",
+        phoneBody: "#0f172a",  // Smartphone di tangan
+        phoneScreen: "#38bdf8",
+      },
+    },
+  },
+
+  // Pengaturan umum karakter
   character: {
     bodyRoughness: 0.45,
     bodyMetalness: 0.15,

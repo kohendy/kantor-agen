@@ -63,6 +63,16 @@ export function getRoomAtPosition(worldX: number, worldZ: number): string | null
       return r.id;
     }
   }
+  for (const b of FLOORPLAN.bays) {
+    if (
+      worldX >= b.x - 0.05 &&
+      worldX <= b.x + b.w + 0.05 &&
+      worldZ >= b.z - 0.05 &&
+      worldZ <= b.z + b.d + 0.05
+    ) {
+      return b.roomId;
+    }
+  }
   return null;
 }
 
@@ -129,11 +139,15 @@ export function segmentIntersectsUnallowedRooms(
 
 // Generator graf otomatis dari Floorplan
 export function generateWalkwayGraph(
-  fp: FloorplanData = FLOORPLAN,
+  inputFp: FloorplanData | string[] = FLOORPLAN,
   homePosMap: Record<string, [number, number]> = HOME_POSITIONS,
   seatPosMap: Record<string, [number, number]> = SEAT_BY_AGENT,
-  obstacles: WalkObstacle[] = PROPS_OBSTACLES
+  obstacles: WalkObstacle[] = PROPS_OBSTACLES,
+  inputExpandedRooms: string[] = [],
+  dynamicDesks: Array<{ id: string; roomId: string; x: number; z: number }> = []
 ): Record<string, WaypointNode> {
+  const fp: FloorplanData = Array.isArray(inputFp) ? FLOORPLAN : inputFp;
+  const expandedRooms: string[] = Array.isArray(inputFp) ? inputFp : inputExpandedRooms;
   const nodes: Record<string, WaypointNode> = {};
 
   function addNode(node: WaypointNode) {
@@ -718,6 +732,146 @@ export function generateWalkwayGraph(
     }
   }
 
+  // 7. PORTAL KEDATANGAN AGENT DI RUANG HR
+  addNode({
+    id: "portal_hr",
+    x: 1.0,
+    z: 22.5,
+    roomId: "hr",
+    isAisle: true,
+    neighbors: [],
+  });
+  if (nodes["desk_HERA"]) {
+    addEdge("portal_hr", "desk_HERA");
+  }
+  const hrDoors = fp.doors.filter((d) => d.roomId === "hr");
+  for (const hd of hrDoors) {
+    addEdge("portal_hr", `door_${hd.id}_in`);
+  }
+
+  // 8. EKSPANSI BAY PADA RUANGAN AKTIF (Data-driven: opening & interior bay)
+  for (const expRoomId of expandedRooms) {
+    const normRoomId = expRoomId === "ads" ? "advertiser" : expRoomId === "lp" ? "landing_page" : expRoomId;
+    const bay = fp.bays.find((b) => b.roomId === normRoomId);
+    const roomDef = fp.rooms.find((r) => r.id === normRoomId);
+    if (bay && roomDef) {
+      let baseOpenX = 0;
+      let baseOpenZ = 0;
+      const bayNodeX = +(bay.x + bay.w / 2).toFixed(3);
+      const bayNodeZ = +(bay.z + bay.d / 2).toFixed(3);
+
+      if (bay.side === "S") {
+        baseOpenX = +(bay.x + bay.w / 2).toFixed(3);
+        baseOpenZ = +(roomDef.z + roomDef.d).toFixed(3);
+      } else if (bay.side === "N") {
+        baseOpenX = +(bay.x + bay.w / 2).toFixed(3);
+        baseOpenZ = +(roomDef.z).toFixed(3);
+      } else if (bay.side === "W") {
+        baseOpenX = +(roomDef.x).toFixed(3);
+        baseOpenZ = +(bay.z + bay.d / 2).toFixed(3);
+      } else if (bay.side === "E") {
+        baseOpenX = +(roomDef.x + roomDef.w).toFixed(3);
+        baseOpenZ = +(bay.z + bay.d / 2).toFixed(3);
+      }
+
+      // Evaluasi kandidat posisi opening sepanjang sekat bay agar tidak terhalang obstacle interior
+      const candidates: { x: number; z: number }[] = [{ x: baseOpenX, z: baseOpenZ }];
+      if (bay.side === "S" || bay.side === "N") {
+        for (let offset = 0.5; offset < bay.w / 2; offset += 0.5) {
+          candidates.push({ x: +(baseOpenX + offset).toFixed(3), z: baseOpenZ });
+          candidates.push({ x: +(baseOpenX - offset).toFixed(3), z: baseOpenZ });
+        }
+      } else {
+        for (let offset = 0.5; offset < bay.d / 2; offset += 0.5) {
+          candidates.push({ x: baseOpenX, z: +(baseOpenZ + offset).toFixed(3) });
+          candidates.push({ x: baseOpenX, z: +(baseOpenZ - offset).toFixed(3) });
+        }
+      }
+
+      let openX = baseOpenX;
+      let openZ = baseOpenZ;
+      const interiorNodes = Object.values(nodes).filter(
+        (n) => n.roomId === normRoomId && !n.id.startsWith("opening_") && !n.id.startsWith("bay_interior_")
+      );
+
+      // Pilih kandidat dengan koneksi aisle terbanyak yang tidak memotong obstacle
+      let maxConns = 0;
+      for (const cand of candidates) {
+        let validConns = 0;
+        for (const inNode of interiorNodes) {
+          const dist = Math.hypot(cand.x - inNode.x, cand.z - inNode.z);
+          if (dist <= 6.0) {
+            let blocked = false;
+            for (const obs of obstacles) {
+              if (segmentIntersectsBox(cand, inNode, obs)) {
+                blocked = true;
+                break;
+              }
+            }
+            if (!blocked) validConns++;
+          }
+        }
+        if (validConns > maxConns) {
+          maxConns = validConns;
+          openX = cand.x;
+          openZ = cand.z;
+        }
+      }
+
+      const openId = `opening_${bay.id}`;
+      const bayId = `bay_interior_${bay.id}`;
+
+      addNode({ id: openId, x: openX, z: openZ, roomId: normRoomId, isAisle: true, neighbors: [] });
+      addNode({ id: bayId, x: bayNodeX, z: bayNodeZ, roomId: normRoomId, isAisle: true, neighbors: [] });
+      addEdge(openId, bayId);
+
+      // Hubungkan opening ke aisle atau meja terdekat di dalam ruangan
+      for (const inNode of interiorNodes) {
+        const dist = Math.hypot(openX - inNode.x, openZ - inNode.z);
+        if (dist <= 6.0) {
+          addEdge(openId, inNode.id);
+        }
+      }
+    }
+  }
+
+  // 9. MEJA DINAMIS INSTANCE
+  for (const desk of dynamicDesks) {
+    const deskNodeId = `desk_${desk.id}`;
+    addNode({
+      id: deskNodeId,
+      x: desk.x,
+      z: desk.z,
+      roomId: desk.roomId,
+      isDesk: true,
+      neighbors: [],
+    });
+
+    const roomNodes = Object.values(nodes).filter(
+      (n) => n.roomId === desk.roomId && n.id !== deskNodeId
+    );
+    let connected = 0;
+    for (const rn of roomNodes) {
+      const dist = Math.hypot(desk.x - rn.x, desk.z - rn.z);
+      if (dist <= 6.0) {
+        addEdge(deskNodeId, rn.id);
+        connected++;
+      }
+    }
+    if (connected === 0 && roomNodes.length > 0) {
+      let nearest = roomNodes[0];
+      let minDist = Infinity;
+      for (const rn of roomNodes) {
+        const d = Math.hypot(desk.x - rn.x, desk.z - rn.z);
+        if (d < minDist) {
+          minDist = d;
+          nearest = rn;
+        }
+      }
+      addEdge(deskNodeId, nearest.id);
+    }
+  }
+
   return nodes;
 }
 
@@ -849,6 +1003,9 @@ export function findPathNodes(
   }
 
   // Rekonstruksi jalur
+  if (dist[endNodeId] === Infinity) {
+    return [];
+  }
   const path: WaypointNode[] = [];
   let curr: string | null = endNodeId;
   while (curr) {
