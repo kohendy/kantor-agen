@@ -2156,6 +2156,8 @@ pre.json {
   .brief-modal-body {
     padding: 12px 14px;
   }
+}
+
 /* ==========================================================================
    KARTU PERSATUJUAN CEO (DEMO CLIENT-SIDE V1b) & TAG INSTANCE
    ========================================================================== */
@@ -2343,6 +2345,10 @@ pre.json {
   overflow: hidden !important;
 }
 
+.stage-card.is-shot-mode .stats {
+  display: none !important;
+}
+
 .stage-card.is-shot-mode .stage-map-area {
   flex: 1 1 100% !important;
   width: 1280px !important;
@@ -2351,11 +2357,25 @@ pre.json {
   max-height: 800px !important;
   min-width: 1280px !important;
   min-height: 800px !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
 }
 
 .stage-card.is-shot-mode canvas {
   width: 1280px !important;
   height: 800px !important;
+  display: block !important;
+}
+
+.stage-card.is-shot-mode .stage-3d-css-layer .agent-tag3d,
+.stage-card.is-shot-mode .stage-3d-css-layer .room-label,
+.stage-card.is-shot-mode .stage-3d-css-layer .agent-speech-bubble,
+.stage-card.is-shot-mode .stage-3d-css-layer .desk-prep-tag {
+  display: none !important;
+}
+
+.stage-card.is-shot-mode .stage-3d-css-layer .hr-queue-badge {
   display: block !important;
 }
 

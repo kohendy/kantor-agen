@@ -28,6 +28,7 @@ export interface ActorRecord {
   bubbleDiv?: HTMLDivElement;
   homePos: THREE.Vector3;
   targetPos: THREE.Vector3; // Referensi targetPos dari Agent3DRecord
+  isDynamic?: boolean;
   queue: Task[];
   currentTask: Task | null;
   currentTaskTimer: number; // Dalam detik
@@ -56,9 +57,11 @@ export class ChoreographyEngine {
     bubbleDiv?: HTMLDivElement;
     homePos: THREE.Vector3;
     targetPos: THREE.Vector3;
+    isDynamic?: boolean;
   }): void {
     this.actors.set(record.id, {
       ...record,
+      isDynamic: record.isDynamic ?? false,
       queue: [],
       currentTask: null,
       currentTaskTimer: 0,
@@ -288,7 +291,12 @@ export class ChoreographyEngine {
     for (const [name, actor] of this.actors.entries()) {
       const seatRel = seatByAgent[name];
       if (!seatRel) {
-        continue;
+        if (actor.isDynamic) {
+          continue;
+        }
+        throw new Error(
+          `[choreography] Kursi rapat tidak ditemukan untuk agen "${name}" di seatByAgent`
+        );
       }
       const targetSeatWorld = {
         x: meetingRoomPos.x + seatRel[0] + OFFSET_X,
@@ -336,6 +344,9 @@ export class ChoreographyEngine {
 
     let idx = 0;
     for (const [name, actor] of this.actors.entries()) {
+      if (actor.isDynamic) {
+        continue;
+      }
       const homeTarget = {
         x: actor.homePos.x,
         z: actor.homePos.z,

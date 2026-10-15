@@ -243,12 +243,12 @@ export class InstanceRequestManager {
         break;
       case "datang":
         this.emit({ type: "agent_spawn_and_walk", request: req });
+        this.emit({ type: "dept_head_return", request: req });
         break;
       case "duduk":
         this.emit({ type: "agent_seated", request: req });
         break;
       case "selesai":
-        this.emit({ type: "dept_head_return", request: req });
         this.emit({ type: "request_completed", request: req });
         this.activeRequestId = null;
         this.processNextInQueue();

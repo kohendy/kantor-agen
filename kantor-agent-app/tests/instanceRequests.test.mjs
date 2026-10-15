@@ -46,7 +46,8 @@ test("1. Skenario A (Riset): alur state lengkap tanpa persetujuan CEO", () => {
   simulatedTime += 2000;
   mgr.advance(req.id, "datang");
   assert.strictEqual(req.state, "datang");
-  assert.strictEqual(actions[actions.length - 1], "agent_spawn_and_walk");
+  assert(actions.includes("agent_spawn_and_walk"));
+  assert(actions.includes("dept_head_return"));
 
   // Agen duduk
   simulatedTime += 4000;

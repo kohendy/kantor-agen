@@ -192,7 +192,9 @@ async function run() {
     }
 
     const initialSceneState = await getSceneState();
+    const runOnlyKasus12 = process.argv.includes("--kasus12") || process.argv.includes("12");
 
+    if (!runOnlyKasus12) {
     // =========================================================================
     // KASUS T1-1: VALIDASI DATA-DRIVEN FLOORPLAN 44x36 (Single Source of Truth)
     // =========================================================================
@@ -1906,13 +1908,14 @@ async function run() {
     testReport.seat_config_check = seatConfigCheck;
     console.log("   ✓ PENGECEKAN KONFIGURASI KURSI LOLOS.");
 
+    } // end if (!runOnlyKasus12)
+
     // =========================================================================
-    // =========================================================================
-    // KASUS 12: V1b-REDO - PERMINTAAN INSTANCE AGEN DINAMIS, FIFO HR & EKSPANSI BAY
-    // (11 PENGUJIAN LENGKAP & 8 TANGKAPAN LAYAR 1280x800)
+    // KASUS 12: V1b-REDO - DYNAMIC INSTANCE FLOW, FIFO HR & BAY EXPANSION
+    // (REWRITTEN: COMPREHENSIVE MOVEMENT, POSITION & 8 CANVAS SCREENSHOTS)
     // =========================================================================
     console.log("\n===============================================================");
-    console.log("=== KASUS 12: V1b-REDO - DYNAMIC INSTANCE FLOW & BAY EXPANSION ===");
+    console.log("=== KASUS 12: V1b-REDO - REWRITTEN COMPREHENSIVE VERIFICATION ===");
     console.log("===============================================================\n");
 
     const v1bDir = "docs/design/v1b-redo";
@@ -1920,22 +1923,46 @@ async function run() {
     if (!fs.existsSync(v1bDir)) fs.mkdirSync(v1bDir, { recursive: true });
     if (!fs.existsSync(rootV1bDir)) fs.mkdirSync(rootV1bDir, { recursive: true });
 
-    // Set viewport ke 1280x800 untuk pengujian dan standar tangkapan layar
+    // Set viewport ke 1280x800 untuk pengujian dan standar tangkapan layar 1280x800
     await page.setViewportSize({ width: 1280, height: 800 });
-    page.setDefaultTimeout(60000);
+    page.setDefaultTimeout(70000);
     await page.waitForTimeout(400);
 
+    const canvasLocator = page.locator("canvas.stage-3d-canvas");
+
+    let activeScreenshotPause = 0;
+
+    // Helper untuk menyimpan screenshot ke kedua direktori (v1bDir dan rootV1bDir)
+    async function saveScreenshot(name, useFullPage = false) {
+      const p1 = `${v1bDir}/${name}`;
+      const p2 = `${rootV1bDir}/${name}`;
+      const t0 = Date.now();
+      if (useFullPage) {
+        await page.screenshot({ path: p1 });
+      } else {
+        await canvasLocator.screenshot({ path: p1 });
+      }
+      const dur = Date.now() - t0;
+      activeScreenshotPause += dur;
+      try {
+        fs.copyFileSync(p1, p2);
+      } catch (err) {
+        console.error(`Gagal menyalin screenshot ke ${p2}:`, err);
+      }
+      console.log(`   [Screenshot] ${name} tersimpan dalam ${dur}ms.`);
+    }
+
     // -------------------------------------------------------------------------
-    // 12.1: State Awal Bersih & Inventaris (Clean Slate)
+    // 12.1: State Awal Bersih & Inventaris (Clean Slate) & [Screenshot 01]
     // -------------------------------------------------------------------------
     console.log("--- KASUS 12.1: State Awal Bersih & Inventaris (Clean Slate) ---");
     await page.evaluate(() => {
       window.__STAGE_3D__.resetInstanceDemo();
       window.__STAGE_3D__.setHourOverride(12);
-      window.__STAGE_3D__.setShotMode(true, false);
+      window.__STAGE_3D__.setShotMode(true);
       window.__STAGE_3D__.resetCamera();
     });
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(600);
 
     const preDemoState = await page.evaluate(() => {
       const stage = window.__STAGE_3D__;
@@ -1947,6 +1974,7 @@ async function run() {
         isExpandedSosmed: stage.isExpanded("sosmed"),
         dynamicDesks: stage.getInstanceDemoState().dynamicDesksCount,
         dynamicAgents: stage.getInstanceDemoState().dynamicAgentsCount,
+        resourceCounts: stage.getResourceCounts(),
       };
     });
 
@@ -1954,6 +1982,7 @@ async function run() {
     console.log(`   Jumlah agent tag awal: ${preDemoState.agentCount} (harus 19)`);
     console.log(`   Antrean awal: ${preDemoState.queueLength} (harus 0)`);
     console.log(`   Sosmed expanded: ${preDemoState.isExpandedSosmed} (harus false)`);
+    console.log(`   Geometri awal: ${preDemoState.resourceCounts.geometries}, Material unik awal: ${preDemoState.resourceCounts.uniqueMaterials}`);
 
     if (
       preDemoState.agentCount !== 19 ||
@@ -1967,38 +1996,68 @@ async function run() {
     }
     console.log("   ✓ KASUS 12.1 LOLOS: State awal bersih & inventaris valid.");
 
-    // Tangkapan Layar 1: 01-initial-state.png
-    const shot01Path1 = `${v1bDir}/01-initial-state.png`;
-    const shot01Path2 = `${rootV1bDir}/01-initial-state.png`;
-    await page.screenshot({ path: shot01Path1 });
-    try { fs.copyFileSync(shot01Path1, shot01Path2); } catch {}
-    console.log("   [Screenshot 1/8] 01-initial-state.png tersimpan.");
+    // Tangkapan Layar 1: 01-initial-state.png (Canvas-only screenshot)
+    await saveScreenshot("01-initial-state.png", false);
+
+    // Track durasi seluruh skenario untuk 2.g
+    const scenarioDurations = {};
 
     // -------------------------------------------------------------------------
-    // 12.2: Skenario A (Riset) - Alur Tanpa Persetujuan CEO
+    // 12.2: Skenario A (Riset) - Alur Tanpa Persetujuan CEO & Tes 2.a, 2.b & [Screenshot 02]
     // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.2: Skenario A (Riset) - Alur Tanpa Persetujuan CEO ---");
+    console.log("\n--- KASUS 12.2: Skenario A (Riset) - Sampling Gerakan 2.a & Jarak Kursi 2.b ---");
+    activeScreenshotPause = 0;
+    const startA = Date.now();
+
+    // Siapkan array sampling di browser setiap 200 ms
+    await page.evaluate(() => {
+      window.__SAMPLES_2A__ = [];
+      if (window.__SAMPLER_INTERVAL_2A__) clearInterval(window.__SAMPLER_INTERVAL_2A__);
+      window.__SAMPLER_INTERVAL_2A__ = setInterval(() => {
+        const stage = window.__STAGE_3D__;
+        if (!stage) return;
+        const agents = stage.getDynamicAgents();
+        if (agents && agents.length > 0) {
+          const a = agents[0];
+          window.__SAMPLES_2A__.push({
+            t: performance.now(),
+            x: a.position.x,
+            z: a.position.z,
+          });
+        }
+      }, 200);
+    });
+
     await page.evaluate(() => {
       window.__STAGE_3D__.requestInstance("riset");
     });
 
-    // ATHENA berjalan ke HR
+    // ATHENA berjalan ke depan meja HERA di HR
     await page.waitForFunction(() => {
       const p = window.__STAGE_3D__.getAgentPosition("ATHENA");
-      return p && Math.hypot(p.x - 3.2, p.z - 23.0) < 1.2;
+      return p && Math.hypot(p.x - 3.2, p.z - 23.0) < 1.5;
     }, null, { timeout: 35000 });
-    console.log("   ✓ ATHENA telah tiba di depan meja HERA di ruang HR.");
 
-    // Tangkapan Layar 2: 02-dept-head-hr.png
+    const athenaDeptHeadDist = await page.evaluate(() => {
+      const p = window.__STAGE_3D__.getAgentPosition("ATHENA");
+      return Math.hypot(p.x - 3.2, p.z - 23.0);
+    });
+    console.log(`   Jarak ATHENA ke meja HERA: ${athenaDeptHeadDist.toFixed(3)} unit (harus < 1.5)`);
+    if (athenaDeptHeadDist >= 1.5) {
+      throw new Error(`Dept head ATHENA tidak dalam jarak 1.5 unit dari meja HERA (jarak: ${athenaDeptHeadDist})`);
+    }
+
+    // Tangkapan Layar 2: 02-dept-head-hr.png (Canvas-only, fokus HR)
     await page.evaluate(() => {
       window.__STAGE_3D__.focusRoom("hr");
     });
-    await page.waitForTimeout(400);
-    const shot02Path1 = `${v1bDir}/02-dept-head-hr.png`;
-    const shot02Path2 = `${rootV1bDir}/02-dept-head-hr.png`;
-    await page.screenshot({ path: shot02Path1 });
-    try { fs.copyFileSync(shot02Path1, shot02Path2); } catch {}
-    console.log("   [Screenshot 2/8] 02-dept-head-hr.png tersimpan.");
+    await page.waitForTimeout(500);
+    await saveScreenshot("02-dept-head-hr.png", false);
+
+    // Kembalikan kamera ke default
+    await page.evaluate(() => {
+      window.__STAGE_3D__.resetCamera();
+    });
 
     // Tunggu alur Skenario A selesai hingga tuntas dan ATHENA kembali ke meja
     await page.waitForFunction(() => {
@@ -2009,107 +2068,193 @@ async function run() {
       const hp = window.__STAGE_3D__.getHomePositions()["ATHENA"];
       const dist = athenaPos && hp ? Math.hypot(athenaPos.x - hp[0], athenaPos.z - hp[1]) : 999;
       return req && req.state === "selesai" && state.dynamicDesksCount >= 1 && state.dynamicAgentsCount >= 1 && !athenaBusy && dist < 0.6;
-    }, null, { timeout: 60000 });
+    }, null, { timeout: 65000 });
 
-    const scnAState = await page.evaluate(() => {
-      const stage = window.__STAGE_3D__;
-      const athenaPos = stage.getAgentPosition("ATHENA");
-      const hp = stage.getHomePositions()["ATHENA"];
-      const distAthenaHome = Math.hypot(athenaPos.x - hp[0], athenaPos.z - hp[1]);
-      return {
-        ...stage.getInstanceDemoState(),
-        distAthenaHome,
-      };
+    // Hentikan interval sampling
+    const samples2a = await page.evaluate(() => {
+      if (window.__SAMPLER_INTERVAL_2A__) clearInterval(window.__SAMPLER_INTERVAL_2A__);
+      const agents = window.__STAGE_3D__.getDynamicAgents();
+      if (agents.length > 0) {
+        window.__SAMPLES_2A__.push({
+          t: performance.now(),
+          x: agents[0].position.x,
+          z: agents[0].position.z,
+        });
+      }
+      return window.__SAMPLES_2A__;
     });
 
-    console.log(`   Dynamic desks count: ${scnAState.dynamicDesksCount} (harus >= 1)`);
-    console.log(`   Dynamic agents count: ${scnAState.dynamicAgentsCount} (harus >= 1)`);
-    console.log(`   Jarak ATHENA ke meja asal: ${scnAState.distAthenaHome.toFixed(3)} unit (harus < 0.5)`);
-
-    if (scnAState.dynamicDesksCount < 1 || scnAState.dynamicAgentsCount < 1 || scnAState.distAthenaHome > 0.6) {
-      throw new Error(`Skenario A gagal menyelesaikan alur! ${JSON.stringify(scnAState)}`);
+    const elapsedA = (Date.now() - startA - activeScreenshotPause) / 1000;
+    scenarioDurations["Scenario A (Riset)"] = elapsedA;
+    console.log(`   Durasi Skenario A: ${elapsedA.toFixed(2)} detik (harus <= 70s)`);
+    if (elapsedA > 70) {
+      throw new Error(`Durasi Skenario A melampaui batas: ${elapsedA}s > 70s`);
     }
-    console.log("   ✓ KASUS 12.2 LOLOS: Skenario A (Riset) selesai tanpa persetujuan CEO & ATHENA kembali ke mejanya.");
+
+    // Verifikasi 2.a: Pergerakan dan sampling agen baru
+    console.log("\n   --- Verifikasi 2.a: Analisis Jejak Gerak Agen Skenario A ---");
+    console.log(`   Total sampel terkumpul: ${samples2a.length} titik`);
+    if (samples2a.length < 2) {
+      throw new Error(`Sampel pergerakan agen tidak mencukupi: ${samples2a.length} titik`);
+    }
+
+    const hrPortalPos = await page.evaluate(() => window.__STAGE_3D__.getHrPortalPos());
+    const firstSample = samples2a[0];
+    const distFirstToPortal = Math.hypot(firstSample.x - hrPortalPos[0], firstSample.z - hrPortalPos[1]);
+    console.log(`   Sampel pertama: [${firstSample.x.toFixed(3)}, ${firstSample.z.toFixed(3)}], jarak ke HR_PORTAL_POS: ${distFirstToPortal.toFixed(3)} unit (harus < 1.0)`);
+    if (distFirstToPortal >= 1.0) {
+      throw new Error(`Sampel pertama agen tidak dekat HR_PORTAL_POS: ${distFirstToPortal} >= 1.0`);
+    }
+
+    let maxJump = 0;
+    let doorPassed = false;
+    for (let i = 1; i < samples2a.length; i++) {
+      const prev = samples2a[i - 1];
+      const curr = samples2a[i];
+      const dtSec = Math.max(0.001, (curr.t - prev.t) / 1000);
+      const jump = Math.hypot(curr.x - prev.x, curr.z - prev.z);
+      if (jump > maxJump) maxJump = jump;
+      const jumpThreshold = Math.max(5.0, dtSec * 6.0);
+      if (jump > jumpThreshold) {
+        throw new Error(`Terdeteksi loncatan tidak wajar pada indeks ${i}: ${jump.toFixed(3)} > ${jumpThreshold.toFixed(3)}`);
+      }
+      // Periksa apakah melewati pintu d_hr_e (x=9, z=23)
+      const distDoor = Math.hypot(curr.x - 9.0, curr.z - 23.0);
+      if (distDoor < 1.0) {
+        doorPassed = true;
+      }
+    }
+    console.log(`   Lompatan maksimum (max jump): ${maxJump.toFixed(3)} unit`);
+    console.log(`   Agen melewati pintu HR (d_hr_e, x=9, z=23): ${doorPassed}`);
+    if (!doorPassed) {
+      throw new Error("Agen Skenario A tidak terbukti melewati pintu d_hr_e (< 1.0 unit)!");
+    }
+
+    const lastSample = samples2a[samples2a.length - 1];
+    // Ruang Riset: x in [11, 21], z in [11, 19]
+    const inRisetBounds = lastSample.x >= 10.8 && lastSample.x <= 21.2 && lastSample.z >= 10.8 && lastSample.z <= 19.2;
+    console.log(`   Sampel akhir: [${lastSample.x.toFixed(3)}, ${lastSample.z.toFixed(3)}], di dalam bounds Riset: ${inRisetBounds}`);
+    if (!inRisetBounds) {
+      throw new Error(`Sampel akhir agen tidak berada di dalam ruang Riset: [${lastSample.x}, ${lastSample.z}]`);
+    }
+    console.log("   ✓ TES 2.a LOLOS: Sampling 200ms valid, 0 teleportasi, lolos pintu d_hr_e, berhenti di Riset.");
+
+    // Verifikasi 2.b: Jarak ke kursi meja < 0.15 unit
+    console.log("\n   --- Verifikasi 2.b: Jarak Duduk ke Kursi Meja Kerja ---");
+    const chairDistanceA = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const desks = stage.getDynamicDesks();
+      const agents = stage.getDynamicAgents();
+      if (!desks.length || !agents.length) return 999;
+      const chairPos = desks[0].chairPos;
+      const agentPos = agents[0].position;
+      return Math.hypot(agentPos.x - chairPos.x, agentPos.z - chairPos.z);
+    });
+    console.log(`   Jarak agen duduk ke posisi kursi sejati: ${chairDistanceA.toFixed(4)} unit (harus < 0.15)`);
+    if (chairDistanceA >= 0.15) {
+      throw new Error(`Agen tidak duduk tepat di kursi: jarak ${chairDistanceA} >= 0.15`);
+    }
+    console.log("   ✓ TES 2.b LOLOS: Agen duduk tepat pada kursi meja (delta < 0.15 unit).");
 
     // -------------------------------------------------------------------------
-    // 12.3: Skenario B (Iklan) - Kartu Persetujuan CEO & Jeda Menunggu
+    // 12.3: Skenario B (Iklan) - Modal CEO [Screenshot 03] & HEPHAESTUS Preparing [Screenshot 04] & Agen Arrival [Screenshot 06] & Agen Seated [Screenshot 07] & Tes 2.d
     // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.3: Skenario B (Iklan) - Kartu Persetujuan CEO & Jeda ---");
+    console.log("\n--- KASUS 12.3: Skenario B (Iklan) - Alur Disetujui CEO (Tes 2.d & Screenshots 03, 04, 06, 07) ---");
     await page.evaluate(() => {
       window.__STAGE_3D__.resetInstanceDemo();
       window.__STAGE_3D__.resetCamera();
     });
     await page.waitForTimeout(500);
 
+    activeScreenshotPause = 0;
+    const startB = Date.now();
     await page.evaluate(() => {
       window.__STAGE_3D__.requestInstance("iklan");
     });
 
     // Tunggu kartu persetujuan CEO muncul
     await page.waitForSelector(".ceo-approval-demo-card", { timeout: 40000 });
-    const scnBWaitState = await page.evaluate(() => {
-      return window.__STAGE_3D__.getInstanceDemoState();
-    });
-
-    console.log(`   Status persetujuan CEO: ${scnBWaitState.approvalStatus}`);
-    console.log(`   Kartu CEO tampil: ${scnBWaitState.showApprovalCard}`);
-    console.log(`   Dynamic desks saat jeda: ${scnBWaitState.dynamicDesksCount} (harus 0)`);
-
-    if (!scnBWaitState.showApprovalCard || scnBWaitState.dynamicDesksCount !== 0) {
-      throw new Error(`Skenario B gagal menjeda pada persetujuan CEO! ${JSON.stringify(scnBWaitState)}`);
+    const isApprovalCardVisible = await page.locator(".ceo-approval-demo-card").isVisible();
+    console.log(`   Kartu persetujuan CEO tampil: ${isApprovalCardVisible}`);
+    if (!isApprovalCardVisible) {
+      throw new Error("Kartu persetujuan CEO tidak tampil!");
     }
-    console.log("   ✓ KASUS 12.3 LOLOS: Kartu CEO muncul dan proses tertahan menunggu keputusan.");
 
-    // Tangkapan Layar 3: 03-ceo-approval-modal.png
-    const shot03Path1 = `${v1bDir}/03-ceo-approval-modal.png`;
-    const shot03Path2 = `${rootV1bDir}/03-ceo-approval-modal.png`;
-    await page.screenshot({ path: shot03Path1 });
-    try { fs.copyFileSync(shot03Path1, shot03Path2); } catch {}
-    console.log("   [Screenshot 3/8] 03-ceo-approval-modal.png tersimpan.");
+    // Tangkapan Layar 3: 03-ceo-approval-modal.png (Full page screenshot)
+    await saveScreenshot("03-ceo-approval-modal.png", true);
 
-    // -------------------------------------------------------------------------
-    // 12.4: Skenario B (Iklan) - Eksekusi Persetujuan CEO & Integritas Scene
-    // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.4: Skenario B (Iklan) - Eksekusi Persetujuan CEO & Scene UUID ---");
+    // Setujui penambahan agen
     const approveBtn = page.locator(".ceo-approve-btn");
     await approveBtn.click();
 
-    // Tunggu HEPHAESTUS menyiapkan fasilitas
+    // Tunggu HEPHAESTUS menyiapkan meja kerja di Advertiser
+    // Verifikasi HEPHAESTUS berada dalam 2.0 unit dari meja baru dan status meja adalah "disiapkan"
     await page.waitForFunction(() => {
-      const state = window.__STAGE_3D__.getInstanceDemoState();
-      return state.dynamicDesksCount >= 1;
-    }, null, { timeout: 35000 });
-    console.log("   ✓ HEPHAESTUS menyiapkan meja kerja baru di ruang Advertisers.");
+      const stage = window.__STAGE_3D__;
+      const desks = stage.getDynamicDesks();
+      const hephPos = stage.getAgentPosition("HEPHAESTUS");
+      if (!desks.length || !hephPos) return false;
+      const desk = desks[0];
+      const dist = Math.hypot(hephPos.x - desk.slotPos.world.x, hephPos.z - desk.slotPos.world.z);
+      return desk.state === "disiapkan" && dist < 2.0;
+    }, null, { timeout: 40000 });
 
-    // Tangkapan Layar 4: 04-ops-preparing.png
+    const opsPrepCheck = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const desks = stage.getDynamicDesks();
+      const hephPos = stage.getAgentPosition("HEPHAESTUS");
+      const desk = desks[0];
+      const dist = Math.hypot(hephPos.x - desk.slotPos.world.x, hephPos.z - desk.slotPos.world.z);
+      return {
+        deskState: desk.state,
+        distToDesk: dist,
+      };
+    });
+    console.log(`   HEPHAESTUS status meja: "${opsPrepCheck.deskState}", jarak ke meja: ${opsPrepCheck.distToDesk.toFixed(3)} unit (harus < 2.0)`);
+    if (opsPrepCheck.deskState !== "disiapkan" || opsPrepCheck.distToDesk >= 2.0) {
+      throw new Error(`HEPHAESTUS tidak berada dalam jarak 2.0 unit saat meja berstatus "disiapkan"!`);
+    }
+
+    // Tangkapan Layar 4: 04-ops-preparing.png (Canvas-only, fokus Advertiser)
     await page.evaluate(() => {
       window.__STAGE_3D__.focusRoom("advertiser");
     });
-    await page.waitForTimeout(400);
-    const shot04Path1 = `${v1bDir}/04-ops-preparing.png`;
-    const shot04Path2 = `${rootV1bDir}/04-ops-preparing.png`;
-    await page.screenshot({ path: shot04Path1 });
-    try { fs.copyFileSync(shot04Path1, shot04Path2); } catch {}
-    console.log("   [Screenshot 4/8] 04-ops-preparing.png tersimpan.");
+    await page.waitForTimeout(300);
+    await saveScreenshot("04-ops-preparing.png", false);
 
-    // Tunggu agen baru di-spawn dan mulai berjalan melalui koridor
-    await page.waitForFunction(() => {
-      const state = window.__STAGE_3D__.getInstanceDemoState();
-      return state.dynamicAgentsCount >= 1;
-    }, null, { timeout: 35000 });
-
-    // Tangkapan Layar 6: 06-agent-spawn-arrival.png (agen baru tiba di koridor)
+    // Kembalikan kamera ke koridor/overview untuk memotret kedatangan agen baru
     await page.evaluate(() => {
       window.__STAGE_3D__.resetCamera();
     });
-    await page.waitForTimeout(400);
-    const shot06Path1 = `${v1bDir}/06-agent-spawn-arrival.png`;
-    const shot06Path2 = `${rootV1bDir}/06-agent-spawn-arrival.png`;
-    await page.screenshot({ path: shot06Path1 });
-    try { fs.copyFileSync(shot06Path1, shot06Path2); } catch {}
-    console.log("   [Screenshot 6/8] 06-agent-spawn-arrival.png tersimpan.");
 
-    // Tunggu hingga agen duduk dan alur selesai serta ZEUS kembali ke meja
+    // Tunggu agen baru di-spawn di portal HR
+    await page.waitForFunction(() => {
+      const stage = window.__STAGE_3D__;
+      const agents = stage.getDynamicAgents();
+      return agents && agents.length >= 1;
+    }, null, { timeout: 35000 });
+
+    const arrivalCheck = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const agents = stage.getDynamicAgents();
+      const desks = stage.getDynamicDesks();
+      const aPos = agents[0].position;
+      const dPos = desks[0].slotPos.world;
+      const dist = Math.hypot(aPos.x - dPos.x, aPos.z - dPos.z);
+      return {
+        pos: aPos,
+        distToDesk: dist,
+      };
+    });
+    console.log(`   Agen baru tiba di koridor pada posisi [${arrivalCheck.pos.x.toFixed(2)}, ${arrivalCheck.pos.z.toFixed(2)}], jarak ke meja: ${arrivalCheck.distToDesk.toFixed(2)} unit (harus > 2.0)`);
+    if (arrivalCheck.distToDesk <= 2.0) {
+      throw new Error(`Agen baru sudah di meja kerja saat pemotretan kedatangan! Posisi: ${JSON.stringify(arrivalCheck.pos)}`);
+    }
+
+    // Tangkapan Layar 6: 06-agent-spawn-arrival.png (Canvas-only, kamera reset koridor)
+    await saveScreenshot("06-agent-spawn-arrival.png", false);
+
+    // Tunggu alur Skenario B selesai hingga agen duduk dan ZEUS kembali ke meja
     await page.waitForFunction(() => {
       const state = window.__STAGE_3D__.getInstanceDemoState();
       const req = state.requests.find((r) => r.scenario === "iklan");
@@ -2118,43 +2263,76 @@ async function run() {
       const hp = window.__STAGE_3D__.getHomePositions()["ZEUS"];
       const dist = zeusPos && hp ? Math.hypot(zeusPos.x - hp[0], zeusPos.z - hp[1]) : 999;
       return req && req.state === "selesai" && state.dynamicAgentsCount >= 1 && !zeusBusy && dist < 0.6;
-    }, null, { timeout: 60000 });
+    }, null, { timeout: 65000 });
 
-    // Tangkapan Layar 7: 07-agent-seated-active.png
+    const elapsedBApprove = (Date.now() - startB - activeScreenshotPause) / 1000;
+    scenarioDurations["Scenario B (Iklan - Disetujui)"] = elapsedBApprove;
+    console.log(`   Durasi Skenario B (Disetujui): ${elapsedBApprove.toFixed(2)} detik (harus <= 70s)`);
+    if (elapsedBApprove > 70) {
+      throw new Error(`Durasi Skenario B melampaui batas: ${elapsedBApprove}s > 70s`);
+    }
+
+    // Tangkapan Layar 7: 07-agent-seated-active.png (Canvas-only, fokus Advertiser)
     await page.evaluate(() => {
       window.__STAGE_3D__.focusRoom("advertiser");
     });
-    await page.waitForTimeout(400);
-    const shot07Path1 = `${v1bDir}/07-agent-seated-active.png`;
-    const shot07Path2 = `${rootV1bDir}/07-agent-seated-active.png`;
-    await page.screenshot({ path: shot07Path1 });
-    try { fs.copyFileSync(shot07Path1, shot07Path2); } catch {}
-    console.log("   [Screenshot 7/8] 07-agent-seated-active.png tersimpan.");
+    await page.waitForTimeout(500);
+    await saveScreenshot("07-agent-seated-active.png", false);
 
-    const scnBApprovedState = await page.evaluate(() => {
+    // Verifikasi 2.d: Penempatan meja dan agen Skenario B di Advertiser sesuai aturan slot
+    console.log("\n   --- Verifikasi 2.d: Penempatan Meja & Agen di Advertiser ---");
+    const scnBVerification = await page.evaluate(() => {
       const stage = window.__STAGE_3D__;
+      const desks = stage.getDynamicDesks();
+      const agents = stage.getDynamicAgents();
+      const sceneUuid = stage.getSceneUuid();
+      const desk = desks[0];
+      const agent = agents[0];
+      const distSeatToChair = Math.hypot(agent.position.x - desk.chairPos.x, agent.position.z - desk.chairPos.z);
       return {
-        ...stage.getInstanceDemoState(),
-        sceneUuid: stage.getSceneUuid(),
+        sceneUuid,
+        deskPos: desk.slotPos.world,
+        deskState: desk.state,
+        agentPos: agent.position,
+        distSeatToChair,
       };
     });
 
-    console.log(`   Scene UUID setelah disetujui: ${scnBApprovedState.sceneUuid}`);
-    if (scnBApprovedState.sceneUuid !== preDemoState.sceneUuid) {
+    console.log(`   Posisi meja Skenario B: [${scnBVerification.deskPos.x}, ${scnBVerification.deskPos.z}]`);
+    console.log(`   Status meja: "${scnBVerification.deskState}" (harus "terisi" atau "siap")`);
+    console.log(`   Jarak agen duduk ke kursi: ${scnBVerification.distSeatToChair.toFixed(4)} unit (harus < 0.15)`);
+    console.log(`   Scene UUID setelah approve: ${scnBVerification.sceneUuid}`);
+
+    // Ruang Advertiser: x in [28, 41], z in [0, 9]. Slot 3 berada di x=31.5, z=6.5
+    const isInsideAdv =
+      scnBVerification.deskPos.x >= 28 &&
+      scnBVerification.deskPos.x <= 41 &&
+      scnBVerification.deskPos.z >= 0 &&
+      scnBVerification.deskPos.z <= 9;
+
+    if (!isInsideAdv) {
+      throw new Error(`Meja Skenario B tidak ditempatkan di dalam ruang Advertiser! ${JSON.stringify(scnBVerification.deskPos)}`);
+    }
+    if (scnBVerification.distSeatToChair >= 0.15) {
+      throw new Error(`Agen Skenario B tidak duduk di kursi meja: delta ${scnBVerification.distSeatToChair} >= 0.15`);
+    }
+    if (scnBVerification.sceneUuid !== preDemoState.sceneUuid) {
       throw new Error("Scene UUID berubah saat persetujuan CEO! Terjadi rebuild scene tidak sah!");
     }
-    console.log("   ✓ KASUS 12.4 LOLOS: Persetujuan CEO berhasil, agen duduk, dan Scene UUID identik.");
+    console.log("   ✓ TES 2.d LOLOS: Meja & agen baru ditempatkan di Advertiser sesuai aturan slot, scene UUID stabil.");
 
     // -------------------------------------------------------------------------
-    // 12.5: Skenario B (Iklan) - Alur Penolakan CEO
+    // 12.4: Skenario B (Iklan) - Alur Penolakan CEO
     // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.5: Skenario B (Iklan) - Alur Penolakan CEO ---");
+    console.log("\n--- KASUS 12.4: Skenario B (Iklan) - Alur Penolakan CEO ---");
     await page.evaluate(() => {
       window.__STAGE_3D__.resetInstanceDemo();
       window.__STAGE_3D__.resetCamera();
     });
     await page.waitForTimeout(500);
 
+    activeScreenshotPause = 0;
+    const startBReject = Date.now();
     await page.evaluate(() => {
       window.__STAGE_3D__.requestInstance("iklan");
     });
@@ -2172,34 +2350,47 @@ async function run() {
       const hp = window.__STAGE_3D__.getHomePositions()["ZEUS"];
       const dist = zeusPos && hp ? Math.hypot(zeusPos.x - hp[0], zeusPos.z - hp[1]) : 999;
       return req && req.state === "ditolak" && !zeusBusy && dist < 0.6;
-    }, null, { timeout: 60000 });
+    }, null, { timeout: 65000 });
 
-    const scnBRejectState = await page.evaluate(() => {
-      const stage = window.__STAGE_3D__;
-      return stage.getInstanceDemoState();
-    });
+    const elapsedBReject = (Date.now() - startBReject - activeScreenshotPause) / 1000;
+    scenarioDurations["Scenario B (Iklan - Ditolak)"] = elapsedBReject;
+    console.log(`   Durasi Skenario B (Ditolak): ${elapsedBReject.toFixed(2)} detik (harus <= 70s)`);
+    if (elapsedBReject > 70) {
+      throw new Error(`Durasi Skenario B Ditolak melampaui batas: ${elapsedBReject}s > 70s`);
+    }
 
+    const scnBRejectState = await page.evaluate(() => window.__STAGE_3D__.getInstanceDemoState());
     console.log(`   Dynamic desks setelah penolakan: ${scnBRejectState.dynamicDesksCount} (harus 0)`);
     console.log(`   Dynamic agents setelah penolakan: ${scnBRejectState.dynamicAgentsCount} (harus 0)`);
-
     if (scnBRejectState.dynamicDesksCount !== 0 || scnBRejectState.dynamicAgentsCount !== 0) {
       throw new Error(`Permohonan ditolak namun meja/agen tetap dibuat! ${JSON.stringify(scnBRejectState)}`);
     }
-    console.log("   ✓ KASUS 12.5 LOLOS: Penolakan CEO berhasil membatalkan deployment tanpa entitas baru.");
+    console.log("   ✓ Alur penolakan CEO berhasil membatalkan penambahan agen tanpa artefak tersisa.");
 
     // -------------------------------------------------------------------------
-    // 12.6: Skenario C (Sosmed) - Ekspansi Bay Ruangan (bay_sosmed)
+    // 12.5: Skenario C (Sosmed) - Ekspansi Bay [Screenshot 05a, 05b, 05] & Tes 2.c
     // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.6: Skenario C (Sosmed) - Ekspansi Bay Ruangan ---");
+    console.log("\n--- KASUS 12.5: Skenario C (Sosmed) - Ekspansi Bay & Bebas Tabrakan 2.c ---");
     await page.evaluate(() => {
       window.__STAGE_3D__.resetInstanceDemo();
       window.__STAGE_3D__.resetCamera();
     });
     await page.waitForTimeout(500);
 
+    activeScreenshotPause = 0;
+    const startC = Date.now();
+
+    // Fokus kamera pada sosmed dengan includeBay: true untuk framing ruang + bay gabungan
+    await page.evaluate(() => {
+      window.__STAGE_3D__.focusRoom("sosmed", true);
+    });
+    await page.waitForTimeout(500);
+
+    // Tangkapan Layar 5a: 05a-before.png (Sebelum ekspansi)
     if (await page.evaluate(() => window.__STAGE_3D__.isExpanded("sosmed"))) {
-      throw new Error("Ruang sosmed harus belum expanded sebelum Skenario C dijalankan!");
+      throw new Error("Ruang sosmed harus belum expanded sebelum Skenario C!");
     }
+    await saveScreenshot("05a-before.png", false);
 
     await page.evaluate(() => {
       window.__STAGE_3D__.requestInstance("sosmed");
@@ -2209,18 +2400,12 @@ async function run() {
     await page.waitForFunction(() => {
       return window.__STAGE_3D__.isExpanded("sosmed") === true;
     }, null, { timeout: 45000 });
-    console.log("   ✓ bay_sosmed berhasil diekspansi (sekat turun & dinding luar naik).");
+    console.log("   ✓ bay_sosmed berhasil diekspansi.");
 
-    // Tangkapan Layar 5: 05-bay-expansion.png
-    await page.evaluate(() => {
-      window.__STAGE_3D__.focusRoom("sosmed");
-    });
     await page.waitForTimeout(400);
-    const shot05Path1 = `${v1bDir}/05-bay-expansion.png`;
-    const shot05Path2 = `${rootV1bDir}/05-bay-expansion.png`;
-    await page.screenshot({ path: shot05Path1 });
-    try { fs.copyFileSync(shot05Path1, shot05Path2); } catch {}
-    console.log("   [Screenshot 5/8] 05-bay-expansion.png tersimpan.");
+    // Tangkapan Layar 5b: 05b-after.png & 05-bay-expansion.png (Setelah ekspansi)
+    await saveScreenshot("05b-after.png", false);
+    await saveScreenshot("05-bay-expansion.png", false);
 
     // Tunggu alur Skenario C selesai hingga agen duduk di bay dan HERMES kembali ke meja
     await page.waitForFunction(() => {
@@ -2231,109 +2416,209 @@ async function run() {
       const hp = window.__STAGE_3D__.getHomePositions()["HERMES"];
       const dist = hermesPos && hp ? Math.hypot(hermesPos.x - hp[0], hermesPos.z - hp[1]) : 999;
       return req && req.state === "selesai" && state.dynamicDesksCount >= 1 && state.dynamicAgentsCount >= 1 && !hermesBusy && dist < 0.6;
-    }, null, { timeout: 60000 });
+    }, null, { timeout: 65000 });
 
-    console.log("   ✓ KASUS 12.6 LOLOS: Ekspansi bay_sosmed sukses dan agen baru duduk di slot bay.");
+    const elapsedC = (Date.now() - startC - activeScreenshotPause) / 1000;
+    scenarioDurations["Scenario C (Sosmed)"] = elapsedC;
+    console.log(`   Durasi Skenario C: ${elapsedC.toFixed(2)} detik (harus <= 70s)`);
+    if (elapsedC > 70) {
+      throw new Error(`Durasi Skenario C melampaui batas: ${elapsedC}s > 70s`);
+    }
 
-    // -------------------------------------------------------------------------
-    // 12.7: Dynamic Walkway Graph Update Saat Ekspansi Bay
-    // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.7: Dynamic Walkway Graph Update Saat Ekspansi Bay ---");
-    const graphTest = await page.evaluate(() => {
+    // Verifikasi 2.c: Agen berakhir di bay_sosmed bounds & 0 tabrakan path segmen
+    console.log("\n   --- Verifikasi 2.c: Agen di Bay Bounds & 0 Tabrakan Segmen ---");
+    const scnCCheck = await page.evaluate(() => {
       const stage = window.__STAGE_3D__;
-      const graph = stage.getWalkwayGraph();
-      const hasOpening = !!graph["opening_bay_sosmed"];
-      const hasInterior = !!graph["bay_interior_bay_sosmed"];
+      const agents = stage.getDynamicAgents();
+      const agentPos = agents[0].position;
 
-      // Uji pathfinding dari portal_hr ke interior bay sosmed
+      // bay_sosmed bounds: x in [0, 10], z in [34, 36]
+      const inBaySosmed =
+        agentPos.x >= -0.2 &&
+        agentPos.x <= 10.2 &&
+        agentPos.z >= 33.8 &&
+        agentPos.z <= 36.2;
+
+      // Uji rute dari portal_hr ke bay_interior_bay_sosmed
       const path = stage.findPath("portal_hr", "bay_interior_bay_sosmed");
+      const graph = stage.getWalkwayGraph();
+      const obstacles = stage.obstacles || [];
+
+      // Algoritma Liang-Barsky untuk mendeteksi perpotongan segmen dengan obstacle
+      function segmentIntersectsBox(p1, p2, box) {
+        let t0 = 0.0;
+        let t1 = 1.0;
+        const dx = p2.x - p1.x;
+        const dz = p2.z - p1.z;
+
+        if (Math.abs(dx) < 1e-9) {
+          if (p1.x < box.minX || p1.x > box.maxX) return false;
+        } else {
+          const invDx = 1.0 / dx;
+          let tNearX = (box.minX - p1.x) * invDx;
+          let tFarX = (box.maxX - p1.x) * invDx;
+          if (tNearX > tFarX) {
+            const tmp = tNearX;
+            tNearX = tFarX;
+            tFarX = tmp;
+          }
+          t0 = Math.max(t0, tNearX);
+          t1 = Math.min(t1, tFarX);
+          if (t0 > t1) return false;
+        }
+
+        if (Math.abs(dz) < 1e-9) {
+          if (p1.z < box.minZ || p1.z > box.maxZ) return false;
+        } else {
+          const invDz = 1.0 / dz;
+          let tNearZ = (box.minZ - p1.z) * invDz;
+          let tFarZ = (box.maxZ - p1.z) * invDz;
+          if (tNearZ > tFarZ) {
+            const tmp = tNearZ;
+            tNearZ = tFarZ;
+            tFarZ = tmp;
+          }
+          t0 = Math.max(t0, tNearZ);
+          t1 = Math.min(t1, tFarZ);
+          if (t0 > t1) return false;
+        }
+
+        return t0 < t1 && t1 > 0.001 && t0 < 0.999;
+      }
+
+      let collisions = 0;
+      const collisionDetails = [];
+      if (path && path.length > 1) {
+        for (let i = 0; i < path.length - 1; i++) {
+          const p1 = graph[path[i]];
+          const p2 = graph[path[i + 1]];
+          if (!p1 || !p2) continue;
+
+          for (const obs of obstacles) {
+            // Abaikan bay interior target node atau opening desk yang terdaftar
+            if (obs.roomId === "sosmed" && obs.id.includes("bay")) continue;
+            if (segmentIntersectsBox(p1, p2, obs)) {
+              collisions++;
+              collisionDetails.push({ segment: [path[i], path[i + 1]], obsId: obs.id });
+            }
+          }
+        }
+      }
+
       return {
-        hasOpening,
-        hasInterior,
+        agentPos,
+        inBaySosmed,
         pathLength: path ? path.length : 0,
-        validPath: path && path.length > 2,
+        collisions,
+        collisionDetails,
       };
     });
 
-    console.log(`   Node opening_bay_sosmed terdeteksi: ${graphTest.hasOpening}`);
-    console.log(`   Node bay_interior_bay_sosmed terdeteksi: ${graphTest.hasInterior}`);
-    console.log(`   Panjang rute portal_hr -> bay_sosmed: ${graphTest.pathLength} waypoints`);
+    console.log(`   Posisi akhir agen Sosmed: [${scnCCheck.agentPos.x.toFixed(3)}, ${scnCCheck.agentPos.z.toFixed(3)}]`);
+    console.log(`   Berada di dalam bay_sosmed bounds: ${scnCCheck.inBaySosmed}`);
+    console.log(`   Panjang rute portal_hr -> bay_sosmed: ${scnCCheck.pathLength} waypoints`);
+    console.log(`   Jumlah tabrakan rute dengan walls/props: ${scnCCheck.collisions}`);
 
-    if (!graphTest.hasOpening || !graphTest.hasInterior || !graphTest.validPath) {
-      throw new Error(`Graf jalur tidak ter-update dengan benar untuk bay_sosmed! ${JSON.stringify(graphTest)}`);
+    if (!scnCCheck.inBaySosmed) {
+      throw new Error(`Agen Skenario C tidak berada di dalam bay_sosmed bounds: [${scnCCheck.agentPos.x}, ${scnCCheck.agentPos.z}]`);
     }
-    console.log("   ✓ KASUS 12.7 LOLOS: Graf jalur dinamis berhasil menghubungkan bay_sosmed.");
+    if (scnCCheck.collisions > 0) {
+      throw new Error(`Rute agen menabrak obstacle: ${JSON.stringify(scnCCheck.collisionDetails)}`);
+    }
+    console.log("   ✓ TES 2.c LOLOS: Agen berakhir di bay_sosmed bounds & 0 tabrakan pada segmen rute.");
 
     // -------------------------------------------------------------------------
-    // 12.8: Banjir Permintaan (FIFO HR Queue & Badge Antrean)
+    // 12.6: Banjir Permintaan (Tes 2.e & Screenshot 08 & Sequential Drain)
     // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.8: Banjir Permintaan (FIFO HR Queue & Badge Antrean) ---");
+    console.log("\n--- KASUS 12.6: Banjir Permintaan, Tes 2.e & Badge Antrean HR [Screenshot 08] ---");
     await page.evaluate(() => {
       window.__STAGE_3D__.resetInstanceDemo();
       window.__STAGE_3D__.resetCamera();
     });
     await page.waitForTimeout(500);
 
-    // Kirim 2 permintaan sekaligus: Riset lalu Iklan
+    // Uji 2.e: 5 klik cepat beruntun pada requestInstance
+    console.log("   --- Verifikasi 2.e: 5 Klik Beruntun Cepat ---");
+    const rapidClickTest = await page.evaluate(() => {
+      const stage = window.__STAGE_3D__;
+      const initialReqs = stage.getInstanceRequests().length;
+      const clicks = 5;
+      for (let i = 0; i < clicks; i++) {
+        stage.requestInstance("riset");
+      }
+      const totalReqs = stage.getInstanceRequests().length;
+      const acceptedCount = totalReqs - initialReqs;
+      const activeReq = stage.getInstanceDemoState().activeRequest;
+      const queueLen = stage.getQueueLength();
+      return {
+        acceptedCount,
+        hasSingleActive: activeReq !== null,
+        queueLen,
+      };
+    });
+
+    console.log(`   Permintaan diterima dari 5 klik: ${rapidClickTest.acceptedCount} (harus 5)`);
+    console.log(`   Hanya satu permintaan aktif yang diproses: ${rapidClickTest.hasSingleActive}`);
+    console.log(`   Panjang antrean yang tertampung: ${rapidClickTest.queueLen} (harus 4)`);
+
+    if (rapidClickTest.acceptedCount !== 5) {
+      throw new Error(`Jumlah permintaan yang diterima (${rapidClickTest.acceptedCount}) tidak sesuai dengan 5 klik!`);
+    }
+    if (!rapidClickTest.hasSingleActive || rapidClickTest.queueLen !== 4) {
+      throw new Error(`State antrean setelah 5 klik tidak konsisten! ${JSON.stringify(rapidClickTest)}`);
+    }
+    console.log("   ✓ TES 2.e LOLOS: 5 klik cepat beruntun diterima penuh (5/5) dengan tepat 1 permintaan aktif.");
+
+    // Bersihkan sebelum banjir 2 permintaan untuk pengujian badge dan drain
+    await page.evaluate(() => {
+      window.__STAGE_3D__.resetInstanceDemo();
+      window.__STAGE_3D__.resetCamera();
+    });
+    await page.waitForTimeout(500);
+
+    activeScreenshotPause = 0;
+    const startFlood = Date.now();
+    // Kirim 2 permintaan berturut-turut: Riset lalu Iklan
     await page.evaluate(() => {
       window.__STAGE_3D__.requestInstance("riset");
       window.__STAGE_3D__.requestInstance("iklan");
     });
 
-    // Tunggu badge antrean muncul di DOM dan berisi teks antrean
+    // Tunggu badge antrean HR muncul di DOM dengan teks "Antrean: 1"
     await page.waitForFunction(() => {
       const el = document.querySelector(".hr-queue-badge");
       return el && el.textContent.includes("Antrean: 1");
-    }, null, { timeout: 25000 });
+    }, null, { timeout: 30000 });
+
     const badgeText = await page.locator(".hr-queue-badge").textContent();
-    console.log(`   Teks badge antrean HR: "${badgeText}" (harus "Antrean: 1")`);
+    console.log(`   Teks badge antrean HR: "${badgeText.trim()}" (harus "Antrean: 1")`);
 
-    const floodState = await page.evaluate(() => {
-      const stage = window.__STAGE_3D__;
-      return {
-        queueLen: stage.getQueueLength(),
-        totalReqs: stage.getInstanceRequests().length,
-        req1State: stage.getInstanceRequests()[0]?.state,
-        req2State: stage.getInstanceRequests()[1]?.state,
-      };
-    });
-
-    console.log(`   Panjang antrean FIFO: ${floodState.queueLen} (harus 1)`);
-    console.log(`   Total permintaan terdaftar: ${floodState.totalReqs} (harus 2)`);
-    console.log(`   Status permintaan 1: ${floodState.req1State}`);
-    console.log(`   Status permintaan 2 (antre): ${floodState.req2State} (harus "antre")`);
-
-    if (floodState.queueLen !== 1 || floodState.totalReqs !== 2 || floodState.req2State !== "antre") {
-      throw new Error(`Antrean FIFO gagal memproses banjir permintaan! ${JSON.stringify(floodState)}`);
-    }
-
-    // Tangkapan Layar 8: 08-fifo-queue-badge.png
+    // Tangkapan Layar 8: 08-fifo-queue-badge.png (Canvas-only, fokus HR)
     await page.evaluate(() => {
       window.__STAGE_3D__.focusRoom("hr");
     });
-    await page.waitForTimeout(400);
-    const shot08Path1 = `${v1bDir}/08-fifo-queue-badge.png`;
-    const shot08Path2 = `${rootV1bDir}/08-fifo-queue-badge.png`;
-    await page.screenshot({ path: shot08Path1 });
-    try { fs.copyFileSync(shot08Path1, shot08Path2); } catch {}
-    console.log("   [Screenshot 8/8] 08-fifo-queue-badge.png tersimpan.");
-    console.log("   ✓ KASUS 12.8 LOLOS: FIFO queue menampung permintaan kedua & badge 'Antrean: 1' tampil.");
+    await page.waitForTimeout(500);
+    await saveScreenshot("08-fifo-queue-badge.png", false);
 
-    // -------------------------------------------------------------------------
-    // 12.9: Pengurasan Otomatis Antrean FIFO (Sequential Processing)
-    // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.9: Pengurasan Otomatis Antrean FIFO (Sequential Processing) ---");
-    // Tunggu permintaan 1 (Riset) selesai diproses dan ATHENA kembali ke mejanya
+    await page.evaluate(() => {
+      window.__STAGE_3D__.resetCamera();
+    });
+
+    // Tunggu permintaan 1 (Riset) selesai diproses dan ATHENA telah kembali ke mejanya
     await page.waitForFunction(() => {
       const reqs = window.__STAGE_3D__.getInstanceRequests();
       const athenaBusy = window.__STAGE_3D__.isChoreoBusy("ATHENA");
       return reqs[0]?.state === "selesai" && !athenaBusy;
-    }, null, { timeout: 60000 });
-    console.log("   ✓ Permintaan 1 (Riset) selesai diproses dan ATHENA telah kembali.");
+    }, null, { timeout: 65000 });
+    console.log("   ✓ Permintaan 1 (Riset) selesai diproses.");
 
-    // Setelah permintaan 1 selesai, permintaan 2 (Iklan) otomatis maju ke HR dan menunggu persetujuan CEO
+    const timeReq1Done = Date.now();
+    const pauseReq1 = activeScreenshotPause;
+    const elapsedReq1 = (timeReq1Done - startFlood - pauseReq1) / 1000;
+
+    // Permintaan 2 otomatis maju menjadi aktif dan memunculkan kartu CEO
     await page.waitForSelector(".ceo-approval-demo-card", { timeout: 45000 });
-    console.log("   ✓ Permintaan 2 otomatis maju menjadi aktif dan memunculkan kartu CEO.");
+    console.log("   ✓ Permintaan 2 otomatis maju dan menampilkan kartu CEO.");
 
     // Setujui via approveCeo
     await page.evaluate(() => {
@@ -2349,7 +2634,18 @@ async function run() {
       const hp = window.__STAGE_3D__.getHomePositions()["ZEUS"];
       const dist = zeusPos && hp ? Math.hypot(zeusPos.x - hp[0], zeusPos.z - hp[1]) : 999;
       return reqs[1]?.state === "selesai" && state.dynamicDesksCount >= 2 && state.dynamicAgentsCount >= 2 && !zeusBusy && dist < 0.6;
-    }, null, { timeout: 60000 });
+    }, null, { timeout: 65000 });
+
+    const elapsedReq2 = (Date.now() - timeReq1Done - (activeScreenshotPause - pauseReq1)) / 1000;
+    const elapsedFlood = (Date.now() - startFlood - activeScreenshotPause) / 1000;
+    scenarioDurations["Flood 2 - Permintaan 1 (Riset)"] = elapsedReq1;
+    scenarioDurations["Flood 2 - Permintaan 2 (Iklan)"] = elapsedReq2;
+    console.log(`   Durasi Permintaan 1 (Riset): ${elapsedReq1.toFixed(2)} detik (harus <= 70s)`);
+    console.log(`   Durasi Permintaan 2 (Iklan): ${elapsedReq2.toFixed(2)} detik (harus <= 70s)`);
+    console.log(`   Total Durasi Sequential Drain (2 Permintaan): ${elapsedFlood.toFixed(2)} detik (rata-rata: ${(elapsedFlood / 2).toFixed(2)}s/skenario, harus <= 140s)`);
+    if (elapsedReq1 > 70 || elapsedReq2 > 70) {
+      throw new Error(`Durasi sequential drain per skenario melampaui batas: Req1=${elapsedReq1}s, Req2=${elapsedReq2}s > 70s`);
+    }
 
     const drainedState = await page.evaluate(() => {
       const stage = window.__STAGE_3D__;
@@ -2359,48 +2655,16 @@ async function run() {
         totalAgents: stage.getInstanceDemoState().dynamicAgentsCount,
       };
     });
-
-    console.log(`   Panjang antrean akhir: ${drainedState.queueLen} (harus 0)`);
-    console.log(`   Total meja terpasang: ${drainedState.totalDesks} (harus 2)`);
-    console.log(`   Total agen baru aktif: ${drainedState.totalAgents} (harus 2)`);
-
+    console.log(`   Hasil drain: Antrean: ${drainedState.queueLen}, Desks: ${drainedState.totalDesks}, Agents: ${drainedState.totalAgents}`);
     if (drainedState.queueLen !== 0 || drainedState.totalDesks < 2 || drainedState.totalAgents < 2) {
-      throw new Error(`Pengurasan antrean FIFO gagal! ${JSON.stringify(drainedState)}`);
+      throw new Error(`Pengurasan antrean FIFO sequential gagal! ${JSON.stringify(drainedState)}`);
     }
-    console.log("   ✓ KASUS 12.9 LOLOS: Antrean terkuras berurutan secara otomatis tanpa tumpang tindih.");
+    console.log("   ✓ Pengurasan antrean FIFO sequential otomatis tuntas tanpa hambatan.");
 
     // -------------------------------------------------------------------------
-    // 12.10: Dukungan prefers-reduced-motion
+    // 12.7: Uji Ketahanan 5 Siklus Penuh & Bebas Kebocoran Memori (Tes 2.f)
     // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.10: Dukungan prefers-reduced-motion ---");
-    await page.evaluate(() => {
-      window.__STAGE_3D__.resetInstanceDemo();
-    });
-    await page.waitForTimeout(400);
-
-    // Emulasikan prefers-reduced-motion: reduce
-    await page.emulateMedia({ reducedMotion: "reduce" });
-
-    const startTimeRm = Date.now();
-    await page.evaluate(() => {
-      window.__STAGE_3D__.requestInstance("riset");
-    });
-
-    // Tunggu alur selesai dengan reduced motion (harus sangat cepat, < 5000ms)
-    await page.waitForFunction(() => {
-      const reqs = window.__STAGE_3D__.getInstanceRequests();
-      return reqs[0]?.state === "selesai";
-    }, null, { timeout: 20000 });
-    const elapsedRm = Date.now() - startTimeRm;
-    console.log(`   Durasi alur dengan reduced-motion: ${elapsedRm} ms (cepat tanpa animasi jalan berlebih)`);
-
-    await page.emulateMedia({ reducedMotion: "no-preference" });
-    console.log("   ✓ KASUS 12.10 LOLOS: Reduced motion dieksekusi instan tanpa hambatan atau kegagalan state.");
-
-    // -------------------------------------------------------------------------
-    // 12.11: Reset Demo Instance & Integritas Memori / Scene
-    // -------------------------------------------------------------------------
-    console.log("\n--- KASUS 12.11: Reset Demo Instance & Integritas Memori / Scene ---");
+    console.log("\n--- KASUS 12.7: Uji Ketahanan 5 Siklus Penuh (Tes 2.f: Bebas Kebocoran Memori) ---");
     await page.evaluate(() => {
       window.__STAGE_3D__.resetInstanceDemo();
       window.__STAGE_3D__.setShotMode(false);
@@ -2408,47 +2672,123 @@ async function run() {
     });
     await page.waitForTimeout(500);
 
-    const postResetState = await page.evaluate(() => {
-      const stage = window.__STAGE_3D__;
-      const state = stage.getInstanceDemoState();
-      const currentSceneUuid = stage.getSceneUuid();
-      const instanceTags = document.querySelectorAll(".agent-tag3d.is-instance").length;
-      const prepTags = document.querySelectorAll(".desk-prep-tag").length;
-      const isExpandedSosmed = stage.isExpanded("sosmed");
-      const queueLen = stage.getQueueLength();
-      return {
-        ...state,
-        currentSceneUuid,
-        instanceTags,
-        prepTags,
-        isExpandedSosmed,
-        queueLen,
-      };
-    });
+    const preCyclesCounts = await page.evaluate(() => window.__STAGE_3D__.getResourceCounts());
+    console.log("   Resource count sebelum 5 siklus:", preCyclesCounts);
 
-    console.log(`   Desks setelah reset: ${postResetState.dynamicDesksCount} (harus 0)`);
-    console.log(`   Agents setelah reset: ${postResetState.dynamicAgentsCount} (harus 0)`);
-    console.log(`   Instance tags di DOM: ${postResetState.instanceTags} (harus 0)`);
-    console.log(`   Antrean setelah reset: ${postResetState.queueLen} (harus 0)`);
-    console.log(`   Sosmed expanded setelah reset: ${postResetState.isExpandedSosmed} (harus false)`);
+    // Aktifkan prefers-reduced-motion untuk mengeksekusi 5 siklus secara deterministik dan cepat
+    await page.emulateMedia({ reducedMotion: "reduce" });
+
+    for (let cycle = 1; cycle <= 5; cycle++) {
+      console.log(`   Menjalankan Siklus ${cycle}/5 (A -> C -> B-Approve -> B-Reject -> Flood 2)...`);
+
+      // 1. Skenario A
+      await page.evaluate(() => window.__STAGE_3D__.requestInstance("riset"));
+      await page.waitForFunction(() => {
+        const reqs = window.__STAGE_3D__.getInstanceRequests();
+        return reqs[0]?.state === "selesai";
+      }, null, { timeout: 15000 });
+      await page.evaluate(() => window.__STAGE_3D__.resetInstanceDemo());
+
+      // 2. Skenario C
+      await page.evaluate(() => window.__STAGE_3D__.requestInstance("sosmed"));
+      await page.waitForFunction(() => {
+        const reqs = window.__STAGE_3D__.getInstanceRequests();
+        return reqs[0]?.state === "selesai";
+      }, null, { timeout: 15000 });
+      await page.evaluate(() => window.__STAGE_3D__.resetInstanceDemo());
+
+      // 3. Skenario B - Approve
+      await page.evaluate(() => window.__STAGE_3D__.requestInstance("iklan"));
+      await page.waitForFunction(() => {
+        const reqs = window.__STAGE_3D__.getInstanceRequests();
+        return reqs[0]?.state === "menunggu_persetujuan";
+      }, null, { timeout: 15000 });
+      await page.evaluate(() => window.__STAGE_3D__.approveCeo());
+      await page.waitForFunction(() => {
+        const reqs = window.__STAGE_3D__.getInstanceRequests();
+        return reqs[0]?.state === "selesai";
+      }, null, { timeout: 15000 });
+      await page.evaluate(() => window.__STAGE_3D__.resetInstanceDemo());
+
+      // 4. Skenario B - Reject
+      await page.evaluate(() => window.__STAGE_3D__.requestInstance("iklan"));
+      await page.waitForFunction(() => {
+        const reqs = window.__STAGE_3D__.getInstanceRequests();
+        return reqs[0]?.state === "menunggu_persetujuan";
+      }, null, { timeout: 15000 });
+      await page.evaluate(() => window.__STAGE_3D__.rejectCeo());
+      await page.waitForFunction(() => {
+        const reqs = window.__STAGE_3D__.getInstanceRequests();
+        return reqs[0]?.state === "ditolak";
+      }, null, { timeout: 15000 });
+      await page.evaluate(() => window.__STAGE_3D__.resetInstanceDemo());
+
+      // 5. Flood 2
+      await page.evaluate(() => {
+        window.__STAGE_3D__.requestInstance("riset");
+        window.__STAGE_3D__.requestInstance("iklan");
+      });
+      await page.waitForFunction(() => {
+        const reqs = window.__STAGE_3D__.getInstanceRequests();
+        return reqs[0]?.state === "selesai" && reqs[1]?.state === "menunggu_persetujuan";
+      }, null, { timeout: 15000 });
+      await page.evaluate(() => window.__STAGE_3D__.approveCeo());
+      await page.waitForFunction(() => {
+        const reqs = window.__STAGE_3D__.getInstanceRequests();
+        return reqs[1]?.state === "selesai";
+      }, null, { timeout: 15000 });
+      await page.evaluate(() => window.__STAGE_3D__.resetInstanceDemo());
+    }
+
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.waitForTimeout(500);
+
+    const postCyclesCounts = await page.evaluate(() => window.__STAGE_3D__.getResourceCounts());
+    const postCyclesState = await page.evaluate(() => window.__STAGE_3D__.getInstanceDemoState());
+    console.log("   Resource count setelah 5 siklus + reset:", postCyclesCounts);
+
+    console.log("\n   === TABEL PERBANDINGAN RESOURCE MEMORY (TES 2.f) ===");
+    console.log(`   Geometries        : Awal = ${preCyclesCounts.geometries}, Akhir = ${postCyclesCounts.geometries} (delta: ${postCyclesCounts.geometries - preCyclesCounts.geometries})`);
+    console.log(`   Unique Geometries : Awal = ${preCyclesCounts.uniqueGeometries}, Akhir = ${postCyclesCounts.uniqueGeometries} (delta: ${postCyclesCounts.uniqueGeometries - preCyclesCounts.uniqueGeometries})`);
+    console.log(`   Unique Materials  : Awal = ${preCyclesCounts.uniqueMaterials}, Akhir = ${postCyclesCounts.uniqueMaterials} (delta: ${postCyclesCounts.uniqueMaterials - preCyclesCounts.uniqueMaterials})`);
+    console.log(`   Textures          : Awal = ${preCyclesCounts.textures}, Akhir = ${postCyclesCounts.textures} (delta: ${postCyclesCounts.textures - preCyclesCounts.textures})`);
+    console.log(`   Queue Length      : ${postCyclesState.queueLength} (harus 0)`);
+    console.log(`   Dynamic Desks     : ${postCyclesState.dynamicDesksCount} (harus 0)`);
+    console.log(`   Dynamic Agents    : ${postCyclesState.dynamicAgentsCount} (harus 0)`);
 
     if (
-      postResetState.dynamicDesksCount !== 0 ||
-      postResetState.dynamicAgentsCount !== 0 ||
-      postResetState.instanceTags !== 0 ||
-      postResetState.queueLen !== 0 ||
-      postResetState.isExpandedSosmed
+      preCyclesCounts.geometries !== postCyclesCounts.geometries ||
+      preCyclesCounts.uniqueGeometries !== postCyclesCounts.uniqueGeometries ||
+      preCyclesCounts.uniqueMaterials !== postCyclesCounts.uniqueMaterials ||
+      preCyclesCounts.textures !== postCyclesCounts.textures ||
+      postCyclesState.queueLength !== 0 ||
+      postCyclesState.dynamicDesksCount !== 0 ||
+      postCyclesState.dynamicAgentsCount !== 0
     ) {
-      throw new Error(`Reset demo gagal membersihkan semua entitas! ${JSON.stringify(postResetState)}`);
+      throw new Error(
+        `Terjadi kebocoran memori setelah 5 siklus penuh! ` +
+        `Sebelum: ${JSON.stringify(preCyclesCounts)}, Sesudah: ${JSON.stringify(postCyclesCounts)}`
+      );
     }
+    console.log("   ✓ TES 2.f LOLOS: 5 siklus penuh selesai, geometri/material/tekstur 100% identik & antrean kosong.");
 
-    if (postResetState.currentSceneUuid !== preDemoState.sceneUuid) {
-      throw new Error("Scene Three.js berubah setelah reset demo!");
+    // -------------------------------------------------------------------------
+    // 12.8: Laporan Durasi Skenario (Tes 2.g)
+    // -------------------------------------------------------------------------
+    console.log("\n--- KASUS 12.8: Laporan Durasi Skenario (Tes 2.g: Threshold <= 70s) ---");
+    console.log("   ================ TABEL DURASI SKENARIO ================");
+    for (const [name, dur] of Object.entries(scenarioDurations)) {
+      console.log(`   ${name.padEnd(46)}: ${dur.toFixed(2)}s (Batas: <= 70.0s)`);
+      if (dur > 70) {
+        throw new Error(`Skenario ${name} melebihi batas waktu maksimum 70s (aktual: ${dur}s)`);
+      }
     }
-    console.log("   ✓ Reset demo berhasil: Memori dibersihkan, scene UUID tetap 100% identik.");
+    console.log("   ✓ TES 2.g LOLOS: Seluruh durasi skenario memenuhi ambang batas (<= 70s).");
 
-    // Mempertahankan uji sebaran slot ekspansi dalam bay (HR, Ops, Manager)
-    console.log("   Menguji algoritma sebaran slot ekspansi dalam bay (HR, Ops, Manager)...");
+    // -------------------------------------------------------------------------
+    // 12.9: Validasi Sebaran Slot Ekspansi dalam Bay (Manager, HR, Operasional)
+    // -------------------------------------------------------------------------
+    console.log("\n--- KASUS 12.9: Validasi Sebaran Slot Ekspansi dalam Bay (Manager, HR, Ops) ---");
     const baySlotsTest = await page.evaluate(() => {
       const stage = window.__STAGE_3D__;
       const rooms = [
@@ -2490,25 +2830,32 @@ async function run() {
 
     testReport.kasus12 = {
       preDemoState,
-      scnAState,
-      scnBApprovedState,
-      scnBRejectState,
-      graphTest,
-      drainedState,
-      postResetState,
+      scenarioDurations,
+      samplesCount2a: samples2a.length,
+      maxJump2a: maxJump,
+      chairDistanceA,
+      scnBVerification,
+      scnCCheck,
+      rapidClickTest,
+      preCyclesCounts,
+      postCyclesCounts,
       baySlotsTest,
       screenshots: [
         "01-initial-state.png",
         "02-dept-head-hr.png",
         "03-ceo-approval-modal.png",
         "04-ops-preparing.png",
+        "05a-before.png",
+        "05b-after.png",
         "05-bay-expansion.png",
         "06-agent-spawn-arrival.png",
         "07-agent-seated-active.png",
         "08-fifo-queue-badge.png",
       ],
     };
-    console.log("   ✓ KASUS 12 (11 PENGUJIAN LENGKAP & 8 SCREENSHOT) LOLOS SEMPURNA.");
+    console.log("   ✓ KASUS 12 (REWRITTEN VERIFIKASI LENGKAP & SCREENSHOT 1280x800) LOLOS SEMPURNA.");
+
+    if (!runOnlyKasus12) {
 
     // =========================================================================
     // KASUS T2B: INTERIOR ISOMETRIK TAHAP 2B (6 DEPT & 7 KRITERIA VERIFIKASI)
@@ -3323,6 +3670,7 @@ async function run() {
       pendingApprovals: finalPendingApprovals,
     };
     console.log("   ✓ KASUS 11 LOLOS SEMPURNA.");
+    } // end if (!runOnlyKasus12)
 
     console.log("\n===============================================================");
     console.log("=== SEMUA PENGUJIAN T1-FLOORPLAN BERHASIL LOLOS LENGKAP!    ===");

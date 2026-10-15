@@ -153,6 +153,9 @@ export interface DynamicDeskResult {
   prepGlow?: THREE.Mesh;
   prepTag?: CSS2DObject;
   slotPos: { rel: [number, number]; world: { x: number; y: number; z: number } };
+  chairPos: { x: number; y: number; z: number };
+  deskState: DeskState;
+  getDeskState: () => DeskState;
   setDeskState: (state: DeskState) => void;
   dispose: () => void;
 }
@@ -202,6 +205,16 @@ export function createDeskMesh(
   monMesh.position.set(slotPos.world.x, 0.56, slotPos.world.z + 0.9);
   group.add(monMesh);
 
+  // Kursi meja kerja baru
+  const chairGeo = new THREE.BoxGeometry(0.5, 0.08, 0.5);
+  const chairMat = new THREE.MeshStandardMaterial({
+    color: 0x243248,
+    roughness: 0.5,
+  });
+  const chairMesh = new THREE.Mesh(chairGeo, chairMat);
+  chairMesh.position.set(slotPos.world.x, 0.2, slotPos.world.z);
+  group.add(chairMesh);
+
   let prepGlow: THREE.Mesh | undefined;
   let prepTag: CSS2DObject | undefined;
 
@@ -228,7 +241,10 @@ export function createDeskMesh(
     group.add(prepTag);
   }
 
+  let currentDeskState: DeskState = deskState;
+
   const setDeskState = (newState: DeskState) => {
+    currentDeskState = newState;
     if (newState === "terisi" || newState === "siap") {
       deskMat.color.setHex(new THREE.Color(THEME.furniture.desk).getHex());
       deskEdgeMat.color.setHex(roomColorHex);
@@ -250,6 +266,8 @@ export function createDeskMesh(
     deskEdgeMat.dispose();
     monGeo.dispose();
     monMat.dispose();
+    chairGeo.dispose();
+    chairMat.dispose();
     if (prepGlow) {
       (prepGlow.geometry as THREE.BufferGeometry).dispose();
       (prepGlow.material as THREE.Material).dispose();
@@ -267,6 +285,9 @@ export function createDeskMesh(
     prepGlow,
     prepTag,
     slotPos,
+    chairPos: { x: slotPos.world.x, y: 0.2, z: slotPos.world.z },
+    deskState: currentDeskState,
+    getDeskState: () => currentDeskState,
     setDeskState,
     dispose,
   };
