@@ -314,6 +314,7 @@ export function OfficeStage3D({
     return false;
   });
   const shotModeRef = useRef<boolean>(shotMode);
+  const [hintDismissed, setHintDismissed] = useState<boolean>(false);
 
   useEffect(() => {
     shotModeRef.current = shotMode;
@@ -1283,6 +1284,11 @@ export function OfficeStage3D({
     scene.add(dirLight2);
     scene.add(dirLight2.target);
 
+    // Polish-2: HemisphereLight untuk mengisi pencahayaan atas & bawah (malam tidak hitam siluet)
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xdbeafe, 0.65);
+    hemiLight.position.set(0, 50, 0);
+    scene.add(hemiLight);
+
     scene.background = new THREE.Color(THEME.background.day);
 
     const meetingPoint = new THREE.PointLight(0xb7f34a, 0.6, 14);
@@ -1355,11 +1361,12 @@ export function OfficeStage3D({
       .forEach((cr) => {
         if (cr.id === "taman_kecil") {
           // Dinding selatan resepsi memiliki muka luar di z = 34.08.
-          // Mulai lantai taman_kecil dari z = 34.08 agar tidak tumpang-tindih coplanar dengan dinding selatan.
-          const southWallEdgeZ = 34.08;
-          const adjustedD = cr.z + cr.d - southWallEdgeZ; // 36.0 - 34.08 = 1.92
+          // Geser awal lantai taman_kecil ke z = 34.11 (gap >= 0.02 dari muka luar 34.08)
+          // dan posisikan ketinggiannya di y = -0.035 (top y = -0.005, konsisten dengan koridor dan bay area)
+          const southWallEdgeZ = 34.11;
+          const adjustedD = cr.z + cr.d - southWallEdgeZ; // 36.0 - 34.11 = 1.89
           const centerZ = southWallEdgeZ + adjustedD / 2;
-          const tGeo = new THREE.BoxGeometry(cr.w, 0.08, adjustedD);
+          const tGeo = new THREE.BoxGeometry(cr.w, 0.06, adjustedD);
           const tMat = new THREE.MeshStandardMaterial({
             color: THEME.commonFloors.taman_kecil,
             roughness: 0.45,
@@ -1367,7 +1374,7 @@ export function OfficeStage3D({
           });
           floorMaterials.push(tMat);
           const tMesh = new THREE.Mesh(tGeo, tMat);
-          tMesh.position.set(cr.x + cr.w / 2, -0.04, centerZ);
+          tMesh.position.set(cr.x + cr.w / 2, -0.035, centerZ);
           tMesh.name = `floor_${cr.id}`;
           tMesh.userData.isStatic = true;
           scene.add(tMesh);
@@ -1392,6 +1399,25 @@ export function OfficeStage3D({
         const isHigh = side === "N" || side === "W";
         const wallH = isHigh ? WALL_HIGH : WALL_LOW;
 
+        // Deduplicate shared dividing walls between adjacent enclosed rooms:
+        // If this room builds a low wall and an adjacent room builds a high wall on the shared boundary,
+        // skip the redundant low wall (e.g. skip landing_page E in favor of resepsi W).
+        if (!isHigh) {
+          const hasAdjacentHighWall = enclosedRooms.some((other) => {
+            if (other.id === r.id) return false;
+            if (side === "E" && other.x === r.x + r.w) {
+              const overlap = Math.max(0, Math.min(r.z + r.d, other.z + other.d) - Math.max(r.z, other.z));
+              return overlap > 0.1;
+            }
+            if (side === "S" && other.z === r.z + r.d) {
+              const overlap = Math.max(0, Math.min(r.x + r.w, other.x + other.w) - Math.max(r.x, other.x));
+              return overlap > 0.1;
+            }
+            return false;
+          });
+          if (hasAdjacentHighWall) return;
+        }
+
         const attachedBay = FLOORPLAN.bays.find(
           (b) => b.roomId === r.id && b.side === side
         );
@@ -1412,46 +1438,54 @@ export function OfficeStage3D({
           .filter((d) => d.side === side)
           .sort((a, b) => a.offset - b.offset);
 
+        // Tenggelamkan dasar dinding sebesar 0.02 ke dalam pelat lantai (y = -0.02 s/d wallH)
+        // untuk mengeliminasi coplanar z-fighting antara dasar dinding dan permukaan atas lantai.
+        const wallTotalH = wallH + 0.02;
+        const wallCenterY = (wallH - 0.02) / 2;
+        const sillTotalH = SILL_HEIGHT + 0.02;
+        const sillCenterY = (SILL_HEIGHT - 0.02) / 2;
+
         if (side === "N" || side === "S") {
           const zCoord = side === "N" ? r.z : r.z + r.d;
           let curX = 0;
           for (const door of sideDoors) {
             if (door.offset > curX) {
               const segW = door.offset - curX;
-              const geo = new THREE.BoxGeometry(segW, wallH, WALL_THICKNESS);
-              geo.translate(r.x + curX + segW / 2, wallH / 2, zCoord);
+              const geo = new THREE.BoxGeometry(segW, wallTotalH, WALL_THICKNESS);
+              geo.translate(r.x + curX + segW / 2, wallCenterY, zCoord);
               targetGeos.push(geo);
             }
-            const sillGeo = new THREE.BoxGeometry(door.width, SILL_HEIGHT, WALL_THICKNESS);
-            sillGeo.translate(r.x + door.offset + door.width / 2, SILL_HEIGHT / 2, zCoord);
+            const sillGeo = new THREE.BoxGeometry(door.width, sillTotalH, WALL_THICKNESS);
+            sillGeo.translate(r.x + door.offset + door.width / 2, sillCenterY, zCoord);
             sillGeos.push(sillGeo);
             curX = door.offset + door.width;
           }
           if (curX < r.w) {
             const segW = r.w - curX;
-            const geo = new THREE.BoxGeometry(segW, wallH, WALL_THICKNESS);
-            geo.translate(r.x + curX + segW / 2, wallH / 2, zCoord);
+            const geo = new THREE.BoxGeometry(segW, wallTotalH, WALL_THICKNESS);
+            geo.translate(r.x + curX + segW / 2, wallCenterY, zCoord);
             targetGeos.push(geo);
           }
         } else {
           const xCoord = side === "W" ? r.x : r.x + r.w;
-          let curZ = 0;
+          const halfWall = WALL_THICKNESS / 2;
+          let curZ = halfWall;
           for (const door of sideDoors) {
             if (door.offset > curZ) {
               const segD = door.offset - curZ;
-              const geo = new THREE.BoxGeometry(WALL_THICKNESS, wallH, segD);
-              geo.translate(xCoord, wallH / 2, r.z + curZ + segD / 2);
+              const geo = new THREE.BoxGeometry(WALL_THICKNESS, wallTotalH, segD);
+              geo.translate(xCoord, wallCenterY, r.z + curZ + segD / 2);
               targetGeos.push(geo);
             }
-            const sillGeo = new THREE.BoxGeometry(WALL_THICKNESS, SILL_HEIGHT, door.width);
-            sillGeo.translate(xCoord, SILL_HEIGHT / 2, r.z + door.offset + door.width / 2);
+            const sillGeo = new THREE.BoxGeometry(WALL_THICKNESS, sillTotalH, door.width);
+            sillGeo.translate(xCoord, sillCenterY, r.z + door.offset + door.width / 2);
             sillGeos.push(sillGeo);
             curZ = door.offset + door.width;
           }
-          if (curZ < r.d) {
-            const segD = r.d - curZ;
-            const geo = new THREE.BoxGeometry(WALL_THICKNESS, wallH, segD);
-            geo.translate(xCoord, wallH / 2, r.z + curZ + segD / 2);
+          if (curZ < r.d - halfWall) {
+            const segD = r.d - halfWall - curZ;
+            const geo = new THREE.BoxGeometry(WALL_THICKNESS, wallTotalH, segD);
+            geo.translate(xCoord, wallCenterY, r.z + curZ + segD / 2);
             targetGeos.push(geo);
           }
         }
@@ -1462,11 +1496,17 @@ export function OfficeStage3D({
       color: THEME.walls.high,
       roughness: THEME.walls.highRoughness,
       metalness: THEME.walls.highMetalness,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
     const lowWallMat = new THREE.MeshStandardMaterial({
       color: THEME.walls.low,
       roughness: THEME.walls.lowRoughness,
       metalness: THEME.walls.lowMetalness,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
     const sillMat = new THREE.MeshStandardMaterial({
       color: THEME.walls.doorSill,
@@ -1992,12 +2032,19 @@ export function OfficeStage3D({
         const roomGroup = new THREE.Group();
         const cx = cRoom.x + cRoom.w / 2;
         const cz = cRoom.z + cRoom.d / 2;
+        let fd = cRoom.d;
+        let fz = cz;
+        // Extend floor_resepsi depth by 0.08 to z = 34.08 so the south wall base is fully supported on the floor slab
+        if (cRoom.id === "resepsi") {
+          fd = cRoom.d + 0.08;
+          fz = cRoom.z + fd / 2;
+        }
         const roomColorHex = new THREE.Color(cRoom.color).getHex();
         const commonColorHex =
           THEME.commonFloors[cRoom.id as keyof typeof THEME.commonFloors] ||
           softenColor(cRoom.color, 0.60);
 
-        const floorBoxGeo = new THREE.BoxGeometry(cRoom.w, 0.08, cRoom.d);
+        const floorBoxGeo = new THREE.BoxGeometry(cRoom.w, 0.08, fd);
         const floorMat = new THREE.MeshStandardMaterial({
           color: commonColorHex,
           roughness: THEME.roomFloor.roughness,
@@ -2006,7 +2053,7 @@ export function OfficeStage3D({
         floorMaterials.push(floorMat);
 
         const floorMesh = new THREE.Mesh(floorBoxGeo, floorMat);
-        floorMesh.position.set(cx, -0.04, cz);
+        floorMesh.position.set(cx, -0.04, fz);
         floorMesh.name = `floor_${cRoom.id}`;
         floorMesh.userData.isStatic = true;
         roomGroup.add(floorMesh);
@@ -2018,7 +2065,7 @@ export function OfficeStage3D({
           opacity: THEME.roomFloor.edgeOpacity,
         });
         const edgeLines = new THREE.LineSegments(floorEdgesGeo, edgeMat);
-        edgeLines.position.set(cx, -0.04, cz);
+        edgeLines.position.set(cx, -0.04, fz);
         edgeLines.name = `floorEdges_${cRoom.id}`;
         edgeLines.userData.isStatic = true;
         roomGroup.add(edgeLines);
@@ -2346,6 +2393,7 @@ export function OfficeStage3D({
     const mouse = new THREE.Vector2();
 
     function onPointerDown(e: PointerEvent) {
+      setHintDismissed(true);
       if (activePointers.size === 0) {
         hadMultiTouchOrCancel = false;
         isPointerDragging = false;
@@ -2453,10 +2501,69 @@ export function OfficeStage3D({
       }
     }
 
+    // Polish-2: Touch gestures langsung untuk mobile: 2-finger pinch zoom & double-tap reset
+    let touchStartDist = 0;
+    let touchStartZoom = 1;
+    let isPinching = false;
+    let lastTouchEndTime = 0;
+    let lastTouchEndPos = { x: 0, y: 0 };
+
+    function onTouchStart(e: TouchEvent) {
+      setHintDismissed(true);
+      if (e.touches.length === 2) {
+        isPinching = true;
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        touchStartDist = Math.hypot(dx, dy);
+        touchStartZoom = camera.zoom;
+        if (e.cancelable) e.preventDefault();
+      }
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      if (e.touches.length === 2 && isPinching && touchStartDist > 0) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const curDist = Math.hypot(dx, dy);
+        const factor = curDist / touchStartDist;
+        camera.zoom = Math.max(0.4, Math.min(3.5, touchStartZoom * factor));
+        camera.updateProjectionMatrix();
+        if (e.cancelable) e.preventDefault();
+      }
+    }
+
+    function onTouchEnd(e: TouchEvent) {
+      if (isPinching) {
+        if (e.touches.length < 2) {
+          isPinching = false;
+          touchStartDist = 0;
+        }
+        return;
+      }
+      if (e.touches.length === 0 && e.changedTouches.length === 1) {
+        const t = e.changedTouches[0];
+        const now = performance.now();
+        const timeDiff = now - lastTouchEndTime;
+        const dist = Math.hypot(t.clientX - lastTouchEndPos.x, t.clientY - lastTouchEndPos.y);
+        if (timeDiff > 30 && timeDiff < 500 && dist < 25) {
+          handleResetCamera();
+          lastTouchEndTime = 0;
+          return;
+        }
+        lastTouchEndTime = now;
+        lastTouchEndPos = { x: t.clientX, y: t.clientY };
+      }
+    }
+
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("pointercancel", onPointerCancel);
+    if (container) {
+      container.addEventListener("touchstart", onTouchStart, { passive: false });
+      container.addEventListener("touchmove", onTouchMove, { passive: false });
+      container.addEventListener("touchend", onTouchEnd, { passive: false });
+    }
 
     // ResizeObserver
     const resizeObserver = new ResizeObserver((entries) => {
@@ -2519,6 +2626,7 @@ export function OfficeStage3D({
 
     if (exposeStage3D) {
       (window as unknown as { __STAGE_3D__?: unknown }).__STAGE_3D__ = {
+        THREE,
         scene,
         camera,
         renderer,
@@ -2877,19 +2985,19 @@ export function OfficeStage3D({
       const q = qualityStateRef.current;
       q.avgFrameTime = q.avgFrameTime * 0.9 + frameMs * 0.1;
 
-      if (frameMs > 24) {
+      if (frameMs > 110 || q.avgFrameTime > 105) {
         slowDurationRef.current += dt;
         fastDurationRef.current = 0;
-        if (slowDurationRef.current >= 3.0 && q.tier !== "low") {
+        if (slowDurationRef.current >= 1.5 && q.tier !== "low") {
           q.tier = "low";
           q.pixelRatio = 1.0;
           q.effectsEnabled = false;
           renderer.setPixelRatio(1.0);
         }
-      } else if (frameMs < 14) {
+      } else if (frameMs < 100 && q.avgFrameTime < 100) {
         fastDurationRef.current += dt;
         slowDurationRef.current = 0;
-        if (fastDurationRef.current >= 5.0 && q.tier !== "high") {
+        if (fastDurationRef.current >= 2.0 && q.tier !== "high") {
           q.tier = "high";
           q.pixelRatio = Math.min(typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1, 2.0);
           q.effectsEnabled = true;
@@ -2960,6 +3068,7 @@ export function OfficeStage3D({
         ambientLight,
         dirLight1,
         dirLight2,
+        hemiLight,
         scene,
         roomFloorMats: floorMaterialsRef.current,
       });
@@ -3239,6 +3348,14 @@ export function OfficeStage3D({
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);
       renderer.domElement.removeEventListener("pointercancel", onPointerCancel);
+      renderer.domElement.removeEventListener("touchstart", onTouchStart);
+      renderer.domElement.removeEventListener("touchmove", onTouchMove);
+      renderer.domElement.removeEventListener("touchend", onTouchEnd);
+      if (container) {
+        container.removeEventListener("touchstart", onTouchStart);
+        container.removeEventListener("touchmove", onTouchMove);
+        container.removeEventListener("touchend", onTouchEnd);
+      }
       gl.canvas.removeEventListener("webglcontextlost", onContextLost);
       gl.canvas.removeEventListener("webglcontextrestored", onContextRestored);
 
@@ -3319,12 +3436,39 @@ export function OfficeStage3D({
 
   function renderDetailContent() {
     if (!selected) {
+      if (hintDismissed) {
+        return (
+          <button
+            type="button"
+            className="hint-pill-btn"
+            onClick={() => setHintDismissed(false)}
+            aria-label="Tampilkan petunjuk navigasi"
+            title="Petunjuk navigasi"
+          >
+            <span>💡</span> Petunjuk
+          </button>
+        );
+      }
       return (
-        <p className="hint">
-          Klik ruangan atau karakter untuk membuka jobdesc. Klik ruang Meeting H+1 untuk
-          mengumpulkan semua agent, klik lagi untuk membubarkan. Titik di label karakter
-          menandai status: menyala berarti bekerja, kuning berarti menunggu review.
-        </p>
+        <div className="hint-box">
+          <div className="hint-top">
+            <span className="hint-title">💡 Petunjuk Navigasi</span>
+            <button
+              type="button"
+              className="hint-dismiss-btn"
+              onClick={() => setHintDismissed(true)}
+              aria-label="Tutup petunjuk"
+              title="Tutup petunjuk"
+            >
+              ✕
+            </button>
+          </div>
+          <p className="hint">
+            Klik ruangan atau karakter untuk membuka jobdesc. Klik ruang Meeting H+1 untuk
+            mengumpulkan semua agent, klik lagi untuk membubarkan. Titik di label karakter
+            menandai status: menyala berarti bekerja, kuning berarti menunggu review.
+          </p>
+        </div>
       );
     }
     if (selected.type === "room") {
@@ -3822,7 +3966,11 @@ export function OfficeStage3D({
       </div>
 
       {/* Normal Mode Detail Panel */}
-      {!shotMode && !fullFrame && <div className="detail">{renderDetailContent()}</div>}
+      {!shotMode && !fullFrame && (
+        <div className={`detail ${!selected && hintDismissed ? "is-hint-collapsed" : ""}`}>
+          {renderDetailContent()}
+        </div>
+      )}
 
       {/* Full Frame Desktop Floating Detail Panel (Bottom Center) */}
       {!shotMode && fullFrame && (

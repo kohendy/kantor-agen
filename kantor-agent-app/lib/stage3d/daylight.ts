@@ -16,6 +16,9 @@ export interface LightValues {
   dir2Intensity: number;
   bgColor: number;
   floorEmissive: number;
+  hemiSkyColor: number;
+  hemiGroundColor: number;
+  hemiIntensity: number;
 }
 
 export interface DaylightState {
@@ -45,6 +48,9 @@ const KEYFRAMES: Keyframe[] = [
       dir2Intensity: 0.65,
       bgColor: new THREE.Color(THEME.background.morning).getHex(),
       floorEmissive: 0.0,
+      hemiSkyColor: 0xfff8ee,
+      hemiGroundColor: 0xccd5e8,
+      hemiIntensity: 0.55,
     },
   },
   // 13:00 - Siang (terang netral)
@@ -60,6 +66,9 @@ const KEYFRAMES: Keyframe[] = [
       dir2Intensity: 0.75,
       bgColor: new THREE.Color(THEME.background.day).getHex(),
       floorEmissive: 0.0,
+      hemiSkyColor: 0xffffff,
+      hemiGroundColor: 0xdbeafe,
+      hemiIntensity: 0.65,
     },
   },
   // 17:00 - Sore (hangat oranye lembut tapi tetap terang)
@@ -75,21 +84,27 @@ const KEYFRAMES: Keyframe[] = [
       dir2Intensity: 0.60,
       bgColor: new THREE.Color(THEME.background.evening).getHex(),
       floorEmissive: 0.02,
+      hemiSkyColor: 0xffeedb,
+      hemiGroundColor: 0x94a3b8,
+      hemiIntensity: 0.50,
     },
   },
-  // 22:00 - Malam (biru gelap berkarakter, lantai dan dinding tetap terbaca dengan kontras minimum)
+  // 22:00 - Malam (biru gelap berkarakter, agen & furnitur tetap terang dengan HemisphereLight & kontras >= 1.3:1)
   {
     hour: 22,
     phase: "malam",
     values: {
-      ambientColor: 0x384166,
-      ambientIntensity: 0.88,
-      dir1Color: 0x889ac2,
-      dir1Intensity: 0.72,
-      dir2Color: 0x4a5578,
-      dir2Intensity: 0.45,
+      ambientColor: 0x526388,
+      ambientIntensity: 1.10,
+      dir1Color: 0xa2b7e0,
+      dir1Intensity: 0.95,
+      dir2Color: 0x65779c,
+      dir2Intensity: 0.55,
       bgColor: new THREE.Color(THEME.background.night).getHex(),
-      floorEmissive: 0.08,
+      floorEmissive: 0.03,
+      hemiSkyColor: 0x94a6c4,
+      hemiGroundColor: 0x3d4960,
+      hemiIntensity: 0.75,
     },
   },
 ];
@@ -170,6 +185,14 @@ export function computeDaylightValues(hour: number): DaylightState {
     new THREE.Color(kfNext.values.bgColor),
     t
   );
+  const hemiSky = new THREE.Color(kfPrev.values.hemiSkyColor).lerp(
+    new THREE.Color(kfNext.values.hemiSkyColor),
+    t
+  );
+  const hemiGround = new THREE.Color(kfPrev.values.hemiGroundColor).lerp(
+    new THREE.Color(kfNext.values.hemiGroundColor),
+    t
+  );
 
   return {
     hour: normHour,
@@ -191,6 +214,11 @@ export function computeDaylightValues(hour: number): DaylightState {
       floorEmissive:
         kfPrev.values.floorEmissive +
         (kfNext.values.floorEmissive - kfPrev.values.floorEmissive) * t,
+      hemiSkyColor: hemiSky.getHex(),
+      hemiGroundColor: hemiGround.getHex(),
+      hemiIntensity:
+        kfPrev.values.hemiIntensity +
+        (kfNext.values.hemiIntensity - kfPrev.values.hemiIntensity) * t,
     },
   };
 }
@@ -202,9 +230,12 @@ export class DaylightController {
   private currentDir1Color = new THREE.Color();
   private currentDir2Color = new THREE.Color();
   private currentBgColor = new THREE.Color();
+  private currentHemiSky = new THREE.Color();
+  private currentHemiGround = new THREE.Color();
   private currentAmbIntensity = 1.4;
   private currentDir1Intensity = 1.6;
   private currentDir2Intensity = 0.8;
+  private currentHemiIntensity = 0.65;
   private currentFloorEmissive = 0.0;
   private lastComputeTime = 0;
 
@@ -243,6 +274,9 @@ export class DaylightController {
       dir2Intensity: this.currentDir2Intensity,
       bgColor: this.currentBgColor.getHex(),
       floorEmissive: this.currentFloorEmissive,
+      hemiSkyColor: this.currentHemiSky.getHex(),
+      hemiGroundColor: this.currentHemiGround.getHex(),
+      hemiIntensity: this.currentHemiIntensity,
     };
   }
 
@@ -256,6 +290,9 @@ export class DaylightController {
     this.currentDir2Color.setHex(v.dir2Color);
     this.currentDir2Intensity = v.dir2Intensity;
     this.currentBgColor.setHex(v.bgColor);
+    this.currentHemiSky.setHex(v.hemiSkyColor);
+    this.currentHemiGround.setHex(v.hemiGroundColor);
+    this.currentHemiIntensity = v.hemiIntensity;
     this.currentFloorEmissive = v.floorEmissive;
   }
 
@@ -275,6 +312,7 @@ export class DaylightController {
       ambientLight: THREE.AmbientLight;
       dirLight1: THREE.DirectionalLight;
       dirLight2: THREE.DirectionalLight;
+      hemiLight?: THREE.HemisphereLight;
       scene: THREE.Scene;
       roomFloorMats: THREE.MeshStandardMaterial[];
     }
@@ -299,6 +337,16 @@ export class DaylightController {
     this.currentDir2Intensity += (target.dir2Intensity - this.currentDir2Intensity) * lerpFactor;
     lights.dirLight2.color.copy(this.currentDir2Color);
     lights.dirLight2.intensity = this.currentDir2Intensity;
+
+    // Hemisphere Light
+    if (lights.hemiLight) {
+      this.currentHemiSky.lerp(new THREE.Color(target.hemiSkyColor), lerpFactor);
+      this.currentHemiGround.lerp(new THREE.Color(target.hemiGroundColor), lerpFactor);
+      this.currentHemiIntensity += (target.hemiIntensity - this.currentHemiIntensity) * lerpFactor;
+      lights.hemiLight.color.copy(this.currentHemiSky);
+      lights.hemiLight.groundColor.copy(this.currentHemiGround);
+      lights.hemiLight.intensity = this.currentHemiIntensity;
+    }
 
     // Scene Background
     this.currentBgColor.lerp(new THREE.Color(target.bgColor), lerpFactor);
