@@ -5,10 +5,13 @@ import dynamic from "next/dynamic";
 import { useOfficeData } from "@/lib/useOfficeData";
 import { useApprovals } from "@/lib/useApprovals";
 import { usePipelineRuns } from "@/lib/usePipelineRuns";
+import { useBriefs } from "@/lib/useBriefs";
 import { ApprovalPanel } from "@/components/ApprovalPanel";
 import { MissionLog } from "@/components/MissionLog";
 import { ProgresProyek } from "@/components/ProgresProyek";
 import { MulaiProyekModal } from "@/components/MulaiProyekModal";
+import { BriefModal } from "@/components/BriefModal";
+import { BriefQueuePanel } from "@/components/BriefQueuePanel";
 
 const OfficeStage3D = dynamic(
   () => import("@/components/OfficeStage3D").then((mod) => mod.OfficeStage3D),
@@ -42,8 +45,22 @@ export function Dashboard() {
     refetch: refetchPipeline,
   } = usePipelineRuns();
 
+  const {
+    briefs,
+    loading: briefsLoading,
+    error: briefsError,
+    refetch: refetchBriefs,
+  } = useBriefs();
+
   const [isMulaiModalOpen, setIsMulaiModalOpen] = useState(false);
+  const [isBriefModalOpen, setIsBriefModalOpen] = useState(false);
   const [fullFrame, setFullFrame] = useState(false);
+
+  // Brief yang butuh klarifikasi untuk ditampilkan di ApprovalPanel
+  const clarificationBriefs = useMemo(
+    () => briefs.filter((b) => b.status === "butuh_klarifikasi"),
+    [briefs]
+  );
 
   // Collapse states for floating panels in Full Frame mode
   const [logCollapsed, setLogCollapsed] = useState(false);
@@ -125,14 +142,15 @@ export function Dashboard() {
         <ProgresProyek
           run={activeRun}
           onOpenMulaiModal={() => setIsMulaiModalOpen(true)}
+          onOpenBriefModal={() => setIsBriefModalOpen(true)}
           onRefetch={refetchPipeline}
         />
       )}
 
-      {(error || approvalsError || pipelineError) && (
+      {(error || approvalsError || pipelineError || briefsError) && (
         <p className="note" style={{ color: "var(--amber)", margin: "0 0 12px" }}>
           Gagal memuat data dari Supabase:{" "}
-          {error ?? approvalsError ?? pipelineError}
+          {error ?? approvalsError ?? pipelineError ?? briefsError}
         </p>
       )}
 
@@ -239,6 +257,10 @@ export function Dashboard() {
           {/* Approval Panel (same component, floating in full frame) */}
           <ApprovalPanel
             approvals={approvals}
+            clarificationBriefs={clarificationBriefs}
+            onBriefAnswered={async () => {
+              await refetchBriefs();
+            }}
             isFullFrame={fullFrame}
             isCollapsed={fullFrame ? approvalCollapsed : false}
             onToggleCollapse={() => setApprovalCollapsed((c) => !c)}
@@ -248,11 +270,31 @@ export function Dashboard() {
         </div>
       )}
 
+      {/* Panel Antrean Brief */}
+      {!fullFrame && (
+        <div style={{ marginTop: "16px" }}>
+          <BriefQueuePanel
+            briefs={briefs}
+            loading={briefsLoading}
+            onOpenBriefModal={() => setIsBriefModalOpen(true)}
+            onRefresh={refetchBriefs}
+          />
+        </div>
+      )}
+
       <MulaiProyekModal
         isOpen={isMulaiModalOpen}
         onClose={() => setIsMulaiModalOpen(false)}
         onSuccess={async () => {
           await refetchPipeline();
+        }}
+      />
+
+      <BriefModal
+        isOpen={isBriefModalOpen}
+        onClose={() => setIsBriefModalOpen(false)}
+        onSuccess={async () => {
+          await refetchBriefs();
         }}
       />
     </>

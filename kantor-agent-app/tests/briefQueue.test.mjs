@@ -4,10 +4,8 @@
 
 import assert from "node:assert";
 import test from "node:test";
-import {
-  BriefQueueManager,
-  NaiveBriefQueueManager
-} from "../lib/briefQueue.ts";
+import { BriefQueueManager } from "../lib/briefQueue.ts";
+import { NaiveBriefQueueManager } from "./naiveBriefQueue.ts";
 
 test("1. KLAIM GANDA (CONCURRENT CLAIM): Bukti kegagalan versi naif vs perbaikan state machine", () => {
   // --- Versi Naif: GAGAL karena memperbolehkan klaim ganda tanpa proteksi ---

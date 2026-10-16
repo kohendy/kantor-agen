@@ -1047,6 +1047,53 @@ export function OfficeStage3D({
   const isFirstMountRef = useRef(true);
   const meetingReducedMotionOverrideRef = useRef<boolean | null>(null);
 
+  // Sambungkan event delegasi ATLAS ke koreografi 3D (walkTo departemen lalu kembali ke meja Manager)
+  const isFirstEventMountRef = useRef(true);
+  const processedEventIdsRef = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    const choreo = choreoEngineRef.current;
+    if (!choreo) return;
+
+    if (isFirstEventMountRef.current) {
+      isFirstEventMountRef.current = false;
+      for (const ev of events) {
+        processedEventIdsRef.current.add(ev.id);
+      }
+      return;
+    }
+
+    for (const ev of events) {
+      if (processedEventIdsRef.current.has(ev.id)) continue;
+      processedEventIdsRef.current.add(ev.id);
+
+      if (
+        ev.agent === "ATLAS" &&
+        (ev.pesan.includes("mendelegasikan ke") || ev.pesan.toLowerCase().includes("delegasi"))
+      ) {
+        let targetRoomId = "riset";
+        const msgLower = ev.pesan.toLowerCase();
+        if (msgLower.includes("riset")) {
+          targetRoomId = "riset";
+        } else if (msgLower.includes("copy") || msgLower.includes("creative")) {
+          targetRoomId = "creative";
+        } else if (msgLower.includes("landing") || msgLower.includes("lp")) {
+          targetRoomId = "landing_page";
+        } else if (
+          msgLower.includes("iklan") ||
+          msgLower.includes("ads") ||
+          msgLower.includes("advertiser")
+        ) {
+          targetRoomId = "advertiser";
+        } else if (msgLower.includes("sosmed") || msgLower.includes("sosial")) {
+          targetRoomId = "sosmed";
+        }
+
+        choreo.delegate(targetRoomId);
+      }
+    }
+  }, [events]);
+
   // Update pergerakan agen saat gathered (rapat) berubah lewat ChoreographyEngine
   useEffect(() => {
     if (isFirstMountRef.current) {

@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { colorOfAgent } from "@/lib/officeConfig";
 import { formatClock } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
-import type { ApprovalRow, PipelineStepRow } from "@/lib/types";
+import type { ApprovalRow, PipelineStepRow, BriefRow } from "@/lib/types";
 
 const emptySubscribe = () => () => {};
 
@@ -649,8 +649,168 @@ function ApprovalItem({
   );
 }
 
+function AtlasClarificationItem({
+  brief,
+  onAnswered,
+}: {
+  brief: BriefRow;
+  onAnswered?: () => void;
+}) {
+  const [jawaban, setJawaban] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleKirimJawaban(e: React.FormEvent) {
+    e.preventDefault();
+    if (!jawaban.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/briefs/${brief.id}/jawab`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jawaban: jawaban.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Gagal mengirim jawaban klarifikasi");
+      }
+      setJawaban("");
+      onAnswered?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <li
+      className="log-row approval-row clarification-row"
+      style={{
+        borderLeft: "3px solid var(--accent, #6366f1)",
+        background: "rgba(99, 102, 241, 0.03)",
+        padding: "10px",
+        marginBottom: "8px",
+        borderRadius: "0 6px 6px 0",
+      }}
+    >
+      <div className="log-agent">
+        <span
+          className="tag"
+          style={{ "--c": colorOfAgent("ATLAS") } as React.CSSProperties}
+        >
+          ATLAS
+        </span>
+        <span className="log-time">
+          {formatClock(brief.diperbarui || brief.dibuat)}
+        </span>
+      </div>
+
+      <div className="approval-body" style={{ marginTop: "4px" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "6px",
+          }}
+        >
+          <strong style={{ fontSize: "0.88rem" }}>
+            Klarifikasi Brief #{brief.id}: {brief.judul}
+          </strong>
+          <span
+            style={{
+              fontSize: "0.72rem",
+              background: "rgba(236, 72, 153, 0.15)",
+              color: "#ec4899",
+              padding: "2px 6px",
+              borderRadius: "4px",
+              fontWeight: 600,
+            }}
+          >
+            Putaran {brief.putaran_tanya || 0} / 2
+          </span>
+        </div>
+
+        <div
+          style={{
+            background: "rgba(99, 102, 241, 0.08)",
+            padding: "8px 10px",
+            borderRadius: "4px",
+            marginBottom: "8px",
+            fontSize: "0.85rem",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "0.74rem",
+              color: "var(--muted)",
+              marginBottom: "2px",
+            }}
+          >
+            Pertanyaan Klarifikasi ATLAS:
+          </div>
+          <div style={{ fontWeight: 500, color: "var(--text, #fff)" }}>
+            "{brief.pertanyaan}"
+          </div>
+        </div>
+
+        {error && (
+          <div
+            style={{
+              color: "var(--red, #ef4444)",
+              fontSize: "0.78rem",
+              marginBottom: "6px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <form
+          onSubmit={handleKirimJawaban}
+          style={{ display: "flex", flexDirection: "column", gap: "6px" }}
+        >
+          <textarea
+            value={jawaban}
+            onChange={(e) => setJawaban(e.target.value)}
+            placeholder="Ketik jawaban klarifikasi untuk ATLAS..."
+            rows={2}
+            disabled={submitting}
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              fontSize: "0.82rem",
+              borderRadius: "4px",
+              border: "1px solid var(--border)",
+              background: "var(--bg, #111)",
+              color: "inherit",
+              resize: "vertical",
+            }}
+          />
+          <div
+            style={{ display: "flex", justifyContent: "flex-end", gap: "6px" }}
+          >
+            <button
+              type="submit"
+              disabled={submitting || !jawaban.trim()}
+              className="btn btn-primary"
+              style={{ fontSize: "0.78rem", padding: "4px 10px" }}
+            >
+              {submitting ? "Mengirim..." : "Kirim Jawaban ke ATLAS"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </li>
+  );
+}
+
 export function ApprovalPanel({
   approvals,
+  clarificationBriefs = [],
+  onBriefAnswered,
   isFullFrame = false,
   isCollapsed = false,
   onToggleCollapse,
@@ -658,6 +818,8 @@ export function ApprovalPanel({
   onCloseMobileSheet,
 }: {
   approvals: ApprovalRow[];
+  clarificationBriefs?: BriefRow[];
+  onBriefAnswered?: () => void;
   isFullFrame?: boolean;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
@@ -669,6 +831,8 @@ export function ApprovalPanel({
     gate?: string | null;
     triggerEl?: HTMLElement | null;
   } | null>(null);
+
+  const totalItems = approvals.length + clarificationBriefs.length;
 
   return (
     <section
@@ -683,11 +847,11 @@ export function ApprovalPanel({
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           <h2>Menunggu Persetujuan</h2>
           {isFullFrame && isCollapsed && (
-            <span className="ff-badge">{approvals.length} pending</span>
+            <span className="ff-badge">{totalItems} pending</span>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-          {!isCollapsed && <span>{approvals.length} pending</span>}
+          {!isCollapsed && <span>{totalItems} pending</span>}
           {isFullFrame && onToggleCollapse && (
             <button
               type="button"
@@ -734,10 +898,17 @@ export function ApprovalPanel({
         className="approval-panel-body"
         style={isCollapsed ? { display: "none" } : undefined}
       >
-        {approvals.length === 0 ? (
+        {totalItems === 0 ? (
           <div className="empty-state">Tidak ada yang menunggu persetujuan.</div>
         ) : (
           <ul className="log-list approval-list" aria-live="polite">
+            {clarificationBriefs.map((b) => (
+              <AtlasClarificationItem
+                key={`clarif-${b.id}`}
+                brief={b}
+                onAnswered={onBriefAnswered}
+              />
+            ))}
             {approvals.map((a) => (
               <ApprovalItem
                 key={a.id}

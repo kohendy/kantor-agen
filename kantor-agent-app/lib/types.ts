@@ -74,3 +74,48 @@ export interface PipelineStepRow {
   diperbarui: string;
 }
 
+export type BriefStatus =
+  | "antre"
+  | "dipertimbangkan"
+  | "butuh_klarifikasi"
+  | "didelegasikan"
+  | "berjalan"
+  | "selesai"
+  | "dihentikan"
+  | "dibatalkan";
+
+export type BriefMode = "diarahkan" | "manager_bebas";
+
+export interface BriefRow {
+  id: number;
+  judul: string;
+  isi: {
+    produk?: string;
+    target_audiens?: string;
+    tujuan?: string;
+    budget_harian?: number | null;
+    catatan_bebas?: string;
+    [key: string]: unknown;
+  };
+  mode: BriefMode;
+  status: BriefStatus;
+  rencana: {
+    departemen?: Array<{
+      id: string;
+      nama?: string;
+      belum_tersedia?: boolean;
+      alasan?: string;
+    }>;
+    alasan?: string;
+    asumsi?: string[];
+  } | null;
+  pertanyaan: string | null;
+  jawaban: string | null;
+  putaran_tanya: number;
+  run_id: number | null;
+  departemen_aktif: string | null;
+  dibuat: string;
+  diperbarui: string;
+  diproses_sejak: string | null;
+}
+

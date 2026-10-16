@@ -6,6 +6,7 @@ import type { PipelineRunRow, PipelineRunStatus } from "@/lib/types";
 interface ProgresProyekProps {
   run: PipelineRunRow | null;
   onOpenMulaiModal: () => void;
+  onOpenBriefModal?: () => void;
   onRefetch: () => Promise<void>;
 }
 
@@ -37,6 +38,7 @@ function getStatusBadge(status: PipelineRunStatus) {
 export function ProgresProyek({
   run,
   onOpenMulaiModal,
+  onOpenBriefModal,
   onRefetch,
 }: ProgresProyekProps) {
   const [stopping, setStopping] = useState(false);
@@ -74,13 +76,23 @@ export function ProgresProyek({
           <div className="project-info">
             <h2>Alur Proyek Kampanye</h2>
           </div>
-          <div className="project-actions">
+          <div className="project-actions" style={{ display: "flex", gap: "8px" }}>
+            {onOpenBriefModal && (
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ background: "var(--accent, #6366f1)" }}
+                onClick={onOpenBriefModal}
+              >
+                + Brief Baru (ATLAS)
+              </button>
+            )}
             <button
               type="button"
               className="btn-primary"
               onClick={onOpenMulaiModal}
             >
-              + Mulai Proyek Baru
+              + Mulai Proyek Lama
             </button>
           </div>
         </div>
@@ -112,7 +124,21 @@ export function ProgresProyek({
             <span className="iterasi">(Iterasi #{run.iterasi})</span>
           </h2>
         </div>
-        <div className="project-actions">
+        <div className="project-actions" style={{ display: "flex", gap: "8px" }}>
+          {onOpenBriefModal && (
+            <button
+              type="button"
+              className="btn-primary"
+              style={{
+                fontSize: "11px",
+                padding: "6px 10px",
+                background: "var(--accent, #6366f1)",
+              }}
+              onClick={onOpenBriefModal}
+            >
+              + Brief Baru
+            </button>
+          )}
           <button
             type="button"
             className="pause"

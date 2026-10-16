@@ -74,7 +74,7 @@ AS $function$
 BEGIN
   -- Cek pipeline_control
   IF NOT EXISTS (
-    SELECT 1 FROM public.pipeline_control WHERE id = 1 AND jalan = true
+    SELECT 1 FROM public.pipeline_control WHERE public.pipeline_control.id = 1 AND public.pipeline_control.jalan = true
   ) THEN
     RETURN;
   END IF;
@@ -97,8 +97,10 @@ BEGIN
   WHERE public.briefs.id = (
     SELECT b.id
     FROM public.briefs b
-    WHERE b.status = 'antre'
-      AND (b.diproses_sejak IS NULL OR b.diproses_sejak < now() - interval '10 minutes')
+    WHERE (
+      b.status = 'antre'
+      OR (b.status = 'dipertimbangkan' AND b.diproses_sejak < now() - interval '10 minutes')
+    )
     ORDER BY b.id ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED
@@ -129,9 +131,10 @@ SET search_path TO 'public'
 AS $function$
 BEGIN
   UPDATE public.briefs
-  SET diproses_sejak = NULL,
+  SET status = CASE WHEN public.briefs.status = 'dipertimbangkan' THEN 'antre' ELSE public.briefs.status END,
+      diproses_sejak = NULL,
       diperbarui = now()
-  WHERE id = target_brief_id;
+  WHERE public.briefs.id = target_brief_id;
 END;
 $function$;
 
