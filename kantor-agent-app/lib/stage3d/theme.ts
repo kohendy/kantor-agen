@@ -5,10 +5,10 @@
 import * as THREE from "three";
 
 /**
- * Campur warna hex dengan warna putih untuk menghasilkan warna lantai solid pastel yang lembut (55% - 65% putih).
+ * Campur warna hex dengan warna putih untuk menghasilkan warna lantai solid pastel yang lembut (35% - 45% putih).
  * Identitas departemen tetap terbaca kuat, tetapi tampilan terang dan bersih bergaya isometrik klasik.
  */
-export function softenColor(hex: string, whiteWeight: number = 0.60): string {
+export function softenColor(hex: string, whiteWeight: number = 0.40): string {
   const c = new THREE.Color(hex);
   const white = new THREE.Color(0xffffff);
   c.lerp(white, whiteWeight);
@@ -72,27 +72,27 @@ export const THEME = {
     atrium_selatan: "#edf2f7",
   },
 
-  // Lantai Departemen: Solid pastel (dicampur 60% putih)
+  // Lantai Departemen: Solid pastel (dicampur 35% - 45% putih)
   roomFloor: {
-    whiteMixRatio: 0.60,
+    whiteMixRatio: 0.40,
     opacity: 1.0,
     roughness: 0.40,
     metalness: 0.05,
     edgeOpacity: 0.85,
   },
 
-  // Lantai Spesifik Departemen Tahap 2a & 2b
+  // Lantai Spesifik Departemen Tahap 2a & 2b (Diperbarui Polish 2)
   deptFloors: {
-    meeting: "#deb887",     // Lantai kayu hangat (warm oak / burlywood pastel)
-    manager: "#d9777f",     // Karpet merah tua pastel hangat
-    riset: "#cbd5e1",       // Lantai biru abu-abu bersih
-    operasional: "#b0b8c4", // Lantai abu semen industri
-    advertiser: "#dbeafe",   // Biru muda pastel
-    hr: "#fae8ff",           // Magenta muda pastel
-    sosmed: "#ffedd5",       // Oranye muda pastel
-    creative: "#ede9fe",     // Ungu muda pastel
-    copy: "#fce7f3",         // Pink muda pastel
-    landing_page: "#dcfce7", // Hijau muda pastel
+    meeting: "#d5b27a",      // Lantai kayu oak hangat pastel
+    operasional: "#7fa2be",  // Lantai baja/slate industri berkarakter
+    advertiser: "#6cd3ff",   // Biru cyan cerah
+    manager: "#f38981",      // Merah koral eksekutif pastel
+    riset: "#f5b642",        // Kuning amber riset
+    hr: "#e592f7",           // Magenta anggrek HR
+    sosmed: "#fca25e",       // Oranye hangat sosial media
+    creative: "#b89df8",     // Ungu lilac kreatif
+    copy: "#ff7eb8",         // Pink flamingo copy
+    landing_page: "#4fe6b2", // Hijau mint landing page
   },
 
   // Library Warna Prop Voxel (Tahap 2a) - Terang, pastel, tegas, kontras dengan lantai

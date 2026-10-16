@@ -270,6 +270,29 @@ export const AGENT_DESK_PROP_ID: Record<string, string> = {
   TALOS: "landing_page_desk_talos",
 };
 
+// Peta agen ke ID prop kursi kerja masing-masing (19 agen)
+export const AGENT_CHAIR_PROP_ID: Record<string, string> = {
+  [MANAGER_AGENT_NAME]: "manager_chair_atlas",
+  HERA: "hr_chair_hera",
+  HEPHAESTUS: "ops_chair_hephaestus",
+  HERMES: "sosmed_chair_hermes",
+  ATHENA: "riset_lab_athena_chair",
+  ARGUS: "riset_lab_argus_chair",
+  METIS: "riset_lab_metis_chair",
+  ZEUS: "advertiser_chair_zeus",
+  ARTEMIS: "advertiser_chair_artemis",
+  PLUTUS: "advertiser_chair_plutus",
+  THEIA: "creative_chair_theia",
+  LYRA: "creative_chair_lyra",
+  IRIS: "creative_chair_iris",
+  CLIO: "copy_chair_clio",
+  ERATO: "copy_chair_erato",
+  DAPHNE: "copy_chair_daphne",
+  HESTIA: "landing_page_chair_hestia",
+  THEMIS: "landing_page_chair_themis",
+  TALOS: "landing_page_chair_talos",
+};
+
 // Posisi meja kerja 19 agen (pusat geometri meja prop)
 export const AGENT_DESK_POSITIONS: Record<string, [number, number]> = {
   [MANAGER_AGENT_NAME]: [4.5, 15.8],

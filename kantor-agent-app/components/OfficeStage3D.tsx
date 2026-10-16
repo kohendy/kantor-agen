@@ -172,6 +172,31 @@ function createHatchedTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+function createRadialLightTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, "rgba(255, 238, 185, 0.52)");
+    grad.addColorStop(0.35, "rgba(255, 215, 135, 0.28)");
+    grad.addColorStop(0.7, "rgba(255, 190, 95, 0.08)");
+    grad.addColorStop(1, "rgba(255, 180, 80, 0.0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 128);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  return tex;
+}
+
+export interface QualityState {
+  tier: "high" | "low";
+  pixelRatio: number;
+  avgFrameTime: number;
+  effectsEnabled: boolean;
+}
+
 function pill(status: string) {
   const cls = status === "working" ? "w" : status === "review" ? "r" : "";
   return (
@@ -277,6 +302,7 @@ export function OfficeStage3D({
     );
   });
   const showDemoUI = process.env.NODE_ENV !== "production" || isDemo;
+  const [demoCollapsed, setDemoCollapsed] = useState<boolean>(true);
   const [hourOverrideState, setHourOverrideState] = useState<number | null>(() =>
     getHourFromUrl()
   );
@@ -295,6 +321,18 @@ export function OfficeStage3D({
       cssRendererRef.current.domElement.style.display = "block";
     }
   }, [shotMode]);
+
+  const qualityStateRef = useRef<QualityState>({
+    tier: "high",
+    pixelRatio: typeof window !== "undefined" ? Math.min(window.devicePixelRatio || 1, 2.0) : 1.0,
+    avgFrameTime: 16.6,
+    effectsEnabled: true,
+  });
+  const slowDurationRef = useRef<number>(0);
+  const fastDurationRef = useRef<number>(0);
+  const lastFramePerfRef = useRef<number>(0);
+  const lastTapTimeRef = useRef<number>(0);
+  const nightDecalMatRef = useRef<THREE.MeshBasicMaterial | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1212,6 +1250,10 @@ export function OfficeStage3D({
     controls.maxPolarAngle = Math.PI / 2 - 0.08;
     controls.minPolarAngle = 0.12;
     controls.listenToKeyEvents(window);
+    controls.touches = {
+      ONE: THREE.TOUCH.PAN,
+      TWO: THREE.TOUCH.DOLLY_ROTATE,
+    };
 
     // Pan clamping agar denah tidak hilang
     controls.addEventListener("change", () => {
@@ -1246,6 +1288,33 @@ export function OfficeStage3D({
     const meetingPoint = new THREE.PointLight(0xb7f34a, 0.6, 14);
     meetingPoint.position.set(7.5, 2.5, 4.5);
     scene.add(meetingPoint);
+
+    // Polish-2: 10 Kolam Cahaya Decal Aditif per Ruangan (Jam 22 / Malam)
+    const lightDecalTexture = createRadialLightTexture();
+    const initH = hourOverrideState ?? (typeof window !== "undefined" ? getHourFromUrl() ?? new Date().getHours() : 12);
+    const isInitNight = initH >= 18 || initH < 6;
+    const nightDecalMat = new THREE.MeshBasicMaterial({
+      map: lightDecalTexture,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      opacity: isInitNight ? 0.65 : 0.0,
+    });
+    nightDecalMatRef.current = nightDecalMat;
+
+    const decalsGroup = new THREE.Group();
+    decalsGroup.name = "roomLightDecalsGroup";
+
+    ROOMS.forEach((room) => {
+      const geo = new THREE.PlaneGeometry(room.w * 0.72, room.d * 0.72);
+      geo.rotateX(-Math.PI / 2);
+      const decalMesh = new THREE.Mesh(geo, nightDecalMat);
+      decalMesh.position.set(room.x + room.w / 2, 0.005, room.z + room.d / 2);
+      decalMesh.userData = { isRoomLightDecal: true };
+      decalMesh.name = `roomPoolLight_${room.id}`;
+      decalsGroup.add(decalMesh);
+    });
+    scene.add(decalsGroup);
 
     // Visual koridor halus di sela pelat
     const walkwayVisuals = createWalkwayVisuals();
@@ -2346,6 +2415,17 @@ export function OfficeStage3D({
 
       if (shouldIgnore) return;
 
+      // Double tap reset camera pada layar sentuh
+      if (e.pointerType === "touch") {
+        const nowTap = performance.now();
+        if (nowTap - lastTapTimeRef.current < 350 && dist < 12) {
+          handleResetCamera();
+          lastTapTimeRef.current = 0;
+          return;
+        }
+        lastTapTimeRef.current = nowTap;
+      }
+
       const rect = renderer.domElement.getBoundingClientRect();
       mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -2578,6 +2658,22 @@ export function OfficeStage3D({
         setHourOverride: (h: number | null) => {
           daylight.setHourOverride(h);
           setHourOverrideState(h);
+          const effectiveH = h ?? new Date().getHours();
+          const isNight = effectiveH >= 18 || effectiveH < 6;
+          if (nightDecalMatRef.current) {
+            nightDecalMatRef.current.opacity = isNight ? 0.65 : 0.0;
+          }
+        },
+        getQualityState: () => ({ ...qualityStateRef.current }),
+        adaptivePerformance: {
+          getState: () => ({ ...qualityStateRef.current }),
+          setTier: (tier: "high" | "low") => {
+            const q = qualityStateRef.current;
+            q.tier = tier;
+            q.pixelRatio = tier === "low" ? 1.0 : Math.min(typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1, 2.0);
+            q.effectsEnabled = tier === "high";
+            renderer.setPixelRatio(q.pixelRatio);
+          },
         },
         getTheme: () => THEME,
         getEffectiveSpeed: (actorId: string = MANAGER_AGENT_NAME) =>
@@ -2775,6 +2871,34 @@ export function OfficeStage3D({
       const dt = Math.min(rawDt, 0.1);
       const time = timer.getElapsed();
       const reducedMotion = motionQuery.matches;
+
+      // Adaptive Performance Quality Scaler
+      const frameMs = rawDt * 1000;
+      const q = qualityStateRef.current;
+      q.avgFrameTime = q.avgFrameTime * 0.9 + frameMs * 0.1;
+
+      if (frameMs > 24) {
+        slowDurationRef.current += dt;
+        fastDurationRef.current = 0;
+        if (slowDurationRef.current >= 3.0 && q.tier !== "low") {
+          q.tier = "low";
+          q.pixelRatio = 1.0;
+          q.effectsEnabled = false;
+          renderer.setPixelRatio(1.0);
+        }
+      } else if (frameMs < 14) {
+        fastDurationRef.current += dt;
+        slowDurationRef.current = 0;
+        if (fastDurationRef.current >= 5.0 && q.tier !== "high") {
+          q.tier = "high";
+          q.pixelRatio = Math.min(typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1, 2.0);
+          q.effectsEnabled = true;
+          renderer.setPixelRatio(q.pixelRatio);
+        }
+      } else {
+        slowDurationRef.current = Math.max(0, slowDurationRef.current - dt * 0.5);
+        fastDurationRef.current = Math.max(0, fastDurationRef.current - dt * 0.5);
+      }
 
       // Handle Smooth Reset Animation if active
       if (resetAnimRef.current && resetAnimRef.current.active) {
@@ -3000,7 +3124,8 @@ export function OfficeStage3D({
         }
       });
 
-      // Room labels visibility & distance fading (Overview: sembunyikan untuk mencegah tabrakan, tampil saat hover/zoom/select)
+      // Room labels visibility & distance fading (Overview & Mobile: sembunyikan untuk mencegah tabrakan, tampil saat hover/zoom/select)
+      const isMobile = typeof window !== "undefined" && window.innerWidth <= 640;
       const isOverview = !focusedRoomRef.current && camera.zoom <= 1.15;
       const seenRoomLabels = new Set<HTMLDivElement>();
       Object.entries(roomRecords).forEach(([roomId, rRec]) => {
@@ -3010,7 +3135,7 @@ export function OfficeStage3D({
         const isHovered = hoveredRef.current?.type === "room" && hoveredRef.current.id === roomId;
         const isSelected = (currentSel?.type === "room" && currentSel.id === roomId) || focusedRoomRef.current === roomId;
 
-        if (isOverview && !isHovered && !isSelected) {
+        if ((isOverview || isMobile) && !isHovered && !isSelected) {
           if (rRec.labelDiv.style.display !== "none") {
             rRec.labelDiv.style.display = "none";
             rRec.labelDiv.style.opacity = "0";
@@ -3033,6 +3158,7 @@ export function OfficeStage3D({
 
       // Label CSS2D Teroptimasi pasca-CSS2DRenderer:
       // default tersembunyi (display: none), mini badge untuk aktif (working/review), penuh untuk hover/selected
+      // Pada layar mobile (<=640px), hanya tampilkan label untuk agen terpilih/hover agar tidak bertabrakan
       Object.entries(agentRecords).forEach(([name, rec]) => {
         const isHovered =
           hoveredRef.current?.type === "agent" && hoveredRef.current.id === name;
@@ -3049,6 +3175,8 @@ export function OfficeStage3D({
           rec.labelDiv.style.display = "inline-flex";
           rec.labelDiv.style.opacity = "1.0";
           rec.labelDiv.style.zIndex = isSelected ? "30" : "20";
+        } else if (isMobile) {
+          rec.labelDiv.style.display = "none";
         } else if (isGathered) {
           if (isActive) {
             rec.labelDiv.classList.add("is-mini");
@@ -3083,6 +3211,8 @@ export function OfficeStage3D({
           dynAgent.labelDiv.style.display = "inline-flex";
           dynAgent.labelDiv.style.opacity = "1.0";
           dynAgent.labelDiv.style.zIndex = isSel ? "30" : "20";
+        } else if (isMobile) {
+          dynAgent.labelDiv.style.display = "none";
         } else {
           dynAgent.labelDiv.classList.add("is-mini");
           dynAgent.labelDiv.style.display = "inline-flex";
@@ -3400,14 +3530,48 @@ export function OfficeStage3D({
 
         {/* Panel Kontrol Mode Demo & Jam (Hanya non-production atau ?demo=1) */}
         {!shotMode && showDemoUI && (
-          <aside
-            className="stage-demo-panel"
-            aria-label="Mode Demo dan Kontrol Cahaya"
-          >
-            <div className="stage-demo-head">
-              <span>Mode Demo</span>
-              <span className="stage-demo-badge">V1b</span>
-            </div>
+          <>
+            {demoCollapsed && (
+              <button
+                type="button"
+                className="stage-ctrl-btn stage-demo-toggle-btn"
+                aria-label="Buka panel demo"
+                title="Buka panel demo"
+                onClick={() => setDemoCollapsed(false)}
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+              </button>
+            )}
+            <aside
+              className={`stage-demo-panel bottom-sheet ${demoCollapsed ? "collapsed" : ""}`}
+              aria-label="Mode Demo dan Kontrol Cahaya"
+            >
+              <div className="stage-demo-head">
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span>Mode Demo</span>
+                  <span className="stage-demo-badge">V1b</span>
+                </div>
+                <button
+                  type="button"
+                  className="stage-demo-close-btn"
+                  aria-label="Tutup panel demo"
+                  onClick={() => setDemoCollapsed(true)}
+                >
+                  ✕
+                </button>
+              </div>
             <div className="stage-demo-btns">
               <button
                 type="button"
@@ -3542,7 +3706,8 @@ export function OfficeStage3D({
               </button>
             </div>
           </aside>
-        )}
+        </>
+      )}
 
         {/* Fullscreen Toggle Button (Top Right) */}
         {!shotMode && onToggleFullFrame && (
