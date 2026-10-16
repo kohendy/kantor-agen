@@ -10,7 +10,7 @@ import {
   getMeetingPathForAgent,
   getReturnPathForAgent,
 } from "./walkways";
-import { MANAGER_AGENT_NAME } from "@/lib/officeConfig";
+import { MANAGER_AGENT_NAME, HOME_FACE_BY_AGENT, getAgentHomeFacing } from "@/lib/officeConfig";
 
 export type Task =
   | { type: "walkTo"; waypoints: THREE.Vector3[]; targetName?: string }
@@ -351,7 +351,7 @@ export class ChoreographyEngine {
         x: actor.homePos.x,
         z: actor.homePos.z,
       };
-      const homeFaceAngle = 0;
+      const homeFaceAngle = getAgentHomeFacing(name);
 
       if (reducedMotion) {
         this.clearQueue(name);

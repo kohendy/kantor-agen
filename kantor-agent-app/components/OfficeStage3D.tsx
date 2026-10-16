@@ -18,6 +18,10 @@ import {
   SEAT_BY_AGENT,
   STATUS_LABEL,
   HR_PORTAL_POS,
+  HOME_FACE_BY_AGENT,
+  getAgentHomeFacing,
+  calculateFacingAngle,
+  computeDynamicHomeFacings,
   colorOfAgent,
   roomOfAgent,
   RoomConfig,
@@ -51,6 +55,7 @@ import {
   calculateRoomSlotPosition,
   DynamicDeskResult,
   DynamicAgentResult,
+  DeskState,
 } from "@/lib/stage3d/instances";
 import {
   InstanceRequestManager,
@@ -140,8 +145,8 @@ function updateCameraFrustum(cam: THREE.OrthographicCamera, w: number, h: number
   cam.right = halfW;
   cam.top = halfH;
   cam.bottom = -halfH;
-  cam.near = -200;
-  cam.far = 500;
+  cam.near = -50;
+  cam.far = 150;
   cam.updateProjectionMatrix();
 }
 
@@ -320,6 +325,7 @@ export function OfficeStage3D({
     id: string;
   } | null>(null);
   const raycastHitMeshesRef = useRef<THREE.Mesh[]>([]);
+  const focusedRoomRef = useRef<string | null>(null);
 
   // Demo Instance & Dynamic Items Ref
   const instanceManagerRef = useRef<InstanceRequestManager>(new InstanceRequestManager());
@@ -936,6 +942,7 @@ export function OfficeStage3D({
           const slotPos = calculateRoomSlotPosition(roomConfig, slotIdx, isExp);
           dynAgent.group.position.set(slotPos.world.x, 0, slotPos.world.z);
           dynAgent.targetPos.set(slotPos.world.x, 0, slotPos.world.z);
+          dynAgent.group.rotation.y = slotPos.faceAngle;
         }
         if (dynAgent) {
           if (dynAgent.leftLeg) dynAgent.leftLeg.rotation.x = -1.5;
@@ -963,7 +970,7 @@ export function OfficeStage3D({
             deptHead,
             [
               { type: "walkTo", waypoints: returnWaypoints, targetName: "Kembali ke meja" },
-              { type: "face", angle: 0 },
+              { type: "face", angle: getAgentHomeFacing(deptHead, ALL_PLACED_PROPS) },
             ],
             () => {
               const rec = agentRecordsRef.current[deptHead];
@@ -1175,7 +1182,7 @@ export function OfficeStage3D({
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
-    const camera = new THREE.OrthographicCamera(-20, 20, 20, -20, -200, 500);
+    const camera = new THREE.OrthographicCamera(-20, 20, 20, -20, -50, 150);
     updateCameraFrustum(camera, width, height);
     camera.position.copy(INIT_CAM_POS);
     camera.lookAt(INIT_CAM_TARGET);
@@ -1278,7 +1285,12 @@ export function OfficeStage3D({
       .filter((r) => r.kind === "common" && r.doors.length === 0)
       .forEach((cr) => {
         if (cr.id === "taman_kecil") {
-          const tGeo = new THREE.BoxGeometry(cr.w, 0.08, cr.d);
+          // Dinding selatan resepsi memiliki muka luar di z = 34.08.
+          // Mulai lantai taman_kecil dari z = 34.08 agar tidak tumpang-tindih coplanar dengan dinding selatan.
+          const southWallEdgeZ = 34.08;
+          const adjustedD = cr.z + cr.d - southWallEdgeZ; // 36.0 - 34.08 = 1.92
+          const centerZ = southWallEdgeZ + adjustedD / 2;
+          const tGeo = new THREE.BoxGeometry(cr.w, 0.08, adjustedD);
           const tMat = new THREE.MeshStandardMaterial({
             color: THEME.commonFloors.taman_kecil,
             roughness: 0.45,
@@ -1286,7 +1298,7 @@ export function OfficeStage3D({
           });
           floorMaterials.push(tMat);
           const tMesh = new THREE.Mesh(tGeo, tMat);
-          tMesh.position.set(cr.x + cr.w / 2, -0.04, cr.z + cr.d / 2);
+          tMesh.position.set(cr.x + cr.w / 2, -0.04, centerZ);
           tMesh.name = `floor_${cr.id}`;
           tMesh.userData.isStatic = true;
           scene.add(tMesh);
@@ -1883,7 +1895,8 @@ export function OfficeStage3D({
       });
 
       const labelObj = new CSS2DObject(labelDiv);
-      labelObj.position.set(cx, 1.6, room.z + 1.2);
+      // Posisikan label ruangan di atas ruangan (y=2.4) di tengah ruangan agar tidak menimpa kepala agen atau meja kerja
+      labelObj.position.set(cx, 2.4, room.z + room.d / 2);
       roomGroup.add(labelObj);
 
       scene.add(roomGroup);
@@ -1968,7 +1981,8 @@ export function OfficeStage3D({
         });
 
         const labelObj = new CSS2DObject(labelDiv);
-        labelObj.position.set(cx, 1.6, cRoom.z + 1.2);
+        // Posisikan label ruangan di atas ruangan (y=2.4) di tengah ruangan agar tidak menimpa kepala agen atau prop
+        labelObj.position.set(cx, 2.4, cRoom.z + cRoom.d / 2);
         roomGroup.add(labelObj);
 
         scene.add(roomGroup);
@@ -2078,10 +2092,14 @@ export function OfficeStage3D({
     createInstancedPropsFromList("creative_drafting_desk", "instanced_creative_desks", { roughness: 0.5, metalness: 0.1 });
     createInstancedPropsFromList("copy_desk", "instanced_copy_desks", { roughness: 0.5, metalness: 0.1 });
     createInstancedPropsFromList("landing_page_desk", "instanced_lp_desks", { roughness: 0.4, metalness: 0.15 });
+    createInstancedPropsFromList("riset_lab_desk", "instanced_riset_desks", { roughness: 0.45, metalness: 0.1 });
+    createInstancedPropsFromList("ops_workstation_desk", "instanced_ops_desks", { roughness: 0.5, metalness: 0.2 });
+    createInstancedPropsFromList("atrium_planter", "instanced_planters", { roughness: 0.5, metalness: 0.1 });
 
     const instancedPropIds = new Set([
       "potted_plant",
       "voxel_tree",
+      "atrium_planter",
       "dining_table",
       "toilet_cubicle",
       "manager_coffee_table",
@@ -2091,6 +2109,8 @@ export function OfficeStage3D({
       "chair_single",
       "manager_chair",
       "advertiser_desk",
+      "riset_lab_desk",
+      "ops_workstation_desk",
       "creative_drafting_desk",
       "copy_desk",
       "landing_page_desk",
@@ -2180,6 +2200,7 @@ export function OfficeStage3D({
         },
       });
 
+      vHuman.group.rotation.y = getAgentHomeFacing(name, ALL_PLACED_PROPS);
       scene.add(vHuman.group);
       raycastHitMeshes.push(vHuman.hitMesh);
 
@@ -2424,8 +2445,11 @@ export function OfficeStage3D({
         floorplan: FLOORPLAN,
         obstacles: PROPS_OBSTACLES,
         allPlacedProps: ALL_PLACED_PROPS,
+        propsRegistry: PROPS_REGISTRY,
         t2aPlacedProps: T2A_PLACED_PROPS,
         t2bPlacedProps: T2B_PLACED_PROPS,
+        createDeskMesh: (room: RoomConfig, slotIdx: number, state: DeskState = "kosong", isExp: boolean = false) =>
+          createDeskMesh(room, slotIdx, state, isExp),
         validateFloorplan: () => validateFloorplan(FLOORPLAN),
         validatePropsPlacement: (props = ALL_PLACED_PROPS) =>
           validatePropsPlacement(
@@ -2437,6 +2461,7 @@ export function OfficeStage3D({
             FLOORPLAN.bays
           ),
         focusRoom: (roomId: string, includeBay: boolean = false) => {
+          focusedRoomRef.current = roomId;
           const room = FLOORPLAN.rooms.find((r) => r.id === roomId);
           if (!room) return false;
           let rx = room.x;
@@ -2576,6 +2601,8 @@ export function OfficeStage3D({
         isGathered: () => gatheredRef.current,
         getSeatPositions: () => SEAT_BY_AGENT,
         getHomePositions: () => HOME_POSITIONS,
+        getHomeFaceAngles: () => computeDynamicHomeFacings(),
+        getRoomRecords: () => roomRecords,
         findPath: (
           from: string,
           to: string,
@@ -2885,12 +2912,8 @@ export function OfficeStage3D({
           rec.headGroup.rotation.z = 0;
           rec.statusLightMat.emissiveIntensity = 0.6;
         } else {
-          // Di meja kerja: duduk menghadap meja
-          const deskRot = [
-            "THEIA", "LYRA", "IRIS", "CLIO", "ERATO", "DAPHNE", "HERMES", "THEMIS", "TALOS"
-          ].includes(name)
-            ? Math.PI
-            : 0;
+          // Di meja kerja: duduk menghadap meja sesuai orientasi dinamis
+          const deskRot = getAgentHomeFacing(name, ALL_PLACED_PROPS);
           rec.group.rotation.y = deskRot;
           rec.leftLeg.rotation.x = -1.45;
           rec.rightLeg.rotation.x = -1.45;
@@ -2977,13 +3000,31 @@ export function OfficeStage3D({
         }
       });
 
-      // Room labels distance fading
-      Object.entries(roomRecords).forEach(([, rRec]) => {
-        const dist = camPos.distanceTo(rRec.group.position);
-        const alpha = Math.min(1.0, Math.max(0.4, 1.0 - (dist - 14) / 42));
-        const alphaStr = alpha.toFixed(2);
-        if (rRec.labelDiv.style.opacity !== alphaStr) {
-          rRec.labelDiv.style.opacity = alphaStr;
+      // Room labels visibility & distance fading (Overview: sembunyikan untuk mencegah tabrakan, tampil saat hover/zoom/select)
+      const isOverview = !focusedRoomRef.current && camera.zoom <= 1.15;
+      const seenRoomLabels = new Set<HTMLDivElement>();
+      Object.entries(roomRecords).forEach(([roomId, rRec]) => {
+        if (seenRoomLabels.has(rRec.labelDiv)) return;
+        seenRoomLabels.add(rRec.labelDiv);
+
+        const isHovered = hoveredRef.current?.type === "room" && hoveredRef.current.id === roomId;
+        const isSelected = (currentSel?.type === "room" && currentSel.id === roomId) || focusedRoomRef.current === roomId;
+
+        if (isOverview && !isHovered && !isSelected) {
+          if (rRec.labelDiv.style.display !== "none") {
+            rRec.labelDiv.style.display = "none";
+            rRec.labelDiv.style.opacity = "0";
+          }
+        } else {
+          if (rRec.labelDiv.style.display !== "inline-flex") {
+            rRec.labelDiv.style.display = "inline-flex";
+          }
+          const dist = camPos.distanceTo(rRec.group.position);
+          const alpha = Math.min(1.0, Math.max(0.5, 1.0 - (dist - 14) / 42));
+          const targetOpacity = isHovered || isSelected ? "1.0" : alpha.toFixed(2);
+          if (rRec.labelDiv.style.opacity !== targetOpacity) {
+            rRec.labelDiv.style.opacity = targetOpacity;
+          }
         }
       });
 
@@ -3118,6 +3159,7 @@ export function OfficeStage3D({
 
   // Reset Camera View Handler
   const handleResetCamera = useCallback(() => {
+    focusedRoomRef.current = null;
     if (!cameraRef.current || !controlsRef.current) return;
     resetAnimRef.current = {
       active: true,

@@ -6,10 +6,12 @@ import * as THREE from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import {
   RoomConfig,
+  calculateFacingAngle,
 } from "@/lib/officeConfig";
 import { FLOORPLAN } from "./floorplan";
 import { THEME } from "./theme";
 import { createVoxelHuman } from "./characters/voxelHuman";
+import { PROPS_REGISTRY } from "./props";
 import type { AgentStatus } from "@/lib/types";
 
 export type DeskState = "kosong" | "disiapkan" | "siap" | "terisi";
@@ -58,12 +60,35 @@ export const ROOM_EXPANSION_SIDES: Record<string, ExpansionSide> = {
   meeting: "compact",
 };
 
+export const ROOM_DESK_PROP_ID: Record<string, string> = {
+  advertiser: "advertiser_desk",
+  ads: "advertiser_desk",
+  riset: "riset_lab_desk",
+  operasional: "ops_workstation_desk",
+  ops: "ops_workstation_desk",
+  creative: "creative_drafting_desk",
+  copy: "copy_desk",
+  landing_page: "landing_page_desk",
+  lp: "landing_page_desk",
+  sosmed: "sosmed_desk",
+  hr: "hr_desk",
+  manager: "manager_desk",
+};
+
+export interface SlotPositionResult {
+  rel: [number, number];
+  world: { x: number; y: number; z: number };
+  deskPos: { x: number; y: number; z: number };
+  faceAngle: number;
+  rotY: number;
+}
+
 // Hitung koordinat slot meja dalam ruangan secara dinamis memakai Bay dari Floorplan
 export function calculateRoomSlotPosition(
   room: RoomConfig,
   slotIndex: number,
   isExpanded: boolean = false
-): { rel: [number, number]; world: { x: number; y: number; z: number } } {
+): SlotPositionResult {
   const normRoomId = room.id === "ads" ? "advertiser" : room.id === "lp" ? "landing_page" : room.id;
   const bay = FLOORPLAN.bays.find((b) => b.roomId === normRoomId);
 
@@ -76,38 +101,87 @@ export function calculateRoomSlotPosition(
       ? 1
       : room.agents?.length || 3;
 
-  // Jika slot ekspansi (slotIndex >= baseSlotsCount) dan bay tersedia: tempatkan tersebar di dalam bay
+  const propId = ROOM_DESK_PROP_ID[normRoomId] || "advertiser_desk";
+  const propDef = PROPS_REGISTRY[propId];
+  const deskD = propDef?.footprint.d ?? 0.65;
+
+  // Jika slot ekspansi (slotIndex >= baseSlotsCount) dan bay tersedia: tempatkan berbasis footprint di dalam bay
   if (slotIndex >= baseSlotsCount && bay && isExpanded) {
     const bayIndex = slotIndex - baseSlotsCount;
-    let wx: number;
-    let wz: number;
+    let chairX: number;
+    let chairZ: number;
+    let deskX: number;
+    let deskZ: number;
+    let faceAngle: number;
+    let rotY: number;
 
-    if (bay.d > bay.w) {
-      // Bay vertikal (mis. bay_manager, bay_hr, bay_advertiser): sebar sepanjang sumbu Z
-      const maxSlots = Math.max(2, Math.floor(bay.d / 1.3));
-      const stepZ = bay.d / (maxSlots + 1);
-      const currentStep = (bayIndex % maxSlots) + 1;
-      wx = +(bay.x + bay.w / 2).toFixed(3);
-      wz = +(bay.z + currentStep * stepZ).toFixed(3);
-    } else {
-      // Bay horizontal (mis. bay_operasional, bay_riset, bay_creative, dll): sebar sepanjang sumbu X
-      const maxSlots = Math.max(2, Math.floor(bay.w / 1.8));
+    const baySide = bay.side;
+
+    if (baySide === "S") {
+      // Bay sisi Selatan (bay_sosmed, bay_riset, bay_creative, bay_copy, bay_landing_page):
+      // Dinding luar di z = bay.z + bay.d. Meja diletakkan dekat dinding luar dengan margin >= 0.15.
+      deskZ = +(bay.z + bay.d - 0.20 - deskD / 2).toFixed(3);
+      chairZ = +(deskZ - 0.65).toFixed(3);
+
+      const maxSlots = Math.max(2, Math.floor(bay.w / 2.2));
       const stepX = bay.w / (maxSlots + 1);
       const currentStep = (bayIndex % maxSlots) + 1;
-      wx = +(bay.x + currentStep * stepX).toFixed(3);
-      wz = +(bay.z + bay.d / 2).toFixed(3);
+      deskX = +(bay.x + currentStep * stepX).toFixed(3);
+      chairX = deskX;
+    } else if (baySide === "N") {
+      // Bay sisi Utara (bay_operasional):
+      // Dinding luar di z = bay.z. Meja diletakkan dekat dinding utara dengan margin >= 0.15.
+      deskZ = +(bay.z + 0.20 + deskD / 2).toFixed(3);
+      chairZ = +(deskZ + 0.65).toFixed(3);
+
+      const maxSlots = Math.max(2, Math.floor(bay.w / 2.2));
+      const stepX = bay.w / (maxSlots + 1);
+      const currentStep = (bayIndex % maxSlots) + 1;
+      deskX = +(bay.x + currentStep * stepX).toFixed(3);
+      chairX = deskX;
+    } else if (baySide === "W") {
+      // Bay sisi Barat (bay_manager, bay_hr):
+      // Dinding luar di x = bay.x. Meja diletakkan dekat dinding barat dengan margin >= 0.15.
+      deskX = +(bay.x + 0.20 + deskD / 2).toFixed(3);
+      chairX = +(deskX + 0.65).toFixed(3);
+
+      const maxSlots = Math.max(2, Math.floor(bay.d / 2.0));
+      const stepZ = bay.d / (maxSlots + 1);
+      const currentStep = (bayIndex % maxSlots) + 1;
+      deskZ = +(bay.z + currentStep * stepZ).toFixed(3);
+      chairZ = deskZ;
+    } else {
+      // Bay sisi Timur (bay_advertiser):
+      // Dinding luar di x = bay.x + bay.w. Meja diletakkan dekat dinding timur dengan margin >= 0.15.
+      deskX = +(bay.x + bay.w - 0.20 - deskD / 2).toFixed(3);
+      chairX = +(deskX - 0.65).toFixed(3);
+
+      const maxSlots = Math.max(2, Math.floor(bay.d / 2.0));
+      const stepZ = bay.d / (maxSlots + 1);
+      const currentStep = (bayIndex % maxSlots) + 1;
+      deskZ = +(bay.z + currentStep * stepZ).toFixed(3);
+      chairZ = deskZ;
     }
 
-    const wy = 0;
+    // Hitung orientasi hadap dinamis via vektor kursi -> meja (atan2)
+    faceAngle = calculateFacingAngle([chairX, chairZ], [deskX, deskZ]);
+    rotY = faceAngle;
+
+    const roomZ = typeof room.z === "number" ? room.z : (room.y ?? 0);
     return {
-      rel: [+(wx - room.x).toFixed(3), +(wz - room.y).toFixed(3)],
-      world: { x: wx, y: wy, z: wz },
+      rel: [+(chairX - room.x).toFixed(3), +(chairZ - roomZ).toFixed(3)],
+      world: { x: chairX, y: 0, z: chairZ },
+      deskPos: { x: deskX, y: 0, z: deskZ },
+      faceAngle,
+      rotY,
     };
   }
 
   // Posisi slot standar di dalam ruangan (untuk slotIndex < baseSlotsCount atau ruangan dengan slot kosong)
   let relX: number;
   let relY: number;
+  let faceAngle = 0;
+  let rotY = 0;
 
   if (room.id === "hr") {
     relX = 4.5;
@@ -124,23 +198,30 @@ export function calculateRoomSlotPosition(
   } else if (normRoomId === "advertiser") {
     relX = 3.5 + (slotIndex % 3) * 3.0;
     relY = slotIndex >= 3 ? 6.5 : 4.5;
+    faceAngle = Math.PI;
+    rotY = Math.PI;
   } else if (normRoomId === "riset") {
-    // Ruang riset: meja internal ke-4 (slotIndex 3) di sebelah timur METIS
     relX = 7.5;
     relY = 5.5;
   } else {
-    // Ruang lainnya
     relX = Math.min(room.w - 1.5, Math.max(1.5, 2.5 + (slotIndex % 3) * 2.5));
     relY = Math.min(room.d - 1.5, Math.max(1.5, 3.5));
   }
 
+  const roomZ = typeof room.z === "number" ? room.z : (room.y ?? 0);
   const worldX = +(room.x + relX).toFixed(3);
   const worldY = 0;
-  const worldZ = +(room.y + relY).toFixed(3);
+  const worldZ = +(roomZ + relY).toFixed(3);
+  const deskZ = normRoomId === "advertiser" ? +(worldZ - 0.70).toFixed(3) : +(worldZ + 0.75).toFixed(3);
+  faceAngle = calculateFacingAngle([worldX, worldZ], [worldX, deskZ]);
+  rotY = faceAngle;
 
   return {
     rel: [relX, relY],
     world: { x: worldX, y: worldY, z: worldZ },
+    deskPos: { x: worldX, y: worldY, z: deskZ },
+    faceAngle,
+    rotY,
   };
 }
 
@@ -169,50 +250,71 @@ export function createDeskMesh(
 ): DynamicDeskResult {
   const group = new THREE.Group();
   const roomColorHex = new THREE.Color(room.color).getHex();
+  const normRoomId = room.id === "ads" ? "advertiser" : room.id === "lp" ? "landing_page" : room.id;
   const slotPos = calculateRoomSlotPosition(room, slotIndex, isExpanded);
 
-  const deskGeo = new THREE.BoxGeometry(1.8, 0.44, 0.7);
-  const deskTopEdgeGeo = new THREE.EdgesGeometry(deskGeo);
+  const propId = ROOM_DESK_PROP_ID[normRoomId] || "advertiser_desk";
+  const propDef = PROPS_REGISTRY[propId];
 
+  // Gunakan geometri model prop spesifik ruangan
+  const deskGeo = propDef ? propDef.createGeometry() : new THREE.BoxGeometry(1.8, 0.44, 0.7);
   const deskMat = new THREE.MeshStandardMaterial({
-    color: deskState === "disiapkan" ? 0x243248 : new THREE.Color(THEME.furniture.desk).getHex(),
-    roughness: 0.35,
-    metalness: 0.3,
+    vertexColors: !!propDef,
+    color: propDef ? 0xffffff : (deskState === "disiapkan" ? 0x243248 : new THREE.Color(THEME.furniture.desk).getHex()),
+    roughness: 0.4,
+    metalness: 0.2,
   });
 
+  const deskMesh = new THREE.Mesh(deskGeo, deskMat);
+  deskMesh.position.set(slotPos.deskPos.x, 0, slotPos.deskPos.z);
+  deskMesh.rotation.y = slotPos.rotY;
+  group.add(deskMesh);
+
+  // Sub-emissive mesh jika prop memilikinya
+  let emissiveMesh: THREE.Mesh | undefined;
+  if (propDef?.createEmissiveGeometry) {
+    const emGeo = propDef.createEmissiveGeometry();
+    const emMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      emissiveIntensity: 0.8,
+    });
+    emissiveMesh = new THREE.Mesh(emGeo, emMat);
+    deskMesh.add(emissiveMesh);
+  }
+
+  // Garis tepi outline meja
+  const deskW = propDef?.footprint.w ?? 1.4;
+  const deskH = propDef?.height ?? 0.44;
+  const deskD = propDef?.footprint.d ?? 0.65;
+  const deskTopEdgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(deskW, deskH, deskD));
   const deskEdgeMat = new THREE.LineBasicMaterial({
     color: deskState === "disiapkan" ? 0xf5a623 : roomColorHex,
     transparent: true,
     opacity: deskState === "disiapkan" ? 0.9 : 0.5,
   });
-
-  const deskMesh = new THREE.Mesh(deskGeo, deskMat);
-  deskMesh.position.set(slotPos.world.x, 0.22, slotPos.world.z + 0.8);
-  group.add(deskMesh);
-
   const edges = new THREE.LineSegments(deskTopEdgeGeo, deskEdgeMat);
-  edges.position.copy(deskMesh.position);
+  edges.position.set(slotPos.deskPos.x, deskH / 2, slotPos.deskPos.z);
+  edges.rotation.y = slotPos.rotY;
   group.add(edges);
 
-  // Monitor di atas meja
-  const monGeo = new THREE.BoxGeometry(0.38, 0.24, 0.04);
-  const monMat = new THREE.MeshStandardMaterial({
-    color: deskState === "disiapkan" ? 0xf5a623 : roomColorHex,
-    emissive: deskState === "disiapkan" ? 0xf5a623 : roomColorHex,
-    emissiveIntensity: deskState === "disiapkan" ? 0.7 : 0.4,
-  });
+  // Monitor dummy mesh untuk kompatibilitas DynamicDeskResult
+  const monGeo = new THREE.BoxGeometry(0.01, 0.01, 0.01);
+  const monMat = new THREE.MeshBasicMaterial({ visible: false });
   const monMesh = new THREE.Mesh(monGeo, monMat);
-  monMesh.position.set(slotPos.world.x, 0.56, slotPos.world.z + 0.9);
   group.add(monMesh);
 
   // Kursi meja kerja baru
-  const chairGeo = new THREE.BoxGeometry(0.5, 0.08, 0.5);
+  const chairGeo = PROPS_REGISTRY["chair_single"]
+    ? PROPS_REGISTRY["chair_single"].createGeometry()
+    : new THREE.BoxGeometry(0.5, 0.08, 0.5);
   const chairMat = new THREE.MeshStandardMaterial({
-    color: 0x243248,
+    vertexColors: !!PROPS_REGISTRY["chair_single"],
+    color: PROPS_REGISTRY["chair_single"] ? 0xffffff : 0x243248,
     roughness: 0.5,
   });
   const chairMesh = new THREE.Mesh(chairGeo, chairMat);
-  chairMesh.position.set(slotPos.world.x, 0.2, slotPos.world.z);
+  chairMesh.position.set(slotPos.world.x, 0, slotPos.world.z);
+  chairMesh.rotation.y = slotPos.faceAngle;
   group.add(chairMesh);
 
   let prepGlow: THREE.Mesh | undefined;
@@ -237,7 +339,7 @@ export function createDeskMesh(
     tagDiv.className = "desk-prep-tag";
     tagDiv.textContent = "MEJA DISIAPKAN";
     prepTag = new CSS2DObject(tagDiv);
-    prepTag.position.set(slotPos.world.x, 0.95, slotPos.world.z + 0.8);
+    prepTag.position.set(slotPos.deskPos.x, 0.95, slotPos.deskPos.z);
     group.add(prepTag);
   }
 
@@ -246,12 +348,8 @@ export function createDeskMesh(
   const setDeskState = (newState: DeskState) => {
     currentDeskState = newState;
     if (newState === "terisi" || newState === "siap") {
-      deskMat.color.setHex(new THREE.Color(THEME.furniture.desk).getHex());
       deskEdgeMat.color.setHex(roomColorHex);
       deskEdgeMat.opacity = 0.5;
-      monMat.color.setHex(roomColorHex);
-      monMat.emissive.setHex(roomColorHex);
-      monMat.emissiveIntensity = 0.4;
       if (prepGlow) prepGlow.visible = false;
       if (prepTag && prepTag.element.parentNode) {
         prepTag.element.parentNode.removeChild(prepTag.element);
@@ -268,6 +366,10 @@ export function createDeskMesh(
     monMat.dispose();
     chairGeo.dispose();
     chairMat.dispose();
+    if (emissiveMesh) {
+      emissiveMesh.geometry.dispose();
+      (emissiveMesh.material as THREE.Material).dispose();
+    }
     if (prepGlow) {
       (prepGlow.geometry as THREE.BufferGeometry).dispose();
       (prepGlow.material as THREE.Material).dispose();

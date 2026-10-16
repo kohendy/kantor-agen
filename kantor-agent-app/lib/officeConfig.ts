@@ -247,6 +247,109 @@ function computeHomePositions(): Record<string, [number, number]> {
 
 export const HOME_POSITIONS = computeHomePositions();
 
+// Peta agen ke ID prop meja kerja masing-masing (19 agen)
+export const AGENT_DESK_PROP_ID: Record<string, string> = {
+  [MANAGER_AGENT_NAME]: "manager_desk_main",
+  HERA: "hr_desk_hera",
+  HEPHAESTUS: "ops_workstation_hephaestus",
+  HERMES: "sosmed_desk_hermes",
+  ATHENA: "riset_lab_athena_desk",
+  ARGUS: "riset_lab_argus_desk",
+  METIS: "riset_lab_metis_desk",
+  ZEUS: "advertiser_desk_zeus",
+  ARTEMIS: "advertiser_desk_artemis",
+  PLUTUS: "advertiser_desk_plutus",
+  THEIA: "creative_desk_theia",
+  LYRA: "creative_desk_lyra",
+  IRIS: "creative_desk_iris",
+  CLIO: "copy_desk_clio",
+  ERATO: "copy_desk_erato",
+  DAPHNE: "copy_desk_daphne",
+  HESTIA: "landing_page_desk_hestia",
+  THEMIS: "landing_page_desk_themis",
+  TALOS: "landing_page_desk_talos",
+};
+
+// Posisi meja kerja 19 agen (pusat geometri meja prop)
+export const AGENT_DESK_POSITIONS: Record<string, [number, number]> = {
+  [MANAGER_AGENT_NAME]: [4.5, 15.8],
+  HERA: [4.5, 22.3],
+  HEPHAESTUS: [21.5, 5.3],
+  HERMES: [5.0, 31.3],
+  ATHENA: [14.0, 14.8],
+  ARGUS: [18.0, 14.8],
+  METIS: [16.0, 17.3],
+  ZEUS: [31.5, 3.8],
+  ARTEMIS: [34.5, 3.8],
+  PLUTUS: [37.5, 3.8],
+  THEIA: [13.5, 31.3],
+  LYRA: [16.0, 31.3],
+  IRIS: [18.5, 31.3],
+  CLIO: [24.5, 31.3],
+  ERATO: [27.0, 31.3],
+  DAPHNE: [29.5, 31.3],
+  HESTIA: [35.0, 28.7],
+  THEMIS: [37.0, 32.3],
+  TALOS: [35.0, 32.3],
+};
+
+// Menghitung sudut hadap Three.js dari kursi ke meja via atan2(dx, dz)
+// Koordinat Three.js: 0 rad = Selatan (+Z), Math.PI rad = Utara (-Z), Math.PI/2 rad = Timur (+X), -Math.PI/2 rad = Barat (-X)
+export function calculateFacingAngle(
+  chairPos: [number, number] | { x: number; z: number },
+  deskPos: [number, number] | { x: number; z: number }
+): number {
+  const cx = Array.isArray(chairPos) ? chairPos[0] : chairPos.x;
+  const cz = Array.isArray(chairPos) ? chairPos[1] : chairPos.z;
+  const dx = Array.isArray(deskPos) ? deskPos[0] : deskPos.x;
+  const dz = Array.isArray(deskPos) ? deskPos[1] : deskPos.z;
+  let angle = Math.atan2(dx - cx, dz - cz);
+  while (angle > Math.PI) angle -= 2 * Math.PI;
+  while (angle < -Math.PI) angle += 2 * Math.PI;
+  return angle;
+}
+
+// Menghitung seluruh arah hadap 19 agen secara dinamis berdasarkan geometri kursi -> meja
+export function computeDynamicHomeFacings(
+  chairs: Record<string, [number, number]> = HOME_POSITIONS,
+  desks: Record<string, [number, number]> = AGENT_DESK_POSITIONS
+): Record<string, number> {
+  const facings: Record<string, number> = {};
+  for (const [name, chair] of Object.entries(chairs)) {
+    const desk = desks[name];
+    if (desk) {
+      facings[name] = calculateFacingAngle(chair, desk);
+    } else {
+      facings[name] = 0;
+    }
+  }
+  return facings;
+}
+
+// Menghitung sudut hadap agen dinamis di meja kerjanya
+export function getAgentHomeFacing(
+  name: string,
+  placedProps?: Array<{ id: string; x: number; z: number }>
+): number {
+  const chairPos = HOME_POSITIONS[name];
+  if (!chairPos) return 0;
+  if (placedProps && placedProps.length > 0) {
+    const deskId = AGENT_DESK_PROP_ID[name];
+    const desk = placedProps.find((p) => p.id === deskId);
+    if (desk) {
+      return calculateFacingAngle(chairPos, [desk.x, desk.z]);
+    }
+  }
+  const defaultDeskPos = AGENT_DESK_POSITIONS[name];
+  if (defaultDeskPos) {
+    return calculateFacingAngle(chairPos, defaultDeskPos);
+  }
+  return 0;
+}
+
+// Arah hadap 19 agen dihitung secara dinamis dari geometri floorplan (vektor kursi ke meja via atan2)
+export const HOME_FACE_BY_AGENT: Record<string, number> = computeDynamicHomeFacings();
+
 // Kursi Meeting (19 kursi) mengelilingi meja panjang di dalam Ruang Meeting (0, 0, 15, 9).
 // Koordinat absolut dunia (x, z). Meja berada di tengah (x: 3.5..11.5, z: 3.5..5.5).
 export const SEAT_BY_AGENT: Record<string, [number, number]> = {

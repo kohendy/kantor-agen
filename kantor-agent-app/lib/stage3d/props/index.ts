@@ -7,7 +7,7 @@ import * as THREE from "three";
 import { THEME } from "../theme";
 import { VoxelBoxDef, buildVoxelGeometry } from "./voxel";
 import { FloorplanData, FLOORPLAN } from "../floorplan";
-import { HOME_POSITIONS, SEAT_BY_AGENT } from "@/lib/officeConfig";
+import { HOME_POSITIONS, SEAT_BY_AGENT, HOME_FACE_BY_AGENT, AGENT_DESK_PROP_ID, getAgentHomeFacing, calculateFacingAngle } from "@/lib/officeConfig";
 
 export interface PropDefinition {
   id: string;
@@ -437,6 +437,36 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
     },
   },
 
+  riset_lab_desk: {
+    id: "riset_lab_desk",
+    name: "Meja Laboratorium Riset",
+    footprint: { w: 1.5, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan meja lab biru muda
+        { x: 0, y: 0.38, z: 0, w: 1.5, h: 0.05, d: 0.65, color: THEME.props.riset.labTableTop },
+        // Lis pinggiran biru cerah
+        { x: 0, y: 0.36, z: 0, w: 1.52, h: 0.02, d: 0.67, color: THEME.props.riset.labTableFrame },
+        // 4 Kaki meja baja lab
+        { x: -0.68, y: 0, z: -0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.industrial },
+        { x: 0.68, y: 0, z: -0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.industrial },
+        { x: -0.68, y: 0, z: 0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.industrial },
+        { x: 0.68, y: 0, z: 0.26, w: 0.08, h: 0.38, d: 0.08, color: THEME.props.metal.industrial },
+        // Monitor data analitik lab
+        { x: -0.35, y: 0.42, z: -0.15, w: 0.45, h: 0.26, d: 0.04, color: THEME.props.metal.dark },
+        { x: -0.35, y: 0.44, z: -0.12, w: 0.41, h: 0.22, d: 0.01, color: THEME.props.riset.dataBoard },
+        // Tabung sampel riset
+        { x: 0.32, y: 0.43, z: -0.12, w: 0.08, h: 0.14, d: 0.08, color: THEME.props.riset.sampleVials[0] },
+        { x: 0.44, y: 0.43, z: -0.12, w: 0.08, h: 0.14, d: 0.08, color: THEME.props.riset.sampleVials[1] },
+        // Keyboard & mini konsol
+        { x: 0.05, y: 0.42, z: 0.1, w: 0.48, h: 0.015, d: 0.2, color: THEME.props.metal.dark },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
   // ---------------------------------------------------------------------------
   // OPERASIONAL PROPS
   // ---------------------------------------------------------------------------
@@ -543,6 +573,33 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
         // Garis rancang putih tipis cetak biru
         { x: -0.05, y: 0.7, z: -0.3, w: 0.01, h: 0.4, d: 0.6, color: THEME.props.tech.paper },
         { x: -0.05, y: 0.5, z: 0.3, w: 0.01, h: 0.3, d: 0.5, color: THEME.props.tech.paper },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
+  ops_workstation_desk: {
+    id: "ops_workstation_desk",
+    name: "Meja Kerja Operasional & Logistik",
+    footprint: { w: 1.6, d: 0.65 },
+    height: 0.44,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Papan meja industri kokoh
+        { x: 0, y: 0.38, z: 0, w: 1.6, h: 0.05, d: 0.65, color: THEME.props.operasional.shelving },
+        // Rangka baja tebal
+        { x: -0.72, y: 0, z: -0.26, w: 0.1, h: 0.38, d: 0.1, color: THEME.props.operasional.trolleyFrame },
+        { x: 0.72, y: 0, z: -0.26, w: 0.1, h: 0.38, d: 0.1, color: THEME.props.operasional.trolleyFrame },
+        { x: -0.72, y: 0, z: 0.26, w: 0.1, h: 0.38, d: 0.1, color: THEME.props.operasional.trolleyFrame },
+        { x: 0.72, y: 0, z: 0.26, w: 0.1, h: 0.38, d: 0.1, color: THEME.props.operasional.trolleyFrame },
+        // Monitor ruggedized
+        { x: -0.25, y: 0.42, z: -0.15, w: 0.46, h: 0.28, d: 0.05, color: THEME.props.operasional.serverCabinet },
+        { x: -0.25, y: 0.44, z: -0.12, w: 0.42, h: 0.24, d: 0.01, color: THEME.props.operasional.blueprint },
+        // Dokumen cetak biru di atas meja
+        { x: 0.35, y: 0.43, z: -0.1, w: 0.4, h: 0.06, d: 0.08, color: THEME.props.operasional.blueprint },
+        // Toolbox perkakas
+        { x: 0.38, y: 0.43, z: 0.12, w: 0.25, h: 0.1, d: 0.14, color: THEME.props.operasional.tools },
       ];
       return buildVoxelGeometry(boxes);
     },
@@ -816,6 +873,29 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
     },
   },
 
+  atrium_planter: {
+    id: "atrium_planter",
+    name: "Planter Tengah Atrium",
+    footprint: { w: 1.4, d: 1.4 },
+    height: 0.8,
+    blocksWalk: true,
+    createGeometry: () => {
+      const boxes: VoxelBoxDef[] = [
+        // Kotak planter beton / border luar
+        { x: 0, y: 0.15, z: 0, w: 1.4, h: 0.3, d: 1.4, color: THEME.props.metal.dark },
+        // Tanah subur dalam
+        { x: 0, y: 0.28, z: 0, w: 1.2, h: 0.08, d: 1.2, color: "#3d2314" },
+        // Rumpun semak hijau / tanaman tengah
+        { x: 0, y: 0.35, z: 0, w: 1.0, h: 0.3, d: 1.0, color: THEME.props.nature.leafDark },
+        { x: 0, y: 0.58, z: 0, w: 0.7, h: 0.35, d: 0.7, color: THEME.props.nature.leafGreen },
+        // Aksen daun tepi
+        { x: -0.25, y: 0.45, z: 0.25, w: 0.25, h: 0.2, d: 0.25, color: THEME.props.nature.leafLight },
+        { x: 0.25, y: 0.45, z: -0.25, w: 0.25, h: 0.2, d: 0.25, color: THEME.props.nature.leafLight },
+      ];
+      return buildVoxelGeometry(boxes);
+    },
+  },
+
   reception_desk: {
     id: "reception_desk",
     name: "Meja Resepsi Lengkung Voxel",
@@ -881,11 +961,11 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
     },
     createEmissiveGeometry: () => {
       const boxes: VoxelBoxDef[] = [
-        { x: -1.6, y: 0.35, z: 0.09, w: 0.38, h: 0.58, d: 0.02, color: THEME.props.advertiser.cpaBars[0] },
-        { x: -1.0, y: 0.35, z: 0.09, w: 0.38, h: 0.78, d: 0.02, color: THEME.props.advertiser.cpaBars[1] },
-        { x: -0.4, y: 0.35, z: 0.09, w: 0.38, h: 0.48, d: 0.02, color: THEME.props.advertiser.cpaBars[2] },
-        { x: 0.2, y: 0.35, z: 0.09, w: 0.38, h: 0.88, d: 0.02, color: THEME.props.advertiser.cpaBars[3] },
-        { x: 1.2, y: 0.75, z: 0.09, w: 1.8, h: 0.08, d: 0.02, color: THEME.props.advertiser.screenGlow },
+        { x: -1.6, y: 0.35, z: 0.098, w: 0.38, h: 0.58, d: 0.02, color: THEME.props.advertiser.cpaBars[0] },
+        { x: -1.0, y: 0.35, z: 0.098, w: 0.38, h: 0.78, d: 0.02, color: THEME.props.advertiser.cpaBars[1] },
+        { x: -0.4, y: 0.35, z: 0.098, w: 0.38, h: 0.48, d: 0.02, color: THEME.props.advertiser.cpaBars[2] },
+        { x: 0.2, y: 0.35, z: 0.098, w: 0.38, h: 0.88, d: 0.02, color: THEME.props.advertiser.cpaBars[3] },
+        { x: 1.2, y: 0.75, z: 0.098, w: 1.8, h: 0.08, d: 0.02, color: THEME.props.advertiser.screenGlow },
       ];
       return buildVoxelGeometry(boxes);
     },
@@ -1016,8 +1096,8 @@ export const PROPS_REGISTRY: Record<string, PropDefinition> = {
       const boxes: VoxelBoxDef[] = [
         // Rangka portal ungu
         { x: 0, y: 0, z: 0, w: 1.4, h: 1.4, d: 0.2, color: THEME.props.hr.portalFrame },
-        // Layar portal pelamar
-        { x: 0, y: 0.4, z: 0.08, w: 1.2, h: 0.7, d: 0.04, color: THEME.props.hr.portalGlow },
+        // Layar portal pelamar (dimajukan z: 0.09 d: 0.04 -> muka z=0.11 > rangka z=0.10)
+        { x: 0, y: 0.4, z: 0.09, w: 1.2, h: 0.7, d: 0.04, color: THEME.props.hr.portalGlow },
       ];
       return buildVoxelGeometry(boxes);
     },
@@ -1591,7 +1671,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   // ---------------------------------------------------------------------------
   {
     id: "riset_lab_athena_desk",
-    propId: "dining_table",
+    propId: "riset_lab_desk",
     roomId: "riset",
     x: 14.0,
     y: 0,
@@ -1603,7 +1683,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "riset_lab_argus_desk",
-    propId: "dining_table",
+    propId: "riset_lab_desk",
     roomId: "riset",
     x: 18.0,
     y: 0,
@@ -1615,7 +1695,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "riset_lab_metis_desk",
-    propId: "dining_table",
+    propId: "riset_lab_desk",
     roomId: "riset",
     x: 16.0,
     y: 0,
@@ -1627,7 +1707,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "riset_lab_center_console",
-    propId: "dining_table",
+    propId: "riset_lab_desk",
     roomId: "riset",
     x: 16.0,
     y: 0,
@@ -1694,7 +1774,7 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "ops_workstation_hephaestus",
-    propId: "dining_table",
+    propId: "ops_workstation_desk",
     roomId: "operasional",
     x: 21.5,
     y: 0,
@@ -1758,27 +1838,161 @@ export const T2A_PLACED_PROPS: PlacedPropInstance[] = [
   },
   {
     id: "atrium_center_planter",
-    propId: "potted_plant",
+    propId: "atrium_planter",
     roomId: "atrium",
-    x: 23.5,
+    x: 24.5,
     y: 0,
     z: 18.0,
-    footprint: { w: 0.8, d: 0.8 },
-    height: 1.2,
+    footprint: { w: 1.4, d: 1.4 },
+    height: 0.8,
     blocksWalk: true,
-    bounds: { minX: 23.1, maxX: 23.9, minZ: 17.6, maxZ: 18.4 },
+    bounds: { minX: 23.8, maxX: 25.2, minZ: 17.3, maxZ: 18.7 },
   },
   {
     id: "atrium_bench_east",
     propId: "atrium_bench",
     roomId: "atrium",
-    x: 26.8,
+    x: 27.2,
     y: 0,
-    z: 13.0,
-    footprint: { w: 0.6, d: 1.8 },
+    z: 12.5,
+    footprint: { w: 0.6, d: 1.6 },
     height: 0.44,
     blocksWalk: true,
-    bounds: { minX: 26.5, maxX: 27.1, minZ: 12.1, maxZ: 13.9 },
+    bounds: { minX: 26.9, maxX: 27.5, minZ: 11.7, maxZ: 13.3 },
+  },
+  {
+    id: "atrium_bench_west",
+    propId: "atrium_bench",
+    roomId: "atrium",
+    x: 22.0,
+    y: 0,
+    z: 18.0,
+    footprint: { w: 0.6, d: 1.6 },
+    height: 0.44,
+    blocksWalk: true,
+    bounds: { minX: 21.7, maxX: 22.3, minZ: 17.2, maxZ: 18.8 },
+  },
+  // Foliage Pohon Atrium (5 pohon)
+  {
+    id: "atrium_tree_nw",
+    propId: "voxel_tree",
+    roomId: "atrium",
+    x: 22.0,
+    y: 0,
+    z: 11.8,
+    footprint: { w: 1.2, d: 1.2 },
+    height: 1.9,
+    blocksWalk: true,
+    bounds: { minX: 21.4, maxX: 22.6, minZ: 11.2, maxZ: 12.4 },
+  },
+  {
+    id: "atrium_tree_ne",
+    propId: "voxel_tree",
+    roomId: "atrium",
+    x: 27.0,
+    y: 0,
+    z: 11.8,
+    footprint: { w: 1.2, d: 1.2 },
+    height: 1.9,
+    blocksWalk: true,
+    bounds: { minX: 26.4, maxX: 27.6, minZ: 11.2, maxZ: 12.4 },
+  },
+  {
+    id: "atrium_tree_nc",
+    propId: "voxel_tree",
+    roomId: "atrium",
+    x: 24.5,
+    y: 0,
+    z: 11.8,
+    footprint: { w: 1.2, d: 1.2 },
+    height: 1.9,
+    blocksWalk: true,
+    bounds: { minX: 23.9, maxX: 25.1, minZ: 11.2, maxZ: 12.4 },
+  },
+  {
+    id: "atrium_tree_sw",
+    propId: "voxel_tree",
+    roomId: "atrium",
+    x: 22.0,
+    y: 0,
+    z: 20.2,
+    footprint: { w: 1.2, d: 1.2 },
+    height: 1.9,
+    blocksWalk: true,
+    bounds: { minX: 21.4, maxX: 22.6, minZ: 19.6, maxZ: 20.8 },
+  },
+  {
+    id: "atrium_tree_se",
+    propId: "voxel_tree",
+    roomId: "atrium",
+    x: 27.0,
+    y: 0,
+    z: 20.2,
+    footprint: { w: 1.2, d: 1.2 },
+    height: 1.9,
+    blocksWalk: true,
+    bounds: { minX: 26.4, maxX: 27.6, minZ: 19.6, maxZ: 20.8 },
+  },
+  // Foliage Tanaman Pot Atrium (5 tanaman)
+  {
+    id: "atrium_plant_1",
+    propId: "potted_plant",
+    roomId: "atrium",
+    x: 22.0,
+    y: 0,
+    z: 16.5,
+    footprint: { w: 0.5, d: 0.5 },
+    height: 0.8,
+    blocksWalk: true,
+    bounds: { minX: 21.75, maxX: 22.25, minZ: 16.25, maxZ: 16.75 },
+  },
+  {
+    id: "atrium_plant_2",
+    propId: "potted_plant",
+    roomId: "atrium",
+    x: 22.0,
+    y: 0,
+    z: 19.5,
+    footprint: { w: 0.5, d: 0.5 },
+    height: 0.8,
+    blocksWalk: true,
+    bounds: { minX: 21.75, maxX: 22.25, minZ: 19.25, maxZ: 19.75 },
+  },
+  {
+    id: "atrium_plant_3",
+    propId: "potted_plant",
+    roomId: "atrium",
+    x: 27.0,
+    y: 0,
+    z: 16.5,
+    footprint: { w: 0.5, d: 0.5 },
+    height: 0.8,
+    blocksWalk: true,
+    bounds: { minX: 26.75, maxX: 27.25, minZ: 16.25, maxZ: 16.75 },
+  },
+  {
+    id: "atrium_plant_4",
+    propId: "potted_plant",
+    roomId: "atrium",
+    x: 27.0,
+    y: 0,
+    z: 17.2,
+    footprint: { w: 0.5, d: 0.5 },
+    height: 0.8,
+    blocksWalk: true,
+    bounds: { minX: 26.75, maxX: 27.25, minZ: 16.95, maxZ: 17.45 },
+  },
+  {
+    id: "atrium_plant_5",
+    propId: "potted_plant",
+    roomId: "atrium",
+    x: 24.5,
+    y: 0,
+    z: 16.2,
+    footprint: { w: 0.5, d: 0.5 },
+    height: 0.8,
+    blocksWalk: true,
+    bounds: { minX: 24.25, maxX: 24.75, minZ: 15.95, maxZ: 16.45 },
   },
 
   // ---------------------------------------------------------------------------
@@ -2157,13 +2371,13 @@ export const T2B_PLACED_PROPS: PlacedPropInstance[] = [
     id: "hr_arrival_portal_w",
     propId: "hr_arrival_portal",
     roomId: "hr",
-    x: 0.1,
+    x: 0.18,
     y: 0,
     z: 22.5,
     footprint: { w: 0.15, d: 1.0 },
     height: 1.8,
     blocksWalk: false,
-    bounds: { minX: 0.025, maxX: 0.175, minZ: 22.0, maxZ: 23.0 },
+    bounds: { minX: 0.105, maxX: 0.255, minZ: 22.0, maxZ: 23.0 },
   },
   {
     id: "hr_desk_hera",
@@ -2183,11 +2397,11 @@ export const T2B_PLACED_PROPS: PlacedPropInstance[] = [
     roomId: "hr",
     x: 4.5,
     y: 0,
-    z: 21.3,
+    z: 21.35,
     footprint: { w: 2.4, d: 0.45 },
     height: 1.6,
     blocksWalk: true,
-    bounds: { minX: 3.3, maxX: 5.7, minZ: 21.075, maxZ: 21.525 },
+    bounds: { minX: 3.3, maxX: 5.7, minZ: 21.125, maxZ: 21.575 },
   },
   {
     id: "hr_portal_kiosk_nw",
@@ -2703,6 +2917,37 @@ export function validatePropsPlacement(
           `Prop "${prop.id}" di ruangan "${prop.roomId}" menimpa posisi duduk agen "${agentName}" di (${hx}, ${hz})!`
         );
       }
+    }
+  }
+
+  // 5. Validasi arah hadap seluruh 19 agen di meja kerja masing-masing (vektor kursi-ke-meja, toleransi < 20°)
+  for (const [agentName, [hx, hz]] of Object.entries(homePositions)) {
+    const deskPropId = AGENT_DESK_PROP_ID[agentName];
+    if (!deskPropId) {
+      errors.push(`Agen "${agentName}" tidak memiliki relasi meja di AGENT_DESK_PROP_ID!`);
+      continue;
+    }
+    const deskProp = placedProps.find((p) => p.id === deskPropId);
+    if (!deskProp) {
+      errors.push(`Meja kerja "${deskPropId}" untuk agen "${agentName}" tidak ditemukan di placedProps!`);
+      continue;
+    }
+    const assignedAngle = getAgentHomeFacing(agentName, placedProps);
+    const dx = deskProp.x - hx;
+    const dz = deskProp.z - hz;
+    let expectedAngle = Math.atan2(dx, dz);
+    while (expectedAngle > Math.PI) expectedAngle -= 2 * Math.PI;
+    while (expectedAngle < -Math.PI) expectedAngle += 2 * Math.PI;
+    let actualAngle = assignedAngle;
+    while (actualAngle > Math.PI) actualAngle -= 2 * Math.PI;
+    while (actualAngle < -Math.PI) actualAngle += 2 * Math.PI;
+    let diff = Math.abs(actualAngle - expectedAngle);
+    if (diff > Math.PI) diff = 2 * Math.PI - diff;
+    const diffDeg = (diff * 180) / Math.PI;
+    if (diffDeg >= 20) {
+      errors.push(
+        `Arah hadap agen "${agentName}" (${assignedAngle.toFixed(3)} rad) menyimpang ${diffDeg.toFixed(1)}° (harus < 20°) dari vektor kursi ke meja!`
+      );
     }
   }
 
