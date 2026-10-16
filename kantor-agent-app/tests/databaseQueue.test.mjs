@@ -139,53 +139,114 @@ async function runDatabaseQueueTests() {
     }
     console.log(`    ✅ SUKSES: Brief basi (${b1.id}) berhasil diambil ulang dengan timestamp baru.`);
 
-    // Lepas klaim lagi
+    // Lepas klaim lagi dan set selesai agar tidak mengotori antrean TES 4
     await supabase.rpc("release_brief_claim", { target_brief_id: b1.id });
+    await supabase.from("briefs").update({ status: "selesai" }).eq("id", b1.id);
 
     // -------------------------------------------------------------------------
-    // TES 4: Brief butuh_klarifikasi tidak memblokir brief di belakangnya
+    // TES 4: Verifikasi Urutan FIFO (First-In, First-Out)
     // -------------------------------------------------------------------------
-    console.log("\n>>> [TES 4] Brief butuh_klarifikasi tidak memblokir brief di belakangnya...");
-    // Ubah b1 menjadi butuh_klarifikasi
-    await supabase
-      .from("briefs")
-      .update({
-        status: "butuh_klarifikasi",
-        pertanyaan: "Mohon klarifikasi target pasar",
-        diproses_sejak: null,
-      })
-      .eq("id", b1.id);
-
-    // Buat brief b2 dengan status 'antre' (id lebih besar dari b1)
-    const { data: b2, error: errB2 } = await supabase
+    console.log("\n>>> [TES 4] Verifikasi urutan antrean FIFO...");
+    const { data: fifo1, error: errFifo1 } = await supabase
       .from("briefs")
       .insert({
-        judul: `${TEST_TAG}_Brief_2`,
-        isi: { produk: "Tes Produk 2", tujuan: "Tes Antrean Non-blocking" },
+        judul: `${TEST_TAG}_FIFO_A`,
+        isi: { produk: "Produk FIFO 1", tujuan: "Uji Urutan A" },
         mode: "diarahkan",
         status: "antre",
       })
       .select()
       .single();
+    if (errFifo1) throw new Error("Gagal insert fifo1: " + errFifo1.message);
 
-    if (errB2) throw new Error("Gagal insert b2: " + errB2.message);
+    const { data: fifo2, error: errFifo2 } = await supabase
+      .from("briefs")
+      .insert({
+        judul: `${TEST_TAG}_FIFO_B`,
+        isi: { produk: "Produk FIFO 2", tujuan: "Uji Urutan B" },
+        mode: "diarahkan",
+        status: "antre",
+      })
+      .select()
+      .single();
+    if (errFifo2) throw new Error("Gagal insert fifo2: " + errFifo2.message);
 
-    // ATLAS klaim brief berikutnya: HARUS mendapatkan b2 tanpa terhalang b1!
-    const { data: claimB2Res } = await supabase.rpc("claim_brief_for_consideration");
-    const claimedNext = claimB2Res && claimB2Res.length > 0 ? claimB2Res[0] : null;
+    // Klaim pertama harus fifo1
+    const { data: claimFifo1Res } = await supabase.rpc("claim_brief_for_consideration");
+    const claimedFifo1 = claimFifo1Res && claimFifo1Res.length > 0 ? claimFifo1Res[0] : null;
 
-    console.log(`    Brief terdepan (#${b1.id}) berstatus: butuh_klarifikasi`);
-    console.log(`    Brief antre berikutnya (#${b2.id}) berhasil diklaim: ${claimedNext?.id === b2.id}`);
+    // Selesaikan fifo1 supaya fifo2 bisa diklaim berikutnya
+    await supabase.from("briefs").update({ status: "selesai" }).eq("id", fifo1.id);
 
-    if (!claimedNext || claimedNext.id !== b2.id) {
-      throw new Error(`GAGAL: Deadlock terjadi! Brief 2 (#${b2.id}) gagal diklaim karena b1 (#${b1.id}) berstatus butuh_klarifikasi`);
+    // Klaim kedua harus fifo2
+    const { data: claimFifo2Res } = await supabase.rpc("claim_brief_for_consideration");
+    const claimedFifo2 = claimFifo2Res && claimFifo2Res.length > 0 ? claimFifo2Res[0] : null;
+
+    console.log(`    Klaim FIFO 1 ID: ${claimedFifo1?.id} (diharapkan: ${fifo1.id})`);
+    console.log(`    Klaim FIFO 2 ID: ${claimedFifo2?.id} (diharapkan: ${fifo2.id})`);
+
+    if (claimedFifo1?.id !== fifo1.id || claimedFifo2?.id !== fifo2.id) {
+      throw new Error(`GAGAL: Urutan FIFO tidak sesuai! Diterima: ${claimedFifo1?.id}, ${claimedFifo2?.id}`);
     }
-    console.log("    ✅ SUKSES: Brief butuh_klarifikasi tidak memblokir antrean.");
+    console.log("    ✅ SUKSES: Urutan antrean mematuhi FIFO secara presisi.");
+
+    // Selesaikan fifo2
+    await supabase.from("briefs").update({ status: "selesai" }).eq("id", fifo2.id);
 
     // -------------------------------------------------------------------------
-    // TES 5: Tes Paritas TS (BriefQueueManager) vs SQL
+    // TES 5: Klarifikasi Tidak Memblokir (Brief A butuh_klarifikasi, Brief B antre)
     // -------------------------------------------------------------------------
-    console.log("\n>>> [TES 5] Verifikasi Paritas Logika TS (BriefQueueManager) vs SQL...");
+    console.log("\n>>> [TES 5] Klarifikasi tidak memblokir brief di belakangnya...");
+    // Buat Brief A dengan status 'butuh_klarifikasi'
+    const { data: briefA, error: errBA } = await supabase
+      .from("briefs")
+      .insert({
+        judul: `${TEST_TAG}_Brief_A_Klarifikasi`,
+        isi: { produk: "Produk A Butuh Tanya", tujuan: "Uji Deadlock Klarifikasi" },
+        mode: "diarahkan",
+        status: "butuh_klarifikasi",
+        pertanyaan: "Mohon konfirmasi target audiens?",
+        putaran_tanya: 1,
+      })
+      .select()
+      .single();
+    if (errBA) throw new Error("Gagal insert briefA: " + errBA.message);
+
+    // Buat Brief B dengan status 'antre' (ID pasti lebih besar dari briefA)
+    const { data: briefB, error: errBB } = await supabase
+      .from("briefs")
+      .insert({
+        judul: `${TEST_TAG}_Brief_B_Antre`,
+        isi: { produk: "Produk B Siap Eksekusi", tujuan: "Harus tetap bisa diklaim" },
+        mode: "diarahkan",
+        status: "antre",
+      })
+      .select()
+      .single();
+    if (errBB) throw new Error("Gagal insert briefB: " + errBB.message);
+
+    // ATLAS klaim brief berikutnya: HARUS mendapatkan briefB tanpa terhalang briefA!
+    const { data: claimBRes } = await supabase.rpc("claim_brief_for_consideration");
+    const claimedB = claimBRes && claimBRes.length > 0 ? claimBRes[0] : null;
+
+    console.log(`    Brief A (#${briefA.id}) berstatus: butuh_klarifikasi`);
+    console.log(`    Brief B (#${briefB.id}) berstatus: antre`);
+    console.log(`    Hasil klaim: ID #${claimedB?.id} (diharapkan: #${briefB.id})`);
+
+    if (!claimedB || claimedB.id !== briefB.id) {
+      throw new Error(
+        `GAGAL: Deadlock terjadi! Brief B (#${briefB.id}) tidak bisa diklaim karena Brief A (#${briefA.id}) butuh_klarifikasi!`
+      );
+    }
+    console.log("    ✅ SUKSES: Brief A (butuh_klarifikasi) terbukti TIDAK memblokir Brief B di belakangnya!");
+
+    // Lepaskan klaim briefB
+    await supabase.rpc("release_brief_claim", { target_brief_id: briefB.id });
+
+    // -------------------------------------------------------------------------
+    // TES 6: Paritas Logika TS (BriefQueueManager) vs SQL
+    // -------------------------------------------------------------------------
+    console.log("\n>>> [TES 6] Verifikasi Paritas Logika TS (BriefQueueManager) vs SQL...");
     const tsManager = new BriefQueueManager();
     const tb1 = tsManager.enqueueBrief({
       judul: "TB1",
